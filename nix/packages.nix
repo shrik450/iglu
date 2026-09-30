@@ -44,7 +44,7 @@ in
     pname = "iglu-hostd";
     crateName = "iglu-hostd";
     description = "iglu's execution host agent";
-    mainProgram = "hostd";
+    mainProgram = "iglu-hostd";
   };
 
   iglu = crate {

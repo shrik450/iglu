@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         .skip_while(|arg| arg != "--config")
         .nth(1)
         .map(PathBuf::from)
-        .context("usage: hostd --config <path>")?;
+        .context("usage: iglu-hostd --config <path>")?;
     let config = config::Config::load(&config_path)?;
 
     let incus = incus::Incus::new(config.incus.socket.clone(), config.incus.project.clone());

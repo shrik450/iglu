@@ -225,7 +225,7 @@ in
       ];
       path = [ config.nix.package ];
       serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} --config ${settingsFormat.generate "hostd.json" settings}";
+        ExecStart = "${lib.getExe cfg.package} --config ${settingsFormat.generate "iglu-hostd.json" settings}";
         Restart = "on-failure";
         RestartSec = 2;
         RuntimeDirectory = baseNameOf runtimeDir;
