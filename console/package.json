@@ -1,0 +1,16 @@
+{
+  "name": "iglu-console",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc --noEmit && node build.mjs"
+  },
+  "dependencies": {
+    "ghostty-web": "0.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  }
+}
