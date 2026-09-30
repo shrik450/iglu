@@ -164,6 +164,8 @@ in
                     response_types = [ ];
                     scopes = [ ];
                     audience = [ "iglu-hosts" ];
+                    # iglud requests no audience, so grant the client's own.
+                    requested_audience_mode = "implicit";
                     token_endpoint_auth_method = "client_secret_basic";
                     access_token_signed_response_alg = "RS256";
                   }
@@ -200,7 +202,6 @@ in
             worker = {
               clientId = "worker";
               clientSecretFile = "${secret "worker"}";
-              audience = "iglu-hosts";
             };
           };
           signIn.emails = [ "alice@example.org" ];

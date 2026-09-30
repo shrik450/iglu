@@ -88,11 +88,11 @@ in
       };
       audience = lib.mkOption {
         type = lib.types.str;
-        description = "The audience iglud's service tokens carry: `services.iglu.control.oidc.worker.audience`.";
+        description = "The `aud` of iglud's service tokens, as the identity provider issues them. Decode one token from the worker client to see it.";
       };
       subjects = lib.mkOption {
         type = lib.types.nonEmptyListOf lib.types.str;
-        description = "Token subjects allowed to drive this host: iglud's service identity, often its worker client ID.";
+        description = "The `sub` values allowed to drive this host: the subject the identity provider gives the worker client's tokens.";
       };
     };
 

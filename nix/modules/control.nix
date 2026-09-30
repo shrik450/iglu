@@ -49,9 +49,11 @@ let
     }
     // lib.mapAttrs clientSettings clients
     // {
-      worker = clientSettings "worker" cfg.oidc.worker // {
-        inherit (cfg.oidc.worker) audience;
-      };
+      worker =
+        clientSettings "worker" cfg.oidc.worker
+        // lib.optionalAttrs (cfg.oidc.worker.resource != null) {
+          inherit (cfg.oidc.worker) resource;
+        };
     };
     sign_in =
       map (subject: { inherit subject; }) cfg.signIn.subjects
@@ -131,13 +133,16 @@ in
       worker = lib.mkOption {
         type = lib.types.submodule {
           options = clientOptions "worker" // {
-            audience = lib.mkOption {
-              type = lib.types.str;
-              example = "iglu-hosts";
+            resource = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              example = "https://iglu-hosts.example.org";
               description = ''
-                The audience iglud requests with the client-credentials grant.
-                Hosts accept only tokens for it (`services.iglu.host.auth.audience`).
-                The identity provider must issue JWT access tokens for it.
+                An RFC 8707 resource to request with the client-credentials
+                grant. Without one, the identity provider picks the token's
+                audience from its own configuration. Hosts accept only the
+                audience in `services.iglu.host.auth.audience`. The identity
+                provider must issue JWT access tokens.
               '';
             };
           };

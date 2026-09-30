@@ -1,12 +1,16 @@
 //! `OpenID` Connect sign-in, through the `openidconnect` relying-party library.
 //! iglu never sees passwords; the provider hosts login and MFA.
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use iglu_domain::auth::{Issuer, VerifiedIdentity};
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
+use tokio::sync::RwLock;
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +31,9 @@ pub enum OidcError {
 #[error("{0}")]
 pub struct HttpError(String);
 
+/// How long any one request to the identity provider may take.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Adapts the shared reqwest client to the library's HTTP interface. Redirects
 /// are never followed, as the library requires to avoid SSRF.
 async fn send(
@@ -38,6 +45,7 @@ async fn send(
         .request(parts.method, parts.uri.to_string())
         .headers(parts.headers)
         .body(body)
+        .timeout(REQUEST_TIMEOUT)
         .send()
         .await
         .map_err(|e| HttpError(e.to_string()))?;
@@ -54,10 +62,61 @@ async fn send(
         .map_err(|e| HttpError(e.to_string()))
 }
 
+/// The identity provider's metadata and signing keys, discovered on first
+/// use and cached. iglud starts and serves without the provider; sign-in
+/// waits until it answers. The cache is dropped when a token fails to
+/// verify, so rotated keys are picked up on the next attempt.
+pub struct Provider {
+    http: reqwest::Client,
+    issuer: IssuerUrl,
+    metadata: RwLock<Option<Arc<CoreProviderMetadata>>>,
+}
+
+impl Provider {
+    /// # Errors
+    ///
+    /// When the issuer isn't a URL.
+    pub fn new(http: reqwest::Client, issuer: &Issuer) -> Result<Self, OidcError> {
+        let issuer =
+            IssuerUrl::new(issuer.to_string()).map_err(|e| OidcError::Config(e.to_string()))?;
+        Ok(Self {
+            http,
+            issuer,
+            metadata: RwLock::new(None),
+        })
+    }
+
+    /// # Errors
+    ///
+    /// When the provider can't be reached or its metadata doesn't parse.
+    pub async fn metadata(&self) -> Result<Arc<CoreProviderMetadata>, OidcError> {
+        if let Some(metadata) = self.metadata.read().await.as_ref() {
+            return Ok(metadata.clone());
+        }
+        let mut slot = self.metadata.write().await;
+        if let Some(metadata) = slot.as_ref() {
+            return Ok(metadata.clone());
+        }
+        let fetch = self.http.clone();
+        let discovered =
+            CoreProviderMetadata::discover_async(self.issuer.clone(), &move |request| {
+                send(fetch.clone(), request)
+            })
+            .await
+            .map_err(|e| OidcError::Discovery(e.to_string()))?;
+        let discovered = Arc::new(discovered);
+        *slot = Some(discovered.clone());
+        Ok(discovered)
+    }
+
+    async fn forget(&self) {
+        *self.metadata.write().await = None;
+    }
+}
+
 /// One relying party: the console or the preview gateway.
 pub struct RelyingParty {
-    http: reqwest::Client,
-    metadata: CoreProviderMetadata,
+    provider: Arc<Provider>,
     client_id: ClientId,
     client_secret: ClientSecret,
     redirect: RedirectUrl,
@@ -72,45 +131,48 @@ pub struct Pending {
 }
 
 impl RelyingParty {
-    pub async fn discover(
-        http: reqwest::Client,
-        issuer: &Issuer,
+    #[must_use]
+    pub fn new(
+        provider: Arc<Provider>,
         client_id: String,
         client_secret: String,
         redirect: Url,
-    ) -> Result<Self, OidcError> {
-        let issuer =
-            IssuerUrl::new(issuer.to_string()).map_err(|e| OidcError::Config(e.to_string()))?;
-        let fetch = http.clone();
-        let metadata = CoreProviderMetadata::discover_async(issuer, &move |request| {
-            send(fetch.clone(), request)
-        })
-        .await
-        .map_err(|e| OidcError::Discovery(e.to_string()))?;
-        Ok(Self {
-            http,
-            metadata,
+    ) -> Self {
+        Self {
+            provider,
             client_id: ClientId::new(client_id),
             client_secret: ClientSecret::new(client_secret),
             redirect: RedirectUrl::from_url(redirect),
-        })
+        }
     }
 
-    pub fn token_endpoint(&self) -> Option<&Url> {
-        self.metadata
-            .token_endpoint()
-            .map(openidconnect::TokenUrl::url)
-    }
-
-    pub fn begin(&self) -> Pending {
-        let client = CoreClient::from_provider_metadata(
-            self.metadata.clone(),
+    fn client(
+        &self,
+        metadata: &CoreProviderMetadata,
+    ) -> CoreClient<
+        openidconnect::EndpointSet,
+        openidconnect::EndpointNotSet,
+        openidconnect::EndpointNotSet,
+        openidconnect::EndpointNotSet,
+        openidconnect::EndpointMaybeSet,
+        openidconnect::EndpointMaybeSet,
+    > {
+        CoreClient::from_provider_metadata(
+            metadata.clone(),
             self.client_id.clone(),
             Some(self.client_secret.clone()),
         )
-        .set_redirect_uri(self.redirect.clone());
+        .set_redirect_uri(self.redirect.clone())
+    }
+
+    /// # Errors
+    ///
+    /// When the provider can't be discovered.
+    pub async fn begin(&self) -> Result<Pending, OidcError> {
+        let metadata = self.provider.metadata().await?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        let (url, state, nonce) = client
+        let (url, state, nonce) = self
+            .client(&metadata)
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
                 CsrfToken::new_random,
@@ -120,27 +182,42 @@ impl RelyingParty {
             .add_scope(Scope::new("profile".into()))
             .set_pkce_challenge(challenge)
             .url();
-        Pending {
+        Ok(Pending {
             url,
             state: state.secret().clone(),
             nonce: nonce.secret().clone(),
             pkce_verifier: verifier.secret().clone(),
-        }
+        })
     }
 
+    /// Exchanges the code and verifies the ID token.
+    ///
+    /// # Errors
+    ///
+    /// When the provider can't be reached, refuses the code, or returns a
+    /// token that doesn't verify or lacks usable claims.
     pub async fn finish(
         &self,
         code: String,
         nonce: String,
         pkce_verifier: String,
     ) -> Result<VerifiedIdentity, OidcError> {
-        let client = CoreClient::from_provider_metadata(
-            self.metadata.clone(),
-            self.client_id.clone(),
-            Some(self.client_secret.clone()),
-        )
-        .set_redirect_uri(self.redirect.clone());
-        let http = self.http.clone();
+        let result = self.exchange(code, nonce, pkce_verifier).await;
+        if matches!(result, Err(OidcError::Token(_))) {
+            self.provider.forget().await;
+        }
+        result
+    }
+
+    async fn exchange(
+        &self,
+        code: String,
+        nonce: String,
+        pkce_verifier: String,
+    ) -> Result<VerifiedIdentity, OidcError> {
+        let metadata = self.provider.metadata().await?;
+        let client = self.client(&metadata);
+        let http = self.provider.http.clone();
         let response = client
             .exchange_code(AuthorizationCode::new(code))
             .map_err(|e| OidcError::Config(e.to_string()))?
@@ -193,12 +270,11 @@ fn parse_claim<T: std::str::FromStr<Err = iglu_domain::ParseError>>(
 /// Fetches and caches the service token iglud presents to hosts, through
 /// the OAuth client-credentials grant.
 pub struct WorkerTokens {
-    http: reqwest::Client,
-    endpoint: Url,
+    provider: Arc<Provider>,
     client_id: String,
     client_secret: String,
-    audience: String,
-    cached: tokio::sync::Mutex<Option<(String, std::time::Instant)>>,
+    resource: Option<Url>,
+    cached: tokio::sync::Mutex<Option<(String, Instant)>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -209,38 +285,51 @@ struct TokenReply {
 }
 
 impl WorkerTokens {
+    #[must_use]
     pub fn new(
-        http: reqwest::Client,
-        endpoint: Url,
+        provider: Arc<Provider>,
         client_id: String,
         client_secret: String,
-        audience: String,
+        resource: Option<Url>,
     ) -> Self {
         Self {
-            http,
-            endpoint,
+            provider,
             client_id,
             client_secret,
-            audience,
+            resource,
             cached: tokio::sync::Mutex::new(None),
         }
     }
 
+    /// A current service token, from the cache or the provider.
+    ///
+    /// # Errors
+    ///
+    /// When the provider can't be reached or refuses the client.
     pub async fn token(&self) -> Result<String, OidcError> {
         let mut cached = self.cached.lock().await;
         if let Some((token, valid_until)) = cached.as_ref()
-            && std::time::Instant::now() < *valid_until
+            && Instant::now() < *valid_until
         {
             return Ok(token.clone());
         }
+        let metadata = self.provider.metadata().await?;
+        let endpoint = metadata
+            .token_endpoint()
+            .ok_or_else(|| OidcError::Config("the provider has no token endpoint".into()))?
+            .url()
+            .clone();
+        let mut form = vec![("grant_type", "client_credentials")];
+        if let Some(resource) = &self.resource {
+            form.push(("resource", resource.as_str()));
+        }
         let reply: TokenReply = self
+            .provider
             .http
-            .post(self.endpoint.clone())
+            .post(endpoint)
             .basic_auth(&self.client_id, Some(&self.client_secret))
-            .form(&[
-                ("grant_type", "client_credentials"),
-                ("audience", self.audience.as_str()),
-            ])
+            .form(&form)
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)
@@ -249,7 +338,7 @@ impl WorkerTokens {
             .await
             .map_err(|e| OidcError::Exchange(e.to_string()))?;
         let lifetime = reply.expires_in.unwrap_or(300).saturating_sub(60).max(30);
-        let valid_until = std::time::Instant::now() + std::time::Duration::from_secs(lifetime);
+        let valid_until = Instant::now() + Duration::from_secs(lifetime);
         *cached = Some((reply.access_token.clone(), valid_until));
         Ok(reply.access_token)
     }

@@ -84,41 +84,36 @@ async fn main() -> anyhow::Result<()> {
         .build()?;
     let tls = Arc::new(rustls::ClientConfig::with_platform_verifier()?);
 
-    let console_callback = config.console_origin.join("/auth/callback")?;
-    let console = oidc::RelyingParty::discover(
-        http.clone(),
-        &config.oidc.issuer,
+    let provider = Arc::new(oidc::Provider::new(http.clone(), &config.oidc.issuer)?);
+    let console = oidc::RelyingParty::new(
+        provider.clone(),
         config.oidc.console.client_id.clone(),
         config.oidc.console.secret()?,
-        console_callback,
-    )
-    .await
-    .context("setting up console sign-in")?;
-    let preview_callback = url::Url::parse(&format!(
-        "https://{}.{}/callback",
-        iglu_domain::label::PREVIEW_AUTH_LABEL,
-        config.preview_domain
-    ))?;
-    let preview = oidc::RelyingParty::discover(
-        http.clone(),
-        &config.oidc.issuer,
+        config.console_origin.join("/auth/callback")?,
+    );
+    let preview = oidc::RelyingParty::new(
+        provider.clone(),
         config.oidc.preview.client_id.clone(),
         config.oidc.preview.secret()?,
-        preview_callback,
-    )
-    .await
-    .context("setting up preview sign-in")?;
-    let token_endpoint = console
-        .token_endpoint()
-        .cloned()
-        .context("the IdP has no token endpoint")?;
+        url::Url::parse(&format!(
+            "https://{}.{}/callback",
+            iglu_domain::label::PREVIEW_AUTH_LABEL,
+            config.preview_domain
+        ))?,
+    );
     let tokens = Arc::new(oidc::WorkerTokens::new(
-        http.clone(),
-        token_endpoint,
+        provider.clone(),
         config.oidc.worker.client_id.clone(),
         config.oidc.worker.secret()?,
-        config.oidc.worker.audience.clone(),
+        config.oidc.worker.resource.clone(),
     ));
+    // Discover the provider now, so the first sign-in doesn't wait for it.
+    // Failing here isn't fatal: sign-in and host calls retry on demand.
+    tokio::spawn(async move {
+        if let Err(error) = provider.metadata().await {
+            tracing::warn!(%error, "the identity provider isn't reachable yet");
+        }
+    });
     let hosts = config
         .hosts
         .iter()

@@ -21,7 +21,7 @@ use crate::app::{
 };
 use crate::crypto;
 use crate::db::{self, LoginRow, SessionKind};
-use crate::oidc::RelyingParty;
+use crate::oidc::{OidcError, RelyingParty};
 
 pub fn console_router() -> Router<Arc<App>> {
     Router::new()
@@ -45,13 +45,31 @@ fn safe_path(path: Option<String>) -> String {
         .unwrap_or_else(|| "/".into())
 }
 
+/// An unreachable provider is worth retrying; anything else is a refusal.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "an adapter for map_err, which passes errors by value"
+)]
+fn sign_in_error(error: OidcError) -> ApiError {
+    tracing::warn!(%error, "sign-in failed");
+    match error {
+        OidcError::Discovery(_) => {
+            ApiError::Unavailable("the identity provider isn't reachable; try again shortly".into())
+        }
+        OidcError::Config(_)
+        | OidcError::Exchange(_)
+        | OidcError::Token(_)
+        | OidcError::Claims(_) => ApiError::Forbidden("sign-in failed".into()),
+    }
+}
+
 async fn begin(
     app: &App,
     rp: &RelyingParty,
     kind: SessionKind,
     return_to: String,
 ) -> Result<Response, ApiError> {
-    let pending = rp.begin();
+    let pending = rp.begin().await.map_err(sign_in_error)?;
     let login = LoginRow {
         kind,
         nonce: pending.nonce,
@@ -110,10 +128,7 @@ async fn complete(
     let identity = rp
         .finish(code, login.nonce, login.pkce_verifier)
         .await
-        .map_err(|error| {
-            tracing::warn!(%error, "sign-in failed");
-            ApiError::Forbidden("sign-in failed".into())
-        })?;
+        .map_err(sign_in_error)?;
     if !app.config.sign_in.admits(&identity) {
         tracing::info!(subject = %identity.subject, "sign-in refused by policy");
         return Err(ApiError::Forbidden(

@@ -86,10 +86,16 @@ Register three clients with the identity provider:
 | ------- | ------------------------ | ----------------------------------------- |
 | console | authorization code       | `https://<console host>/auth/callback`    |
 | preview | authorization code       | `https://auth.<preview domain>/callback`  |
-| worker  | client credentials (JWT) | none; an audience such as `iglu-hosts`   |
+| worker  | client credentials (JWT) | none                                      |
 
 The console and preview clients need the `email` and `email_verified` claims in
 the ID token if you admit people by email.
+
+Hosts accept the worker's tokens by their `aud` and `sub` claims. Providers
+choose these differently: some set the audience from the client's own
+settings, others from an RFC 8707 `resource` that iglud sends when
+`oidc.worker.resource` is set. Request one token for the worker client and
+decode it to see the values to give the host.
 
 ### Control box
 
@@ -108,7 +114,6 @@ the ID token if you admit people by email.
       worker = {
         clientId = "iglu-worker";
         clientSecretFile = "/run/secrets/iglu-worker";
-        audience = "iglu-hosts";
       };
     };
     signIn.emails = [ "you@example.org" ];
@@ -128,7 +133,7 @@ the ID token if you admit people by email.
     tls = { certificate = "/var/lib/iglu/host.crt"; key = "/var/lib/iglu/host.key"; };
     auth = {
       issuer = "https://id.example.org";
-      audience = "iglu-hosts";
+      audience = "iglu-hosts"; # the worker token's `aud`
       subjects = [ "iglu-worker" ]; # the worker token's `sub`
     };
     storage.source = "/dev/disk/by-id/nvme-example-part3";

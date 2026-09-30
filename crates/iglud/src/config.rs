@@ -47,9 +47,11 @@ pub struct Oidc {
 pub struct WorkerClient {
     pub client_id: String,
     pub client_secret_file: PathBuf,
-    /// The audience iglud asks for, and hosts require (`auth.audience` in
-    /// hostd's configuration).
-    pub audience: String,
+    /// An RFC 8707 resource to ask for. Without one, the identity provider
+    /// picks the audience, usually the worker's own client ID; hosts accept
+    /// only the audience in their `auth.audience`.
+    #[serde(default)]
+    pub resource: Option<Url>,
 }
 
 impl WorkerClient {
