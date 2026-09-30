@@ -7,7 +7,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::capacity::Capacity;
+use crate::capacity::{Capacity, Room};
 use crate::parse::text_type;
 
 /// What the user wants a workspace to be. Set through the API; owned by the
@@ -214,6 +214,21 @@ pub enum Effect {
     Delete,
 }
 
+impl Effect {
+    /// Whether the effect puts a workspace's memory back in use.
+    const fn uses_memory(self) -> bool {
+        match self {
+            Self::Start | Self::Thaw => true,
+            Self::Create
+            | Self::DeliverSecrets
+            | Self::Provision
+            | Self::Freeze
+            | Self::Stop
+            | Self::Delete => false,
+        }
+    }
+}
+
 /// Why nothing can happen yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -264,6 +279,19 @@ pub fn plan(desired: Desired, instance: Instance, capacity: Capacity) -> Plan {
             plan_live(live, desired.secrets, present, capacity)
         }
     }
+}
+
+/// Plans one workspace in a pass over a host, charging `room` for any start
+/// or thaw so that the pass as a whole fits in what the host has.
+#[must_use]
+pub fn plan_within(desired: Desired, instance: Instance, room: &mut Room) -> Plan {
+    let next = plan(desired, instance, room.capacity());
+    if let Plan::Perform(effect) = next
+        && effect.uses_memory()
+    {
+        *room = room.charge();
+    }
+    next
 }
 
 #[expect(
@@ -472,6 +500,32 @@ mod tests {
         available: Bytes::gib(1),
         needed: Bytes::gib(3),
     };
+
+    #[test]
+    fn one_pass_admits_only_what_fits() {
+        let stopped = present(Runtime::Stopped, Provisioning::Complete);
+        let want = desired(DesiredState::Running);
+        // Room for two reservations, with headroom kept once.
+        let mut room = Room::new(Bytes::gib(3), Bytes::gib(1), Bytes::gib(1));
+        let plans: Vec<Plan> = (0..4)
+            .map(|_| plan_within(want, stopped, &mut room))
+            .collect();
+        assert_eq!(&plans[..2], &[Plan::Perform(Effect::Start); 2]);
+        assert!(
+            matches!(plans[2], Plan::Wait(Wait::Capacity(_))),
+            "{plans:?}"
+        );
+        // Steps that don't bring memory back don't draw on the room.
+        let mut room = Room::new(Bytes::gib(2), Bytes::gib(1), Bytes::gib(1));
+        assert_eq!(
+            plan_within(want, Instance::Absent, &mut room),
+            Plan::Perform(Effect::Create)
+        );
+        assert_eq!(
+            plan_within(want, stopped, &mut room),
+            Plan::Perform(Effect::Start)
+        );
+    }
 
     #[test]
     fn a_new_workspace_is_created_then_started_then_brought_up() {

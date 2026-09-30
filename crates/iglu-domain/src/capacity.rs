@@ -32,6 +32,11 @@ impl Bytes {
     }
 
     #[must_use]
+    pub const fn saturating_sub(self, other: Self) -> Self {
+        Self(self.0.saturating_sub(other.0))
+    }
+
+    #[must_use]
     pub const fn saturating_add(self, other: Self) -> Self {
         Self(self.0.saturating_add(other.0))
     }
@@ -68,6 +73,42 @@ pub fn admit(available: Bytes, reservation: Bytes, headroom: Bytes) -> Capacity 
         Capacity::Fits
     } else {
         Capacity::Short { available, needed }
+    }
+}
+
+/// Room on one host during a single pass over its workspaces. `MemAvailable`
+/// shows a start only once the workspace is using memory, so every start or
+/// thaw admitted during the pass is charged its reservation here instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Room {
+    available: Bytes,
+    reservation: Bytes,
+    headroom: Bytes,
+}
+
+impl Room {
+    #[must_use]
+    pub const fn new(available: Bytes, reservation: Bytes, headroom: Bytes) -> Self {
+        Self {
+            available,
+            reservation,
+            headroom,
+        }
+    }
+
+    /// Whether one more workspace fits.
+    #[must_use]
+    pub fn capacity(self) -> Capacity {
+        admit(self.available, self.reservation, self.headroom)
+    }
+
+    /// What's left once one more workspace is admitted.
+    #[must_use]
+    pub const fn charge(self) -> Self {
+        Self {
+            available: self.available.saturating_sub(self.reservation),
+            ..self
+        }
     }
 }
 

@@ -1,14 +1,14 @@
 //! The reconciler: observe every host, decide each workspace's next step
-//! with the core's `plan()`, perform it, and record what happened.
+//! with the core's `plan_within()`, perform it, and record what happened.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use iglu_domain::capacity::admit;
+use iglu_domain::capacity::Room;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::lifecycle::{
-    AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan,
+    AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
 use iglu_domain::secret::{SecretValue, bundle};
 use iglu_proto::{
@@ -169,7 +169,7 @@ async fn reconcile_host(
 
     let workspaces: Vec<WorkspaceRecord> =
         live.into_iter().filter(|ws| ws.host == host.id).collect();
-    let capacity = admit(
+    let mut room = Room::new(
         inventory.host.memory_available,
         app.config.workspaces.reservation,
         app.config.workspaces.headroom,
@@ -186,7 +186,7 @@ async fn reconcile_host(
             state: ws.desired,
             secrets: principal.secrets_generation,
         };
-        let next = plan(desired, instance, capacity);
+        let next = plan_within(desired, instance, &mut room);
         changed |= act(app, reconciler, host, ws, principal, next).await?;
     }
     if changed {
