@@ -107,6 +107,13 @@ try:
         )
         assert status == "403", status
 
+    with subtest("a sign-in finishes only in the browser that started it"):
+        authorize = client.succeed(f"curl -sS -o /dev/null -w '%{{redirect_url}}' {CONSOLE}/auth/login")
+        state = found(r"[?&]state=([^&]+)", authorize)
+        # Another browser, without the sign-in cookie, follows the callback.
+        refused = client.succeed(f"curl -sS '{CONSOLE}/auth/callback?code=stolen&state={state}'")
+        assert "browser that started it" in refused, refused
+
     with subtest("the CLI signs in through the browser"):
         client.succeed(
             "systemd-run --unit=cli-login --setenv=HOME=/root "
@@ -136,6 +143,9 @@ try:
         names = {s["name"] for s in iglu("secret ls")}
         assert names == {"deploy-key", "token", "git-https", "git-ca", "git-config"}, names
         assert "hunter2" not in client.succeed(f"{IGLU} --json secret ls")
+        # A second secret for a destination one already has is refused.
+        client.fail(f"printf other | {IGLU} secret set clash --env TEST_TOKEN")
+        client.fail(f"printf other | {IGLU} secret set clash --file .config/git/config/extra")
 
     with subtest("a workspace created in the browser starts from the private repository"):
         created = browser("create", "example", f"ssh://git@{GIT_ADDRESS}/srv/git/app.git", "demo")
