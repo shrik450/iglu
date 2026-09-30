@@ -682,6 +682,19 @@ pub fn live_workspaces(tx: &Connection) -> Result<Vec<WorkspaceRecord>, DbError>
         .collect::<Result<_, _>>()?)
 }
 
+/// Whether a workspace existed and has been deleted, as opposed to one this
+/// database has never heard of.
+pub fn is_deleted(tx: &Connection, id: WorkspaceId) -> Result<bool, DbError> {
+    Ok(tx
+        .query_row(
+            "SELECT 1 FROM workspace WHERE id = ?1 AND deleted_at IS NOT NULL",
+            [id.to_string()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 /// Sets the desired state if the revision still matches `expected`.
 /// Returns the new revision, or `None` on a revision conflict.
 pub fn set_desired(

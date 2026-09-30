@@ -34,10 +34,19 @@ struct Backoff {
 pub struct Reconciler {
     busy: Mutex<HashSet<WorkspaceId>>,
     backoff: Mutex<HashMap<WorkspaceId, Backoff>>,
+    /// Unknown instances already reported, so each is logged once.
+    strangers: Mutex<HashSet<WorkspaceId>>,
     pub kick: tokio::sync::Notify,
 }
 
 impl Reconciler {
+    fn first_sighting(&self, id: WorkspaceId) -> bool {
+        self.strangers
+            .lock()
+            .expect("the strangers lock is never held across a panic")
+            .insert(id)
+    }
+
     fn try_claim(&self, id: WorkspaceId) -> bool {
         let ready = self
             .backoff
@@ -143,34 +152,22 @@ async fn reconcile_host(
     host: &Arc<HostClient>,
     inventory: Inventory,
 ) -> anyhow::Result<()> {
-    let host_id = host.id.clone();
     let reports: HashMap<WorkspaceId, InstanceReport> = inventory
         .workspaces
         .into_iter()
         .map(|report| (report.workspace, report))
         .collect();
-    let known: HashSet<WorkspaceId> = app
-        .db
-        .call(|tx| {
-            Ok(db::live_workspaces(tx)?
-                .into_iter()
-                .map(|ws| ws.id)
-                .collect())
-        })
-        .await?;
-    for orphan in reports.keys().filter(|id| !known.contains(id)) {
-        tracing::debug!(workspace = %orphan, "the host has an instance with no live workspace");
-    }
+    let live: Vec<WorkspaceRecord> = app.db.call(|tx| db::live_workspaces(tx)).await?;
+    let known: HashSet<WorkspaceId> = live.iter().map(|ws| ws.id).collect();
+    let strays: Vec<WorkspaceId> = reports
+        .keys()
+        .filter(|id| !known.contains(id))
+        .copied()
+        .collect();
+    sweep(app, reconciler, host, strays).await?;
 
-    let workspaces: Vec<WorkspaceRecord> = app
-        .db
-        .call(move |tx| {
-            Ok(db::live_workspaces(tx)?
-                .into_iter()
-                .filter(|ws| ws.host == host_id)
-                .collect())
-        })
-        .await?;
+    let workspaces: Vec<WorkspaceRecord> =
+        live.into_iter().filter(|ws| ws.host == host.id).collect();
     let capacity = admit(
         inventory.host.memory_available,
         app.config.workspaces.reservation,
@@ -193,6 +190,55 @@ async fn reconcile_host(
     }
     if changed {
         app.changed();
+    }
+    Ok(())
+}
+
+/// Deals with instances that have no live workspace. One whose workspace
+/// was deleted is left over from an interrupted delete, and goes. One this
+/// database has never seen stays: the database may have been restored from
+/// a backup older than the workspace, and deleting would destroy its work.
+async fn sweep(
+    app: &Arc<App>,
+    reconciler: &Arc<Reconciler>,
+    host: &Arc<HostClient>,
+    strays: Vec<WorkspaceId>,
+) -> anyhow::Result<()> {
+    if strays.is_empty() {
+        return Ok(());
+    }
+    let deleted: Vec<(WorkspaceId, bool)> = app
+        .db
+        .call(move |tx| {
+            strays
+                .into_iter()
+                .map(|id| Ok((id, db::is_deleted(tx, id)?)))
+                .collect()
+        })
+        .await?;
+    for (id, deleted) in deleted {
+        if !deleted {
+            if reconciler.first_sighting(id) {
+                tracing::warn!(
+                    host = %host.id,
+                    workspace = %id,
+                    "the host has an iglu instance this database has never seen; leaving it alone"
+                );
+            }
+            continue;
+        }
+        if reconciler.try_claim(id) {
+            let reconciler = reconciler.clone();
+            let host = host.clone();
+            tokio::spawn(async move {
+                let result = host.command(id, &Command::Delete).await;
+                let succeeded = matches!(result, Ok(CommandOutcome::Done { .. }));
+                if !succeeded {
+                    tracing::warn!(workspace = %id, ?result, "removing a deleted workspace's instance failed");
+                }
+                reconciler.release(id, succeeded);
+            });
+        }
     }
     Ok(())
 }
