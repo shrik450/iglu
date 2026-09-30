@@ -1,0 +1,5 @@
+/target/
+/result
+/result-*
+node_modules/
+/console/dist/
