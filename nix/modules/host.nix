@@ -146,13 +146,6 @@ in
     virtualisation.incus = {
       enable = true;
       preseed = {
-        storage_pools = [
-          {
-            name = "iglu";
-            driver = "btrfs";
-            config.source = cfg.storage.source;
-          }
-        ];
         networks = [
           {
             name = cfg.network.name;
@@ -183,6 +176,26 @@ in
           }
         ];
       };
+    };
+
+    # Incus rewrites a block device pool's source once it creates the pool, so
+    # the preseed, which reapplies its settings at every boot, would fail
+    # trying to change it back. Create the pool once instead.
+    systemd.services.iglu-storage-pool = {
+      description = "Create iglu's Incus storage pool";
+      requires = [ "incus.service" ];
+      after = [ "incus.service" ];
+      before = [ "incus-preseed.service" ];
+      requiredBy = [ "incus-preseed.service" ];
+      path = [ incus.clientPackage ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        incus storage show iglu >/dev/null 2>&1 ||
+          incus storage create iglu btrfs source=${lib.escapeShellArg cfg.storage.source}
+      '';
     };
 
     users.users.iglu-build = {
