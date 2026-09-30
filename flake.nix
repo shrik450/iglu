@@ -17,6 +17,40 @@
       forSystems = list: f: lib.genAttrs list (system: f nixpkgs.legacyPackages.${system});
     in
     {
+      packages = forSystems systems (
+        pkgs:
+        let
+          all = import ./nix/packages.nix { inherit (pkgs) lib rustPlatform buildNpmPackage; };
+        in
+        # Only the CLI runs off Linux.
+        if pkgs.stdenv.hostPlatform.isLinux then all else { inherit (all) iglu; }
+      );
+
+      nixosModules = {
+        workspace = import ./nix/modules/workspace.nix { inherit self; };
+        host = import ./nix/modules/host.nix { inherit self; };
+        control = import ./nix/modules/control.nix { inherit self; };
+      };
+
+      # A minimal environment: `iglu env add example <this flake>#example`.
+      nixosConfigurations.example = lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          self.nixosModules.workspace
+          {
+            iglu.user = "dev";
+            system.stateVersion = "26.05";
+          }
+        ];
+      };
+
+      templates.workspace = {
+        path = ./templates/workspace;
+        description = "An iglu environment: a NixOS workspace for coding agents";
+      };
+
+      checks = forSystems linux (pkgs: self.packages.${pkgs.stdenv.hostPlatform.system});
+
       devShells = forSystems systems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
