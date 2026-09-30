@@ -480,7 +480,7 @@ async fn unpublish_route(
     owned_workspace(&app, &caller, id, Action::PublishRoute).await?;
     let removed = app
         .db
-        .call(move |tx| db::delete_route(tx, id, route, now()))
+        .call(move |tx| db::delete_route(tx, id, route))
         .await?;
     app.changed();
     if removed {

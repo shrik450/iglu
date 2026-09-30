@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
-use iglu_domain::auth::Action;
+use iglu_domain::auth::{Action, Decision, DenyReason, Resource, authorize};
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::{PREVIEW_AUTH_LABEL, RouteName};
 use iglu_domain::port::GuestPort;
@@ -18,9 +18,7 @@ use iglu_domain::preview::{
     MethodClass, PreviewAccess, RequestSource, Transport, preview_access, preview_may_set_cookie,
 };
 
-use crate::app::{
-    App, Caller, PREVIEW_COOKIE, cookie, fetch_metadata, session_principal, transport,
-};
+use crate::app::{App, PREVIEW_COOKIE, cookie, fetch_metadata, session_principal, transport};
 use crate::db::{self, SessionKind};
 
 type Upstream = (WorkspaceId, GuestPort);
@@ -216,13 +214,17 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
             }
         };
     };
-    let caller = Caller {
-        principal,
-        session_hash: String::new(),
-        kind: SessionKind::Preview,
-    };
-    if let Err(error) = caller.authorize(Action::UsePreview, ws.owner) {
-        return error.into_response();
+    match authorize(
+        principal.principal(),
+        Action::UsePreview,
+        Resource { owner: ws.owner },
+    ) {
+        Decision::Allow => {}
+        // Other people's previews look missing, not forbidden.
+        Decision::Deny(DenyReason::NotOwner) => {
+            return reject(StatusCode::NOT_FOUND, "no such preview");
+        }
+        Decision::Deny(reason) => return reject(StatusCode::FORBIDDEN, &reason.to_string()),
     }
 
     let from = source(&app, request.headers(), &name, ws.id).await;
@@ -231,17 +233,6 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
         PreviewAccess::Reject => {
             return reject(StatusCode::FORBIDDEN, "cross-workspace request refused");
         }
-    }
-    if request
-        .headers()
-        .get("service-worker")
-        .is_some_and(|v| v.as_bytes() == b"script")
-    {
-        let flagged = name.clone();
-        let _ = app
-            .db
-            .call(move |tx| db::flag_service_worker(tx, &flagged))
-            .await;
     }
     let Some(host) = app.host(&ws.host) else {
         return reject(StatusCode::SERVICE_UNAVAILABLE, "host unavailable");
@@ -324,13 +315,13 @@ async fn forward(
     let upstream_request = Request::from_parts(parts, body);
 
     let key = (workspace, port);
-    let mut sender = match (websocket, app_pool(app).take(key)) {
+    let mut sender = match (websocket, app.pool.take(key)) {
         (false, Some(sender)) => sender,
         (true, _) | (false, None) => connect(host, workspace, port).await?,
     };
     let mut response = sender.send_request(upstream_request).await?;
     if !websocket {
-        app_pool(app).put(key, sender);
+        app.pool.put(key, sender);
     }
 
     if let (Some(client_upgrade), StatusCode::SWITCHING_PROTOCOLS) =
@@ -360,10 +351,6 @@ async fn forward(
     strip_hop_by_hop(&mut parts.headers, false);
     filter_app_cookies(&mut parts.headers);
     Ok(Response::from_parts(parts, Body::new(body)))
-}
-
-fn app_pool(app: &App) -> &Pool {
-    &app.pool
 }
 
 #[cfg(test)]

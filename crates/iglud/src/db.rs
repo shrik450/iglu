@@ -759,12 +759,8 @@ pub fn set_condition(
     Ok(())
 }
 
-/// Marks a workspace deleted and retires its route names.
+/// Marks a workspace deleted and removes its routes; their names stay taken.
 pub fn mark_deleted(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<(), DbError> {
-    tx.execute(
-        "UPDATE route_name SET retired_at = ?2 WHERE name IN (SELECT name FROM route WHERE workspace_id = ?1)",
-        params![id.to_string(), now.unix_millis()],
-    )?;
     tx.execute(
         "DELETE FROM route WHERE workspace_id = ?1",
         [id.to_string()],
@@ -904,7 +900,7 @@ pub fn create_route(
         return Ok(NewRoute::Exists(existing));
     }
     let inserted = tx.execute(
-        "INSERT INTO route_name (name, owner_id, generation) VALUES (?1, ?2, 1) ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO route_name (name, owner_id) VALUES (?1, ?2) ON CONFLICT (name) DO NOTHING",
         params![name.as_str(), owner.to_string()],
     )?;
     if inserted == 0 {
@@ -947,34 +943,12 @@ pub fn route_by_name(tx: &Connection, name: &RouteName) -> Result<Option<RouteRe
         .optional()?)
 }
 
-pub fn delete_route(
-    tx: &Connection,
-    workspace: WorkspaceId,
-    id: RouteId,
-    now: Timestamp,
-) -> Result<bool, DbError> {
-    let name: Option<String> = tx
-        .query_row(
-            "SELECT name FROM route WHERE id = ?1 AND workspace_id = ?2",
-            params![id.to_string(), workspace.to_string()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(name) = name else { return Ok(false) };
-    tx.execute("DELETE FROM route WHERE id = ?1", [id.to_string()])?;
-    tx.execute(
-        "UPDATE route_name SET retired_at = ?2 WHERE name = ?1",
-        params![name, now.unix_millis()],
+pub fn delete_route(tx: &Connection, workspace: WorkspaceId, id: RouteId) -> Result<bool, DbError> {
+    let deleted = tx.execute(
+        "DELETE FROM route WHERE id = ?1 AND workspace_id = ?2",
+        params![id.to_string(), workspace.to_string()],
     )?;
-    Ok(true)
-}
-
-pub fn flag_service_worker(tx: &Connection, name: &RouteName) -> Result<(), DbError> {
-    tx.execute(
-        "UPDATE route_name SET sw_seen = 1 WHERE name = ?1",
-        [name.as_str()],
-    )?;
-    Ok(())
+    Ok(deleted > 0)
 }
 
 // ---- secrets ----
@@ -1312,7 +1286,7 @@ mod tests {
             create_route(&conn, RouteId::from_uuid(Uuid::new_v4()), ws.id, owner, &name, port, at(2)),
             Ok(NewRoute::Exists(route)) if route.id == created.id
         ));
-        assert!(delete_route(&conn, ws.id, created.id, at(3)).expect("delete"));
+        assert!(delete_route(&conn, ws.id, created.id).expect("delete"));
 
         let other = workspace_record(owner, ws.env_revision, "other");
         insert_workspace(&conn, &other, None, "hash").expect("workspace");

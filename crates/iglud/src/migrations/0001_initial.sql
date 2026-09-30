@@ -91,14 +91,12 @@ CREATE TABLE attention (
     PRIMARY KEY (workspace_id, session)
 ) STRICT;
 
--- Names are owned separately from routes so they can later be rebound. A
--- name that ever served a service worker must never move to another owner.
+-- Every preview name ever handed out, kept after its route goes so it's never
+-- reused: a browser's cookies, caches and service workers for one app must
+-- never reach another's.
 CREATE TABLE route_name (
     name        TEXT PRIMARY KEY,
-    owner_id    TEXT NOT NULL REFERENCES principal (id),
-    generation  INTEGER NOT NULL,
-    sw_seen     INTEGER NOT NULL DEFAULT 0,
-    retired_at  INTEGER
+    owner_id    TEXT NOT NULL REFERENCES principal (id)
 ) STRICT;
 
 CREATE TABLE route (
