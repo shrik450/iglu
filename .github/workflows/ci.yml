@@ -14,46 +14,25 @@ concurrency:
 
 jobs:
   checks:
-    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      # Every flake check runs; the slow VM test gets its own job.
-      matrix:
-        include:
-          - name: checks
-            select: 'name: name != "e2e"'
-          - name: e2e
-            select: 'name: name == "e2e"'
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
-      # NixOS VM tests need /dev/kvm, which the runner has but doesn't expose.
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
       - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            system-features = nixos-test benchmark big-parallel kvm
 
       - uses: DeterminateSystems/magic-nix-cache-action@v15
         with:
           use-flakehub: false
           diagnostic-endpoint: ""
 
+      # Every flake check except the VM test, which is too heavy for hosted
+      # runners and runs locally with `just e2e`.
       - name: nix build
-        env:
-          SELECT: ${{ matrix.select }}
         run: |
           mapfile -t checks < <(
             nix eval --json .#checks.x86_64-linux \
-              --apply "checks: builtins.filter ($SELECT) (builtins.attrNames checks)" \
+              --apply 'checks: builtins.filter (name: name != "e2e") (builtins.attrNames checks)' \
               | jq -r '.[]'
           )
           echo "checks: ${checks[*]}"

@@ -1,5 +1,6 @@
 # iglu's development commands. Run them from `nix develop`.
-# CI runs the same checks through `nix flake check`; see nix/checks.nix.
+# CI runs the same checks, except the VM test, through the flake; see
+# nix/checks.nix.
 
 # List the recipes.
 default:
@@ -25,7 +26,7 @@ test:
 console:
     cd console && npm ci && npm run build
 
-# Run everything CI runs. On x86_64-linux with KVM, that includes the VM test.
+# Run every flake check: CI's, plus the VM test on x86_64-linux with KVM.
 check:
     nix flake check -L
 

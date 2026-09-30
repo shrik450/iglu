@@ -19,7 +19,7 @@ console/           # TypeScript web console (ghostty-web terminals)
 nix/               # NixOS modules, packages, checks, and VM integration tests
 templates/         # `nix flake init -t` starting points for environments
 justfile           # development commands
-.github/workflows/ # CI, which runs the flake checks
+.github/workflows/ # CI, which runs the flake checks except the VM test
 ```
 
 ## Commands
@@ -32,13 +32,17 @@ just fmt       # format Rust and Nix
 just lint      # rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint
 just test      # the unit tests; fast, run anywhere
 just console   # type-check and bundle the console
-just check     # everything CI runs: `nix flake check`
+just check     # every flake check: CI's, plus the VM test on x86_64-linux
 just e2e       # the VM test; needs x86_64-linux with KVM, locally or as a remote builder
 ```
 
-CI runs every flake check on pull requests and on `main`
+CI runs every flake check except the VM test on pull requests and on `main`
 (`.github/workflows/ci.yml`). The checks live in `nix/checks.nix` and the
 flake, so adding one there adds it to CI. Run `just lint test` before pushing.
+
+The VM test is too heavy for hosted runners, so it runs only locally. Run
+`just e2e` before merging changes to hostd, the guest tools, the NixOS
+modules, or anything else that touches a real host or guest.
 
 Clippy's pedantic group is on for the whole workspace. Fix what it finds.
 When a lint is wrong for a specific item, silence it there with
