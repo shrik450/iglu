@@ -237,7 +237,7 @@ async fn transition(
             ws.id,
             &SetDesiredState {
                 state,
-                expected_revision: Some(ws.revision),
+                expected_revision: ws.revision,
             },
         )
         .await?;

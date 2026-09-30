@@ -223,10 +223,9 @@ pub struct CreateWorkspace {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct SetDesiredState {
     pub state: DesiredState,
-    /// Refuses the change if the workspace moved on since this revision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub expected_revision: Option<Revision>,
+    /// Refuses the change if the workspace moved on since this revision, so
+    /// it applies only to what the caller saw.
+    pub expected_revision: Revision,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

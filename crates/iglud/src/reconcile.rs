@@ -332,13 +332,19 @@ async fn act(
                     "the host restarted, so the frozen workspace is now stopped"
                 }
             };
-            app.db
+            // Only if the owner hasn't changed their mind since this pass read it.
+            let seen = ws.revision;
+            let adopted = app
+                .db
                 .call(move |tx| {
-                    db::set_desired(tx, id, state, None)?;
-                    db::add_activity(tx, Some(id), None, "adopted", detail, now())
+                    let changed = db::set_desired(tx, id, state, seen)?.is_some();
+                    if changed {
+                        db::add_activity(tx, Some(id), None, "adopted", detail, now())?;
+                    }
+                    Ok(changed)
                 })
                 .await?;
-            Ok(true)
+            Ok(adopted)
         }
         Plan::Perform(effect) => {
             if reconciler.try_claim(id) {

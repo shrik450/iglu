@@ -701,7 +701,7 @@ pub fn set_desired(
     tx: &Connection,
     id: WorkspaceId,
     desired: DesiredState,
-    expected: Option<Revision>,
+    expected: Revision,
 ) -> Result<Option<Revision>, DbError> {
     let current: Option<i64> = tx
         .query_row(
@@ -716,7 +716,7 @@ pub fn set_desired(
     else {
         return Ok(None);
     };
-    if expected.is_some_and(|expected| expected != current) {
+    if expected != current {
         return Ok(None);
     }
     let next = current.next();
@@ -1274,12 +1274,12 @@ mod tests {
         let conn = conn();
         let owner = principal(&conn, "alice");
         let ws = new_workspace(&conn, owner, "demo");
-        let stale = Some(Revision::from_u64(7));
+        let stale = Revision::from_u64(7);
         assert_eq!(
             set_desired(&conn, ws.id, DesiredState::Frozen, stale).expect("query"),
             None
         );
-        let next = set_desired(&conn, ws.id, DesiredState::Frozen, Some(ws.revision))
+        let next = set_desired(&conn, ws.id, DesiredState::Frozen, ws.revision)
             .expect("query")
             .expect("the revision matched");
         assert_eq!(next, ws.revision.next());

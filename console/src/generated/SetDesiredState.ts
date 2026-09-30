@@ -4,6 +4,7 @@ import type { Revision } from "./Revision";
 
 export type SetDesiredState = { state: DesiredState, 
 /**
- * Refuses the change if the workspace moved on since this revision.
+ * Refuses the change if the workspace moved on since this revision, so
+ * it applies only to what the caller saw.
  */
-expected_revision?: Revision, };
+expected_revision: Revision, };
