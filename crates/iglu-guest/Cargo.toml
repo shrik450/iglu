@@ -1,0 +1,24 @@
+[package]
+name = "iglu-guest"
+description = "Tools baked into iglu workspace images"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "iglu-guest"
+path = "src/bin/iglu-guest.rs"
+
+[[bin]]
+name = "iglu-status"
+path = "src/bin/iglu-status.rs"
+
+[dependencies]
+iglu-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
