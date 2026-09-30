@@ -139,6 +139,22 @@ in
       ];
       allowedTCPPorts = [ 53 ];
     };
+    # The egress ACL keeps workspaces off private networks, but it counts the
+    # host's own public addresses as the Internet. Whatever a workspace sends
+    # the host itself, beyond DHCP and DNS on the bridge, is dropped here,
+    # ahead of the firewall's allowances for SSH, hostd and the like.
+    networking.nftables.tables.iglu-host-guard = {
+      family = "inet";
+      content = ''
+        chain input {
+          type filter hook input priority filter - 10; policy accept;
+          iifname "${cfg.network.name}" ct state established,related accept
+          iifname "${cfg.network.name}" udp dport { 53, 67 } accept
+          iifname "${cfg.network.name}" tcp dport 53 accept
+          iifname "${cfg.network.name}" drop
+        }
+      '';
+    };
     networking.firewall.allowedTCPPorts = lib.optional cfg.openFirewall (
       lib.toInt (lib.last (lib.splitString ":" cfg.listen))
     );

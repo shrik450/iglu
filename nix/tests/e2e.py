@@ -152,6 +152,8 @@ try:
     with subtest("workspaces reach the Internet but not private networks"):
         guest(f"nc -z -w 5 {GIT_ADDRESS} 22")
         guest(f"! nc -z -w 5 {HOST_IP} 7443")
+        # The host's own address in public space is still the host.
+        guest("! nc -z -w 5 11.0.0.1 7443")
         guest(f"! nc -z -w 5 {CONTROL_IP} 443")
 
     with subtest("the browser's terminal runs in the workspace with secrets in its environment"):
