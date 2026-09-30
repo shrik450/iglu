@@ -1,0 +1,29 @@
+[package]
+name = "iglu-cli"
+description = "The iglu command"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "iglu"
+path = "src/main.rs"
+
+[dependencies]
+iglu-domain.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+clap = { version = "4.6.7", features = ["derive"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+sha2 = "0.11.0"
+base64 = "0.23.1"
+getrandom = "0.4.3"
+url = { version = "2.5.8", features = ["serde"] }
+
+[lints]
+workspace = true
