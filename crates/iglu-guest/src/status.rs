@@ -35,26 +35,6 @@ pub fn update(mut statuses: Statuses, session: SessionName, entry: Option<Entry>
     statuses
 }
 
-/// Maps a Claude Code hook event to a status. Events that say nothing about
-/// whether the user is needed map to `None` and leave the status alone.
-#[must_use]
-pub fn claude_event(event: &str, message: Option<&str>) -> Option<(AttentionState, Summary)> {
-    let summary = Summary::sanitize;
-    match event {
-        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => {
-            Some((AttentionState::Working, summary("")))
-        }
-        "Notification" => Some((
-            AttentionState::Waiting,
-            summary(message.unwrap_or("needs your attention")),
-        )),
-        "Stop" => Some((AttentionState::Done, summary(""))),
-        "SessionStart" => Some((AttentionState::Idle, summary(""))),
-        "SessionEnd" => Some((AttentionState::Exited, summary(""))),
-        _ => None,
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum StatusError {
     #[error("status file: {0}")]
@@ -122,29 +102,5 @@ mod tests {
         );
         assert_eq!(set.get(&t1).map(|e| e.state), Some(AttentionState::Working));
         assert!(update(set, t1, None).is_empty());
-    }
-
-    #[test]
-    fn claude_events_map_to_attention() {
-        assert_eq!(
-            claude_event("UserPromptSubmit", None).map(|s| s.0),
-            Some(AttentionState::Working)
-        );
-        assert_eq!(
-            claude_event("PostToolUse", None).map(|s| s.0),
-            Some(AttentionState::Working)
-        );
-        let (state, summary) = claude_event(
-            "Notification",
-            Some("Claude needs your permission to use Bash"),
-        )
-        .expect("notifications map");
-        assert_eq!(state, AttentionState::Waiting);
-        assert_eq!(summary.as_str(), "Claude needs your permission to use Bash");
-        assert_eq!(
-            claude_event("Stop", None).map(|s| s.0),
-            Some(AttentionState::Done)
-        );
-        assert_eq!(claude_event("PreCompact", None), None);
     }
 }

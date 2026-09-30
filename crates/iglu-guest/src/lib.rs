@@ -4,6 +4,7 @@
 //! Each module keeps its decisions in pure functions and its I/O in a thin
 //! `run`/`apply` layer.
 
+pub mod claude;
 pub mod credential;
 pub mod paths;
 pub mod provision;

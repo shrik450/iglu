@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use iglu_domain::attention::{AttentionState, Summary};
 use iglu_domain::terminal::SessionName;
+use iglu_guest::claude;
 use iglu_guest::status::{self, Entry};
-use serde::Deserialize;
 
 const USAGE: &str = "usage:
   iglu-status set <working|waiting|done|idle|exited> [summary...]
@@ -23,13 +23,6 @@ fn now_millis() -> i64 {
         .ok()
         .and_then(|d| i64::try_from(d.as_millis()).ok())
         .unwrap_or(0)
-}
-
-#[derive(Deserialize)]
-struct HookEvent {
-    hook_event_name: String,
-    #[serde(default)]
-    message: Option<String>,
 }
 
 fn record(session: SessionName, change: Option<(AttentionState, Summary)>) -> ExitCode {
@@ -68,14 +61,9 @@ fn main() -> ExitCode {
         Some("claude-hook") => {
             let mut input = String::new();
             let _ = std::io::stdin().read_to_string(&mut input);
-            match serde_json::from_str::<HookEvent>(&input) {
-                Ok(event) => {
-                    match status::claude_event(&event.hook_event_name, event.message.as_deref()) {
-                        Some(change) => record(session, Some(change)),
-                        None => ExitCode::SUCCESS,
-                    }
-                }
-                Err(_) => ExitCode::SUCCESS,
+            match claude::parse(&input).as_ref().and_then(claude::attention) {
+                Some(change) => record(session, Some(change)),
+                None => ExitCode::SUCCESS,
             }
         }
         Some(_) | None => {

@@ -74,10 +74,10 @@ in
       type = lib.types.bool;
       default = true;
       description = ''
-        Report Claude Code activity to the console through hooks in Claude
-        Code's managed settings. Turn this off if the configuration manages
-        `/etc/claude-code/managed-settings.json` itself, and call
-        `iglu-status claude-hook` from its hooks instead.
+        Report Claude Code activity to the console through hooks in a Claude
+        Code managed-settings drop-in, which adds to any hooks the user or
+        other managed settings define. Turn it off to call
+        `iglu-status claude-hook` from your own hooks instead.
       '';
     };
   };
@@ -160,7 +160,7 @@ in
     }
 
     (lib.mkIf cfg.claudeCode.hooks {
-      environment.etc."claude-code/managed-settings.json".text = builtins.toJSON {
+      environment.etc."claude-code/managed-settings.d/50-iglu.json".text = builtins.toJSON {
         hooks =
           lib.genAttrs claudeEvents (_: [ { hooks = [ claudeHook ]; } ])
           // lib.genAttrs claudeToolEvents (_: [
