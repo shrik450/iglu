@@ -27,7 +27,7 @@ use crate::model::PrincipalRecord;
 use crate::oidc::RelyingParty;
 
 pub const CONSOLE_COOKIE: &str = "__Host-iglu";
-pub const PREVIEW_COOKIE: &str = "__Secure-iglu-preview";
+pub use iglu_domain::preview::PREVIEW_COOKIE;
 pub const CSRF_HEADER: &str = "x-csrf-token";
 
 pub struct App {

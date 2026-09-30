@@ -14,7 +14,9 @@ use iglu_domain::auth::Action;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::{PREVIEW_AUTH_LABEL, RouteName};
 use iglu_domain::port::GuestPort;
-use iglu_domain::preview::{MethodClass, PreviewAccess, RequestSource, Transport, preview_access};
+use iglu_domain::preview::{
+    MethodClass, PreviewAccess, RequestSource, Transport, preview_access, preview_may_set_cookie,
+};
 
 use crate::app::{
     App, Caller, PREVIEW_COOKIE, cookie, fetch_metadata, session_principal, transport,
@@ -125,6 +127,20 @@ fn strip_hop_by_hop(headers: &mut HeaderMap, keep_upgrade: bool) {
             continue;
         }
         headers.remove(*name);
+    }
+}
+
+/// Drops the app's cookies that would reach beyond its own preview.
+fn filter_app_cookies(headers: &mut HeaderMap) {
+    let allowed: Vec<HeaderValue> = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter(|value| value.to_str().is_ok_and(preview_may_set_cookie))
+        .cloned()
+        .collect();
+    headers.remove(header::SET_COOKIE);
+    for value in allowed {
+        headers.append(header::SET_COOKIE, value);
     }
 }
 
@@ -335,12 +351,14 @@ async fn forward(
                 }
             }
         });
-        let (parts, _) = response.into_parts();
+        let (mut parts, _) = response.into_parts();
+        filter_app_cookies(&mut parts.headers);
         return Ok(Response::from_parts(parts, Body::empty()));
     }
 
     let (mut parts, body) = response.into_parts();
     strip_hop_by_hop(&mut parts.headers, false);
+    filter_app_cookies(&mut parts.headers);
     Ok(Response::from_parts(parts, Body::new(body)))
 }
 

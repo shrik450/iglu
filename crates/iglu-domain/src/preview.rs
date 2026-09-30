@@ -214,9 +214,54 @@ pub fn console_access(
     }
 }
 
+/// The preview gateway's own session cookie, set for the whole preview domain.
+pub const PREVIEW_COOKIE: &str = "__Secure-iglu-preview";
+
+/// Whether a preview app's `Set-Cookie` may reach the browser. Apps keep
+/// host-only cookies of their own. A `Domain` attribute would hand the
+/// cookie to every other preview, where one workspace's app could plant
+/// cookies on another's, and the gateway's cookie is never an app's to set.
+#[must_use]
+pub fn preview_may_set_cookie(set_cookie: &str) -> bool {
+    let mut parts = set_cookie.split(';');
+    let name = parts
+        .next()
+        .and_then(|pair| pair.split_once('='))
+        .map(|(name, _)| name.trim());
+    let scoped_wider = parts.any(|attribute| {
+        attribute
+            .split_once('=')
+            .map_or(attribute, |(key, _)| key)
+            .trim()
+            .eq_ignore_ascii_case("domain")
+    });
+    name.is_some_and(|name| !name.is_empty() && !name.eq_ignore_ascii_case(PREVIEW_COOKIE))
+        && !scoped_wider
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_apps_set_only_their_own_cookies() {
+        assert!(preview_may_set_cookie(
+            "session=abc; Path=/; HttpOnly; Secure"
+        ));
+        assert!(preview_may_set_cookie("__Host-app=1; Path=/; Secure"));
+        assert!(!preview_may_set_cookie(
+            "session=abc; Domain=dev.example.org; Path=/"
+        ));
+        assert!(!preview_may_set_cookie(
+            "session=abc; path=/; DOMAIN=.example.org"
+        ));
+        assert!(!preview_may_set_cookie(
+            "__Secure-iglu-preview=forged; Path=/; Secure"
+        ));
+        assert!(!preview_may_set_cookie("__secure-IGLU-preview=forged"));
+        assert!(!preview_may_set_cookie("no-equals-sign"));
+        assert!(!preview_may_set_cookie("=nameless"));
+    }
 
     const GET: Transport = Transport::Http(MethodClass::Safe);
     const POST: Transport = Transport::Http(MethodClass::Unsafe);
