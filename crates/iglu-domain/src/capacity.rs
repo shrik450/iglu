@@ -10,22 +10,27 @@ use serde::{Deserialize, Serialize};
 pub struct Bytes(u64);
 
 impl Bytes {
+    #[must_use]
     pub const fn new(bytes: u64) -> Self {
         Self(bytes)
     }
 
+    #[must_use]
     pub const fn mib(mib: u64) -> Self {
         Self(mib.saturating_mul(1024 * 1024))
     }
 
+    #[must_use]
     pub const fn gib(gib: u64) -> Self {
         Self(gib.saturating_mul(1024 * 1024 * 1024))
     }
 
+    #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
 
+    #[must_use]
     pub const fn saturating_add(self, other: Self) -> Self {
         Self(self.0.saturating_add(other.0))
     }
@@ -55,6 +60,7 @@ pub enum Capacity {
 ///
 /// `available` is the host's own estimate (Linux `MemAvailable`), so it already
 /// accounts for every running and frozen workspace.
+#[must_use]
 pub fn admit(available: Bytes, reservation: Bytes, headroom: Bytes) -> Capacity {
     let needed = reservation.saturating_add(headroom);
     if available >= needed {

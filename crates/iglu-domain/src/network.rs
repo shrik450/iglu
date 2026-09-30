@@ -13,6 +13,7 @@ pub struct Ipv4Cidr {
 
 impl Ipv4Cidr {
     /// Builds a prefix, masking off host bits.
+    #[must_use]
     pub const fn new(addr: Ipv4Addr, prefix: u8) -> Self {
         let prefix = if prefix > 32 { 32 } else { prefix };
         let bits = addr.to_bits();
@@ -22,10 +23,12 @@ impl Ipv4Cidr {
         }
     }
 
+    #[must_use]
     pub const fn prefix(self) -> u8 {
         self.prefix
     }
 
+    #[must_use]
     pub const fn address(self) -> Ipv4Addr {
         Ipv4Addr::from_bits(self.network)
     }
@@ -72,7 +75,7 @@ impl fmt::Display for Ipv4Cidr {
 /// link-local (which covers cloud metadata), documentation, benchmarking,
 /// multicast and reserved space.
 pub const DENIED_IPV4: &[(Ipv4Addr, u8)] = &[
-    (Ipv4Addr::new(0, 0, 0, 0), 8),
+    (Ipv4Addr::UNSPECIFIED, 8),
     (Ipv4Addr::new(10, 0, 0, 0), 8),
     (Ipv4Addr::new(100, 64, 0, 0), 10),
     (Ipv4Addr::new(127, 0, 0, 0), 8),
@@ -90,6 +93,7 @@ pub const DENIED_IPV4: &[(Ipv4Addr, u8)] = &[
 
 /// The smallest set of prefixes covering exactly the IPv4 space outside
 /// `denied`. Incus ACLs only allow, so the policy is expressed as this set.
+#[must_use]
 pub fn allowed_ipv4(denied: &[Ipv4Cidr]) -> Vec<Ipv4Cidr> {
     let mut allowed = Vec::new();
     let mut pending = vec![Ipv4Cidr::new(Ipv4Addr::UNSPECIFIED, 0)];
@@ -111,6 +115,7 @@ pub fn allowed_ipv4(denied: &[Ipv4Cidr]) -> Vec<Ipv4Cidr> {
 }
 
 /// The default denied set as prefixes.
+#[must_use]
 pub fn default_denied_ipv4() -> Vec<Ipv4Cidr> {
     DENIED_IPV4
         .iter()
@@ -144,8 +149,8 @@ mod tests {
             Ipv4Addr::new(172, 20, 0, 1),
             Ipv4Addr::new(100, 100, 100, 100),
             Ipv4Addr::new(169, 254, 169, 254),
-            Ipv4Addr::new(127, 0, 0, 1),
-            Ipv4Addr::new(255, 255, 255, 255),
+            Ipv4Addr::LOCALHOST,
+            Ipv4Addr::BROADCAST,
         ] {
             assert!(!allowed_contains(&allowed, private), "{private}");
         }

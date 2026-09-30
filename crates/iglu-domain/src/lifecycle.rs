@@ -22,6 +22,7 @@ pub enum DesiredState {
 }
 
 impl DesiredState {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -86,10 +87,12 @@ pub struct Revision(u64);
 impl Revision {
     pub const INITIAL: Self = Self(1);
 
+    #[must_use]
     pub const fn from_u64(value: u64) -> Self {
         Self(value)
     }
 
+    #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
@@ -107,10 +110,12 @@ impl Revision {
 pub struct SecretsGeneration(u64);
 
 impl SecretsGeneration {
+    #[must_use]
     pub const fn from_u64(value: u64) -> Self {
         Self(value)
     }
 
+    #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
@@ -235,6 +240,7 @@ pub enum Plan {
 /// whether the host has room for one more running workspace.
 ///
 /// `capacity` is only consulted for steps that bring memory back: start and thaw.
+#[must_use]
 pub fn plan(desired: Desired, instance: Instance, capacity: Capacity) -> Plan {
     match (desired.state.live(), instance) {
         (None, Instance::Absent) => Plan::Stable,
@@ -246,6 +252,10 @@ pub fn plan(desired: Desired, instance: Instance, capacity: Capacity) -> Plan {
     }
 }
 
+#[expect(
+    clippy::match_same_arms,
+    reason = "arms are grouped by desired state, which reads better than merging equal outcomes"
+)]
 fn plan_live(live: Live, secrets: SecretsGeneration, present: Present, capacity: Capacity) -> Plan {
     let admitted = |effect| match capacity {
         Capacity::Fits => Plan::Perform(effect),
@@ -318,6 +328,7 @@ pub enum Phase {
 }
 
 impl Phase {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Creating => "creating",
@@ -340,6 +351,7 @@ impl fmt::Display for Phase {
 }
 
 /// Derives the user-facing phase from intent and observation.
+#[must_use]
 pub fn phase(desired: DesiredState, instance: Instance) -> Phase {
     match (desired.live(), instance) {
         (None, Instance::Absent) => Phase::Deleted,
@@ -349,6 +361,10 @@ pub fn phase(desired: DesiredState, instance: Instance) -> Phase {
     }
 }
 
+#[expect(
+    clippy::match_same_arms,
+    reason = "arms are grouped by desired state, which reads better than merging equal outcomes"
+)]
 fn live_phase(live: Live, present: Present) -> Phase {
     match (live, present.runtime, present.provisioning) {
         (Live::Running, _, Provisioning::Pending) => Phase::Creating,
@@ -388,6 +404,14 @@ pub enum TransitionError {
 }
 
 /// Whether a user may ask for `requested` while the workspace is in `current`.
+///
+/// # Errors
+///
+/// Why the phase doesn't allow the request.
+#[expect(
+    clippy::match_same_arms,
+    reason = "freezing gets its own arms because it alone depends on the phase"
+)]
 pub fn allow_transition(current: Phase, requested: DesiredState) -> Result<(), TransitionError> {
     match (current, requested) {
         (Phase::Deleting | Phase::Deleted, _) => Err(TransitionError::Deleting),

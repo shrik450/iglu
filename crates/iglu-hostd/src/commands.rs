@@ -39,6 +39,10 @@ pub async fn perform(app: &App, workspace: WorkspaceId, command: Command) -> Com
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "an adapter for map_err, which passes errors by value"
+)]
 fn runtime(error: IncusError) -> CommandError {
     let code = if error.is_not_found() {
         ErrorCode::NotFound

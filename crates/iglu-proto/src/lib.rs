@@ -29,22 +29,27 @@ pub mod path {
     pub const INVENTORY: &str = "/v1/inventory";
     pub const BUILDS: &str = "/v1/builds";
 
+    #[must_use]
     pub fn commands(workspace: WorkspaceId) -> String {
         format!("/v1/workspaces/{workspace}/commands")
     }
 
+    #[must_use]
     pub fn terminals(workspace: WorkspaceId) -> String {
         format!("/v1/workspaces/{workspace}/terminals")
     }
 
+    #[must_use]
     pub fn terminal(workspace: WorkspaceId, session: &SessionName) -> String {
         format!("/v1/workspaces/{workspace}/terminals/{session}")
     }
 
+    #[must_use]
     pub fn attach(workspace: WorkspaceId, session: &SessionName) -> String {
         format!("/v1/workspaces/{workspace}/terminals/{session}/attach")
     }
 
+    #[must_use]
     pub fn tunnel(workspace: WorkspaceId, port: GuestPort) -> String {
         format!("/v1/workspaces/{workspace}/ports/{port}/tunnel")
     }

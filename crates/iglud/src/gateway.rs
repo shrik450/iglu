@@ -331,7 +331,7 @@ async fn forward(
                     .await;
                 }
                 (Err(error), _) | (_, Err(error)) => {
-                    tracing::debug!(%error, "preview upgrade failed")
+                    tracing::debug!(%error, "preview upgrade failed");
                 }
             }
         });
@@ -366,7 +366,10 @@ mod tests {
         assert!(headers.get("x-secret").is_none());
         assert!(headers.get("keep-alive").is_none());
         assert!(headers.get(header::CONNECTION).is_none());
-        assert_eq!(headers.get("x-app").map(|v| v.as_bytes()), Some(&b"ok"[..]));
+        assert_eq!(
+            headers.get("x-app").map(http::HeaderValue::as_bytes),
+            Some(&b"ok"[..])
+        );
     }
 
     #[test]

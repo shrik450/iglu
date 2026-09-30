@@ -15,6 +15,7 @@ use crate::ParseError;
 pub struct GuestPort(NonZeroU16);
 
 impl GuestPort {
+    #[must_use]
     pub const fn get(self) -> u16 {
         self.0.get()
     }

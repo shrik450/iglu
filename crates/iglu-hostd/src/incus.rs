@@ -283,7 +283,7 @@ impl Incus {
         self.call(Method::DELETE, path, None).await.map(|_| ())
     }
 
-    /// Opens one of an operation's WebSockets.
+    /// Opens one of an operation's `WebSockets`.
     pub async fn websocket(
         &self,
         operation: &str,

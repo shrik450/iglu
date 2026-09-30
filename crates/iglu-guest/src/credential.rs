@@ -22,6 +22,7 @@ pub struct Request {
 
 /// Parses Git's credential request. Unknown keys are ignored, as the
 /// protocol requires.
+#[must_use]
 pub fn parse_request(input: &str) -> Request {
     let mut request = Request {
         protocol: None,
@@ -40,6 +41,7 @@ pub fn parse_request(input: &str) -> Request {
 }
 
 /// The helper's answer, or `None` to let Git try other helpers.
+#[must_use]
 pub fn answer(request: &Request, stored: &[Stored]) -> Option<String> {
     if request.protocol.as_deref() != Some("https") {
         return None;

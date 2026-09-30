@@ -32,6 +32,7 @@ pub enum Checkout {
     Create { from: String },
 }
 
+#[must_use]
 pub fn checkout(branch_on_remote: bool, base: Option<&BranchName>) -> Checkout {
     if branch_on_remote {
         Checkout::Track
@@ -42,6 +43,7 @@ pub fn checkout(branch_on_remote: bool, base: Option<&BranchName>) -> Checkout {
     }
 }
 
+#[must_use]
 pub fn switch_args(branch: &BranchName, checkout: &Checkout) -> Vec<String> {
     match checkout {
         Checkout::Track => vec!["switch".into(), "--".into(), branch.to_string()],
@@ -96,6 +98,10 @@ fn git_ok(dir: Option<&Path>, args: &[String]) -> Result<(), ProvisionError> {
 
 /// Idempotent: an existing checkout is fetched instead of cloned, and a
 /// branch already checked out stays as it is.
+///
+/// # Errors
+///
+/// When Git fails or the checkout can't be recorded.
 pub fn run(spec: &Spec) -> Result<(), ProvisionError> {
     let home = PathBuf::from(std::env::var_os("HOME").ok_or(ProvisionError::NoHome)?);
     let dir = home.join(spec.repo.checkout_dir().as_str());

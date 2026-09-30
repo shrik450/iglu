@@ -181,112 +181,149 @@ async fn reconcile_host(
     for ws in workspaces {
         let report = reports.get(&ws.id);
         let instance = report.map_or(Instance::Absent, |r| r.instance);
-        let memory = report.and_then(|r| r.memory);
-        let sessions = report.map(|r| r.sessions.clone()).unwrap_or_default();
-        let owner = ws.owner;
-        let id = ws.id;
-        let observed_changed = ws.observed != Some(instance) || ws.memory != memory;
-        let clear_offline = matches!(ws.condition, Some(Condition::HostOffline { .. }));
-
-        let (principal, attention_changed) = app
-            .db
-            .call(move |tx| {
-                if observed_changed {
-                    db::record_observation(tx, id, &instance, memory, now())?;
-                }
-                if clear_offline {
-                    db::set_condition(tx, id, None)?;
-                }
-                let attention_changed = db::sync_attention(tx, id, &sessions)?;
-                Ok((db::principal(tx, owner)?, attention_changed))
-            })
-            .await?;
-        changed |= observed_changed || attention_changed || clear_offline;
+        let (principal, observed) = observe(app, &ws, instance, report).await?;
+        changed |= observed;
         let Some(principal) = principal else { continue };
-
         let desired = Desired {
             state: ws.desired,
             secrets: principal.secrets_generation,
         };
         let next = plan(desired, instance, capacity);
-        match next {
-            Plan::Stable => {
-                if ws.desired == DesiredState::Deleted {
-                    app.db
-                        .call(move |tx| {
-                            db::mark_deleted(tx, id, now())?;
-                            db::add_activity(
-                                tx,
-                                Some(id),
-                                None,
-                                "deleted",
-                                "the workspace was deleted",
-                                now(),
-                            )
-                        })
-                        .await?;
-                    changed = true;
-                } else if matches!(
-                    ws.condition,
-                    Some(Condition::Capacity { .. } | Condition::RuntimeFailed)
-                ) {
-                    app.db
-                        .call(move |tx| db::set_condition(tx, id, None))
-                        .await?;
-                    changed = true;
-                }
-            }
-            Plan::Wait(Wait::Capacity(short)) => {
-                let condition = Condition::from_capacity(short);
-                if ws.condition != condition {
-                    app.db
-                        .call(move |tx| db::set_condition(tx, id, condition.as_ref()))
-                        .await?;
-                    changed = true;
-                }
-            }
-            Plan::Wait(Wait::Booting | Wait::Transition) => {}
-            Plan::Blocked(Blocker::RuntimeFailed) => {
-                if ws.condition != Some(Condition::RuntimeFailed) {
-                    app.db
-                        .call(move |tx| db::set_condition(tx, id, Some(&Condition::RuntimeFailed)))
-                        .await?;
-                    changed = true;
-                }
-            }
-            Plan::Adopt(state, reason) => {
-                let detail = match reason {
-                    AdoptReason::FrozenStateLost => {
-                        "the host restarted, so the frozen workspace is now stopped"
-                    }
-                };
-                app.db
-                    .call(move |tx| {
-                        db::set_desired(tx, id, state, None)?;
-                        db::add_activity(tx, Some(id), None, "adopted", detail, now())
-                    })
-                    .await?;
-                changed = true;
-            }
-            Plan::Perform(effect) => {
-                if reconciler.try_claim(id) {
-                    let app = app.clone();
-                    let reconciler = reconciler.clone();
-                    let host = host.clone();
-                    tokio::spawn(async move {
-                        let succeeded = perform(&app, &host, ws, &principal, effect).await;
-                        reconciler.release(id, succeeded);
-                        app.changed();
-                        reconciler.kick.notify_one();
-                    });
-                }
-            }
-        }
+        changed |= act(app, reconciler, host, ws, principal, next).await?;
     }
     if changed {
         app.changed();
     }
     Ok(())
+}
+
+/// Records what the host reports about a workspace, and loads its owner.
+/// Returns whether anything the console shows changed.
+async fn observe(
+    app: &App,
+    ws: &WorkspaceRecord,
+    instance: Instance,
+    report: Option<&InstanceReport>,
+) -> anyhow::Result<(Option<PrincipalRecord>, bool)> {
+    let memory = report.and_then(|r| r.memory);
+    let sessions = report.map(|r| r.sessions.clone()).unwrap_or_default();
+    let owner = ws.owner;
+    let id = ws.id;
+    let observed_changed = ws.observed != Some(instance) || ws.memory != memory;
+    let clear_offline = matches!(ws.condition, Some(Condition::HostOffline { .. }));
+
+    let (principal, attention_changed) = app
+        .db
+        .call(move |tx| {
+            if observed_changed {
+                db::record_observation(tx, id, &instance, memory, now())?;
+            }
+            if clear_offline {
+                db::set_condition(tx, id, None)?;
+            }
+            let attention_changed = db::sync_attention(tx, id, &sessions)?;
+            Ok((db::principal(tx, owner)?, attention_changed))
+        })
+        .await?;
+    Ok((
+        principal,
+        observed_changed || attention_changed || clear_offline,
+    ))
+}
+
+/// Carries out a plan: records conditions and adoptions, or starts the
+/// effect in the background. Returns whether anything the console shows
+/// changed.
+async fn act(
+    app: &Arc<App>,
+    reconciler: &Arc<Reconciler>,
+    host: &Arc<HostClient>,
+    ws: WorkspaceRecord,
+    principal: PrincipalRecord,
+    next: Plan,
+) -> anyhow::Result<bool> {
+    let id = ws.id;
+    match next {
+        Plan::Stable if ws.desired == DesiredState::Deleted => {
+            app.db
+                .call(move |tx| {
+                    db::mark_deleted(tx, id, now())?;
+                    db::add_activity(
+                        tx,
+                        Some(id),
+                        None,
+                        "deleted",
+                        "the workspace was deleted",
+                        now(),
+                    )
+                })
+                .await?;
+            Ok(true)
+        }
+        Plan::Stable => {
+            let resolved = matches!(
+                ws.condition,
+                Some(Condition::Capacity { .. } | Condition::RuntimeFailed)
+            );
+            if resolved {
+                app.db
+                    .call(move |tx| db::set_condition(tx, id, None))
+                    .await?;
+            }
+            Ok(resolved)
+        }
+        Plan::Wait(Wait::Capacity(short)) => {
+            set_condition(app, &ws, Condition::from_capacity(short)).await
+        }
+        Plan::Wait(Wait::Booting | Wait::Transition) => Ok(false),
+        Plan::Blocked(Blocker::RuntimeFailed) => {
+            set_condition(app, &ws, Some(Condition::RuntimeFailed)).await
+        }
+        Plan::Adopt(state, reason) => {
+            let detail = match reason {
+                AdoptReason::FrozenStateLost => {
+                    "the host restarted, so the frozen workspace is now stopped"
+                }
+            };
+            app.db
+                .call(move |tx| {
+                    db::set_desired(tx, id, state, None)?;
+                    db::add_activity(tx, Some(id), None, "adopted", detail, now())
+                })
+                .await?;
+            Ok(true)
+        }
+        Plan::Perform(effect) => {
+            if reconciler.try_claim(id) {
+                let app = app.clone();
+                let reconciler = reconciler.clone();
+                let host = host.clone();
+                tokio::spawn(async move {
+                    let succeeded = perform(&app, &host, ws, &principal, effect).await;
+                    reconciler.release(id, succeeded);
+                    app.changed();
+                    reconciler.kick.notify_one();
+                });
+            }
+            Ok(false)
+        }
+    }
+}
+
+/// Stores a workspace's condition if it differs. Returns whether it did.
+async fn set_condition(
+    app: &App,
+    ws: &WorkspaceRecord,
+    condition: Option<Condition>,
+) -> anyhow::Result<bool> {
+    if ws.condition == condition {
+        return Ok(false);
+    }
+    let id = ws.id;
+    app.db
+        .call(move |tx| db::set_condition(tx, id, condition.as_ref()))
+        .await?;
+    Ok(true)
 }
 
 const fn effect_name(effect: Effect) -> &'static str {

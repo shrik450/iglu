@@ -69,6 +69,7 @@ uuid_id!(
 impl WorkspaceId {
     /// The Incus instance that realizes this workspace. Deterministic, so a
     /// retried create finds the instance an earlier attempt made.
+    #[must_use]
     pub const fn instance_name(self) -> InstanceName {
         InstanceName(self)
     }
@@ -82,6 +83,7 @@ pub struct InstanceName(WorkspaceId);
 impl InstanceName {
     const PREFIX: &'static str = "iglu-";
 
+    #[must_use]
     pub const fn workspace(self) -> WorkspaceId {
         self.0
     }

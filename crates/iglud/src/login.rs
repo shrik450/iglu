@@ -158,8 +158,8 @@ fn browser_lifetime(app: &App) -> Millis {
     Millis::from_secs(app.config.sessions.absolute_hours.saturating_mul(3600))
 }
 
-fn with_cookie(mut response: Response, cookie: String) -> Response {
-    if let Ok(value) = HeaderValue::from_str(&cookie) {
+fn with_cookie(mut response: Response, cookie: &str) -> Response {
+    if let Ok(value) = HeaderValue::from_str(cookie) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
     response
@@ -181,7 +181,7 @@ async fn console_callback(
     let cookie = format!("{CONSOLE_COOKIE}={token}; Path=/; Secure; HttpOnly; SameSite=Lax");
     Ok(with_cookie(
         Redirect::to(&return_to).into_response(),
-        cookie,
+        &cookie,
     ))
 }
 
@@ -194,7 +194,7 @@ async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> Result<Respo
         app.db.call(move |tx| db::delete_session(tx, &hash)).await?;
     }
     let cookie = format!("{CONSOLE_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
-    Ok(with_cookie(StatusCode::NO_CONTENT.into_response(), cookie))
+    Ok(with_cookie(StatusCode::NO_CONTENT.into_response(), &cookie))
 }
 
 // ---- CLI sign-in: a loopback redirect with PKCE ----
@@ -390,7 +390,7 @@ pub async fn preview_auth(app: &Arc<App>, path: &str, query: Option<&str>) -> Re
                             );
                             Ok(with_cookie(
                                 Redirect::to(&return_to).into_response(),
-                                cookie,
+                                &cookie,
                             ))
                         }
                         Err(error) => Err(error),

@@ -30,3 +30,4 @@ cast_possible_truncation = "deny"
 cast_sign_loss = "deny"
 cast_possible_wrap = "deny"
 wildcard_enum_match_arm = "deny"
+pedantic = { level = "warn", priority = -1 }

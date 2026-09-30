@@ -55,18 +55,15 @@ impl<'a> Program<'a> {
             "group": user.gid.get(),
             "cwd": user.home.to_string(),
         });
-        match interactive {
-            Some(size) => {
-                body["interactive"] = json!(true);
-                body["wait-for-websocket"] = json!(true);
-                body["width"] = json!(size.cols());
-                body["height"] = json!(size.rows());
-            }
-            None => {
-                body["interactive"] = json!(false);
-                body["wait-for-websocket"] = json!(false);
-                body["record-output"] = json!(true);
-            }
+        if let Some(size) = interactive {
+            body["interactive"] = json!(true);
+            body["wait-for-websocket"] = json!(true);
+            body["width"] = json!(size.cols());
+            body["height"] = json!(size.rows());
+        } else {
+            body["interactive"] = json!(false);
+            body["wait-for-websocket"] = json!(false);
+            body["record-output"] = json!(true);
         }
         body
     }

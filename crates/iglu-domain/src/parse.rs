@@ -12,10 +12,12 @@ impl ParseError {
         Self { what, reason }
     }
 
+    #[must_use]
     pub const fn what(&self) -> &'static str {
         self.what
     }
 
+    #[must_use]
     pub const fn reason(&self) -> &'static str {
         self.reason
     }

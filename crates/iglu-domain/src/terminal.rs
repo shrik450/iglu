@@ -15,6 +15,7 @@ use crate::parse::text_type;
 pub struct SessionName(String);
 
 impl SessionName {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -46,10 +47,14 @@ impl fmt::Display for SessionName {
 text_type!(SessionName);
 
 /// The first `t<n>` name not already taken.
+///
+/// # Panics
+///
+/// Only if every name from `t1` to `t4294967295` is taken.
 pub fn next_session_name<'a>(existing: impl IntoIterator<Item = &'a SessionName>) -> SessionName {
     let taken: std::collections::HashSet<&str> =
         existing.into_iter().map(SessionName::as_str).collect();
-    (1u32..)
+    (1..=u32::MAX)
         .map(|n| format!("t{n}"))
         .find(|name| !taken.contains(name.as_str()))
         .and_then(|name| name.parse().ok())
@@ -73,6 +78,9 @@ struct RawSize {
 impl TerminalSize {
     pub const DEFAULT: Self = Self { cols: 80, rows: 24 };
 
+    /// # Errors
+    ///
+    /// When either dimension is outside what a terminal can sensibly have.
     pub fn new(cols: u16, rows: u16) -> Result<Self, ParseError> {
         if (2..=1000).contains(&cols) && (1..=1000).contains(&rows) {
             Ok(Self { cols, rows })
@@ -84,10 +92,12 @@ impl TerminalSize {
         }
     }
 
+    #[must_use]
     pub const fn cols(self) -> u16 {
         self.cols
     }
 
+    #[must_use]
     pub const fn rows(self) -> u16 {
         self.rows
     }

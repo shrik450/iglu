@@ -61,7 +61,7 @@ fn main() -> ExitCode {
                 eprintln!("{USAGE}");
                 return ExitCode::FAILURE;
             };
-            let summary: Summary = args[2..].join(" ").parse().expect("summaries always parse");
+            let summary = Summary::sanitize(&args[2..].join(" "));
             record(session, Some((state, summary)))
         }
         Some("clear") => record(session, None),

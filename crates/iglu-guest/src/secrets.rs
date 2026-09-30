@@ -31,6 +31,7 @@ pub struct Layout {
     pub stale: Vec<HomePath>,
 }
 
+#[must_use]
 pub fn layout(bundle: &SecretBundle, previous: &[HomePath]) -> Layout {
     let links: Vec<(HomePath, String)> = bundle
         .files
@@ -72,7 +73,7 @@ fn write_private(path: &Path, content: &[u8]) -> Result<(), InstallError> {
 fn place_link(link: &Path, target: &Path) -> Result<(), InstallError> {
     match fs::symlink_metadata(link) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            fs::remove_file(link).map_err(io(link.display().to_string()))?
+            fs::remove_file(link).map_err(io(link.display().to_string()))?;
         }
         Ok(_) => {
             let kept = link.with_extension("iglu-replaced");
@@ -93,6 +94,12 @@ fn remove_stale(link: &Path) {
     }
 }
 
+/// Replaces the delivered secrets with a new bundle: the environment, Git
+/// credentials, files and their links, and last the generation hostd reads.
+///
+/// # Errors
+///
+/// When the bundle is unreadable or a file can't be written.
 pub fn install(incoming: &Path) -> Result<(), InstallError> {
     let home = PathBuf::from(std::env::var_os("HOME").ok_or(InstallError::NoHome)?);
     let request: InstallRequest =

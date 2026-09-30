@@ -22,6 +22,7 @@ pub struct Entry {
 pub type Statuses = BTreeMap<SessionName, Entry>;
 
 /// Sets or clears one session's entry.
+#[must_use]
 pub fn update(mut statuses: Statuses, session: SessionName, entry: Option<Entry>) -> Statuses {
     match entry {
         Some(entry) => {
@@ -36,8 +37,9 @@ pub fn update(mut statuses: Statuses, session: SessionName, entry: Option<Entry>
 
 /// Maps a Claude Code hook event to a status. Events that say nothing about
 /// whether the user is needed map to `None` and leave the status alone.
+#[must_use]
 pub fn claude_event(event: &str, message: Option<&str>) -> Option<(AttentionState, Summary)> {
-    let summary = |text: &str| text.parse::<Summary>().expect("summaries always parse");
+    let summary = Summary::sanitize;
     match event {
         "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => {
             Some((AttentionState::Working, summary("")))
@@ -63,6 +65,10 @@ pub enum StatusError {
 
 /// Applies `change` to the status file under an exclusive lock, replacing
 /// the file atomically so hostd never reads a partial write.
+///
+/// # Errors
+///
+/// When the lock or the file can't be read or written.
 pub fn modify(change: impl FnOnce(Statuses) -> Statuses) -> Result<(), StatusError> {
     let lock = File::options()
         .create(true)
@@ -81,6 +87,11 @@ pub fn modify(change: impl FnOnce(Statuses) -> Statuses) -> Result<(), StatusErr
     Ok(())
 }
 
+/// Writes `content` beside `path` and renames it into place.
+///
+/// # Errors
+///
+/// When writing, syncing or renaming fails.
 pub fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let temp = path.with_extension("tmp");
     let mut file = File::create(&temp)?;
@@ -96,7 +107,7 @@ mod tests {
     fn entry(state: AttentionState) -> Entry {
         Entry {
             state,
-            summary: "".parse().expect("summaries always parse"),
+            summary: Summary::sanitize(""),
             at: 1,
         }
     }

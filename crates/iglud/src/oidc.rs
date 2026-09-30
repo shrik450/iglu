@@ -1,4 +1,4 @@
-//! OpenID Connect sign-in, through the `openidconnect` relying-party library.
+//! `OpenID` Connect sign-in, through the `openidconnect` relying-party library.
 //! iglu never sees passwords; the provider hosts login and MFA.
 
 use iglu_domain::auth::{Issuer, VerifiedIdentity};
@@ -99,7 +99,7 @@ impl RelyingParty {
     pub fn token_endpoint(&self) -> Option<&Url> {
         self.metadata
             .token_endpoint()
-            .map(|endpoint| endpoint.url())
+            .map(openidconnect::TokenUrl::url)
     }
 
     pub fn begin(&self) -> Pending {
@@ -155,18 +155,10 @@ impl RelyingParty {
             .claims(&client.id_token_verifier(), &Nonce::new(nonce))
             .map_err(|e| OidcError::Token(e.to_string()))?;
 
-        fn parse<T: std::str::FromStr<Err = iglu_domain::ParseError>>(
-            what: &'static str,
-            value: &str,
-        ) -> Result<T, OidcError> {
-            value
-                .parse()
-                .map_err(|e: iglu_domain::ParseError| OidcError::Claims(format!("{what}: {e}")))
-        }
-        let issuer: Issuer = parse("issuer", claims.issuer().as_str())?;
-        let subject = parse("subject", claims.subject().as_str())?;
+        let issuer: Issuer = parse_claim("issuer", claims.issuer().as_str())?;
+        let subject = parse_claim("subject", claims.subject().as_str())?;
         let email = match (claims.email(), claims.email_verified()) {
-            (Some(email), Some(true)) => Some(parse("email", email.as_str())?),
+            (Some(email), Some(true)) => Some(parse_claim("email", email.as_str())?),
             (Some(_) | None, _) => None,
         };
         let name = claims
@@ -186,6 +178,16 @@ impl RelyingParty {
             name,
         })
     }
+}
+
+/// Parses one claim of an ID token into its domain type.
+fn parse_claim<T: std::str::FromStr<Err = iglu_domain::ParseError>>(
+    what: &'static str,
+    value: &str,
+) -> Result<T, OidcError> {
+    value
+        .parse()
+        .map_err(|e: iglu_domain::ParseError| OidcError::Claims(format!("{what}: {e}")))
 }
 
 /// Fetches and caches the service token iglud presents to hosts, through

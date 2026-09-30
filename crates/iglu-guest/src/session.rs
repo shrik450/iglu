@@ -19,6 +19,7 @@ pub struct Info {
 
 /// Parses `zmx list`: one session per line, tab-separated, name first and
 /// the attached-client count third. Lines that don't parse are skipped.
+#[must_use]
 pub fn parse_list(output: &str) -> Vec<Info> {
     output
         .lines()
@@ -35,6 +36,7 @@ pub fn parse_list(output: &str) -> Vec<Info> {
 
 /// The environment for a session: the delivered secrets first, then the
 /// platform's own variables, which secrets can't override.
+#[must_use]
 pub fn session_env(
     secrets: BTreeMap<String, String>,
     runtime_dir: &str,
@@ -54,6 +56,9 @@ fn zmx() -> Command {
     command
 }
 
+/// # Errors
+///
+/// When zmx can't run or reports a failure.
 pub fn list() -> std::io::Result<Vec<Info>> {
     let output = zmx().arg("list").output()?;
     if !output.status.success() {
@@ -64,6 +69,9 @@ pub fn list() -> std::io::Result<Vec<Info>> {
     Ok(parse_list(&String::from_utf8_lossy(&output.stdout)))
 }
 
+/// # Errors
+///
+/// When zmx can't run or reports a failure.
 pub fn close(name: &SessionName) -> std::io::Result<()> {
     let status = zmx().arg("kill").arg(name.as_str()).status()?;
     if status.success() {

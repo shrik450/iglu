@@ -25,6 +25,7 @@ pub enum AttentionState {
 }
 
 impl AttentionState {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Working => "working",
@@ -69,6 +70,20 @@ pub struct Summary(String);
 impl Summary {
     pub const MAX_CHARS: usize = 200;
 
+    /// Takes the first line, drops control characters and truncates, rather
+    /// than rejecting: a summary is advisory and shouldn't fail a status update.
+    #[must_use]
+    pub fn sanitize(s: &str) -> Self {
+        let line = s.lines().next().unwrap_or_default();
+        let clean: String = line
+            .chars()
+            .filter(|c| is_printable(*c))
+            .take(Self::MAX_CHARS)
+            .collect();
+        Self(clean.trim().to_owned())
+    }
+
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -77,16 +92,8 @@ impl Summary {
 impl FromStr for Summary {
     type Err = ParseError;
 
-    /// Takes the first line, drops control characters and truncates, rather
-    /// than rejecting: a summary is advisory and shouldn't fail a status update.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let line = s.lines().next().unwrap_or_default();
-        let clean: String = line
-            .chars()
-            .filter(|c| is_printable(*c))
-            .take(Self::MAX_CHARS)
-            .collect();
-        Ok(Self(clean.trim().to_owned()))
+        Ok(Self::sanitize(s))
     }
 }
 
@@ -126,6 +133,7 @@ pub enum Urgency {
     Waiting,
 }
 
+#[must_use]
 pub const fn urgency(state: AttentionState, seen: Seen) -> Urgency {
     match (state, seen) {
         (AttentionState::Waiting, _) => Urgency::Waiting,
@@ -154,7 +162,7 @@ mod tests {
         SessionStatus {
             session: session.parse().expect("valid session"),
             state,
-            summary: "".parse().expect("summaries always parse"),
+            summary: Summary::sanitize(""),
             updated_at: Timestamp::from_unix_millis(at),
         }
     }
@@ -188,11 +196,9 @@ mod tests {
 
     #[test]
     fn summaries_are_sanitized_not_rejected() {
-        let summary: Summary = "approve \u{1b}[31mBash?\nsecond line"
-            .parse()
-            .expect("summaries always parse");
+        let summary = Summary::sanitize("approve \u{1b}[31mBash?\nsecond line");
         assert_eq!(summary.as_str(), "approve [31mBash?");
-        let long: Summary = "x".repeat(500).parse().expect("summaries always parse");
+        let long = Summary::sanitize(&"x".repeat(500));
         assert_eq!(long.as_str().chars().count(), Summary::MAX_CHARS);
     }
 }

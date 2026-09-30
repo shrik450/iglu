@@ -30,24 +30,28 @@ pub struct Email(String);
 pub struct DisplayName(String);
 
 impl Issuer {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 impl Subject {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 impl Email {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 impl DisplayName {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -120,7 +124,7 @@ macro_rules! display_inner {
 
 display_inner!(Issuer, Subject, Email, DisplayName);
 
-/// An identity the IdP vouched for, parsed from verified token claims.
+/// An identity the `IdP` vouched for, parsed from verified token claims.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedIdentity {
     pub issuer: Issuer,
@@ -145,10 +149,12 @@ pub enum AllowEntry {
 pub struct SignInPolicy(Vec<AllowEntry>);
 
 impl SignInPolicy {
+    #[must_use]
     pub const fn new(entries: Vec<AllowEntry>) -> Self {
         Self(entries)
     }
 
+    #[must_use]
     pub fn admits(&self, identity: &VerifiedIdentity) -> bool {
         self.0.iter().any(|entry| match entry {
             AllowEntry::Subject(subject) => *subject == identity.subject,
@@ -207,6 +213,7 @@ pub enum DenyReason {
 ///
 /// iglu is owner-only for now: an owner may do everything with what they own.
 /// Sharing adds grants as another input here and a per-action match.
+#[must_use]
 pub fn authorize(principal: Principal, action: Action, resource: Resource) -> Decision {
     match principal.status {
         PrincipalStatus::Disabled => return Decision::Deny(DenyReason::Disabled),

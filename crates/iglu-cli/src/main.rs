@@ -34,11 +34,23 @@ struct Cli {
 enum Command {
     /// Sign in through the browser.
     Login {
-        /// The console URL, such as https://iglu.example.org.
+        /// The console URL, such as <https://iglu.example.org>.
         server: url::Url,
     },
     /// Forget the stored credentials.
     Logout,
+    #[command(flatten)]
+    Workspace(WorkspaceCommand),
+    /// Manage environments.
+    #[command(subcommand)]
+    Env(EnvCommand),
+    /// Manage secrets delivered to your workspaces.
+    #[command(subcommand)]
+    Secret(SecretCommand),
+}
+
+#[derive(Subcommand)]
+enum WorkspaceCommand {
     /// List workspaces.
     Ls,
     /// Create a workspace from a repository.
@@ -90,12 +102,6 @@ enum Command {
     Ports { workspace: String },
     /// Show what happened to a workspace.
     Log { workspace: String },
-    /// Manage environments.
-    #[command(subcommand)]
-    Env(EnvCommand),
-    /// Manage secrets delivered to your workspaces.
-    #[command(subcommand)]
-    Secret(SecretCommand),
 }
 
 #[derive(Subcommand)]
@@ -147,23 +153,23 @@ fn s<'a>(value: &'a Value, key: &str) -> &'a str {
 }
 
 fn describe(ws: &Value) -> String {
-    let mut line = format!(
+    let mut lines = vec![format!(
         "{:<24} {:<10} {}  {}",
         s(ws, "name"),
         s(ws, "phase"),
         s(ws, "branch"),
         s(ws, "repo")
-    );
+    )];
     if let Some(attention) = ws.get("attention").filter(|a| !a.is_null()) {
-        line.push_str(&format!(
-            "\n  {}: {} {}",
+        lines.push(format!(
+            "  {}: {} {}",
             s(attention, "session"),
             s(attention, "state"),
             s(attention, "summary")
         ));
     }
     if let Some(condition) = ws.get("condition").filter(|c| !c.is_null()) {
-        line.push_str(&format!("\n  ! {}", condition_text(condition)));
+        lines.push(format!("  ! {}", condition_text(condition)));
     }
     for route in ws
         .get("routes")
@@ -171,13 +177,13 @@ fn describe(ws: &Value) -> String {
         .into_iter()
         .flatten()
     {
-        line.push_str(&format!(
-            "\n  :{} → {}",
+        lines.push(format!(
+            "  :{} → {}",
             route.get("port").unwrap_or(&Value::Null),
             s(route, "url")
         ));
     }
-    line
+    lines.join("\n")
 }
 
 fn condition_text(condition: &Value) -> String {
@@ -248,37 +254,51 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let json_mode = cli.json;
 
-    if let Command::Login { server } = &cli.command {
-        login::login(server).await?;
-        println!("signed in to {server}");
-        return Ok(());
-    }
-    if let Command::Logout = cli.command {
-        login::logout()?;
-        println!("signed out");
-        return Ok(());
-    }
-    let client = Client::from_stored()?;
-
     match cli.command {
-        Command::Login { .. } | Command::Logout => unreachable!("handled above"),
-        Command::Ls => {
+        Command::Login { server } => {
+            login::login(&server).await?;
+            println!("signed in to {server}");
+        }
+        Command::Logout => {
+            login::logout()?;
+            println!("signed out");
+        }
+        Command::Workspace(command) => {
+            workspace(&Client::from_stored()?, json_mode, command).await?;
+        }
+        Command::Env(command) => env(&Client::from_stored()?, json_mode, command).await?,
+        Command::Secret(command) => secret(&Client::from_stored()?, json_mode, command).await?,
+    }
+    Ok(())
+}
+
+fn lines(list: &Value, line: impl Fn(&Value) -> String) -> String {
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .map(line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn workspace(
+    client: &Client,
+    json_mode: bool,
+    command: WorkspaceCommand,
+) -> anyhow::Result<()> {
+    match command {
+        WorkspaceCommand::Ls => {
             let list = client.get("/v1/workspaces").await?;
             print(json_mode, &list, |list| {
-                let items: Vec<String> = list
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(describe)
-                    .collect();
-                if items.is_empty() {
+                let text = lines(list, describe);
+                if text.is_empty() {
                     "no workspaces".into()
                 } else {
-                    items.join("\n")
+                    text
                 }
             });
         }
-        Command::New {
+        WorkspaceCommand::New {
             repo,
             env,
             branch,
@@ -292,33 +312,33 @@ async fn main() -> anyhow::Result<()> {
                 .post_idempotent("/v1/workspaces", &body, &key)
                 .await?;
             let ws = if wait {
-                wait_for(&client, s(&ws, "id"), "running").await?
+                wait_for(client, s(&ws, "id"), "running").await?
             } else {
                 ws
             };
             print(json_mode, &ws, describe);
         }
-        Command::Show { workspace } => {
+        WorkspaceCommand::Show { workspace } => {
             let ws = client.resolve(&workspace).await?;
             print(json_mode, &ws, describe);
         }
-        Command::Start { workspace, wait } => {
-            let ws = set_state(&client, &workspace, "running", wait, "running").await?;
+        WorkspaceCommand::Start { workspace, wait } => {
+            let ws = set_state(client, &workspace, "running", wait, "running").await?;
             print(json_mode, &ws, describe);
         }
-        Command::Freeze { workspace, wait } => {
-            let ws = set_state(&client, &workspace, "frozen", wait, "frozen").await?;
+        WorkspaceCommand::Freeze { workspace, wait } => {
+            let ws = set_state(client, &workspace, "frozen", wait, "frozen").await?;
             print(json_mode, &ws, describe);
         }
-        Command::Stop { workspace, wait } => {
-            let ws = set_state(&client, &workspace, "stopped", wait, "stopped").await?;
+        WorkspaceCommand::Stop { workspace, wait } => {
+            let ws = set_state(client, &workspace, "stopped", wait, "stopped").await?;
             print(json_mode, &ws, describe);
         }
-        Command::Rm { workspace, wait } => {
-            let ws = set_state(&client, &workspace, "deleted", wait, "deleted").await?;
+        WorkspaceCommand::Rm { workspace, wait } => {
+            let ws = set_state(client, &workspace, "deleted", wait, "deleted").await?;
             print(json_mode, &ws, |_| "deleting".into());
         }
-        Command::Port { workspace, port } => {
+        WorkspaceCommand::Port { workspace, port } => {
             let ws = client.resolve(&workspace).await?;
             let route = client
                 .post(
@@ -328,56 +348,46 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
             print(json_mode, &route, |r| s(r, "url").to_owned());
         }
-        Command::Ports { workspace } => {
+        WorkspaceCommand::Ports { workspace } => {
             let ws = client.resolve(&workspace).await?;
             let routes = client
                 .get(&format!("/v1/workspaces/{}/routes", s(&ws, "id")))
                 .await?;
             print(json_mode, &routes, |routes| {
-                routes
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|r| {
-                        format!(
-                            ":{} → {}",
-                            r.get("port").unwrap_or(&Value::Null),
-                            s(r, "url")
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                lines(routes, |r| {
+                    format!(
+                        ":{} → {}",
+                        r.get("port").unwrap_or(&Value::Null),
+                        s(r, "url")
+                    )
+                })
             });
         }
-        Command::Log { workspace } => {
+        WorkspaceCommand::Log { workspace } => {
             let ws = client.resolve(&workspace).await?;
             let log = client
                 .get(&format!("/v1/workspaces/{}/activity", s(&ws, "id")))
                 .await?;
             print(json_mode, &log, |log| {
-                log.as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|e| format!("{:<18} {}", s(e, "kind"), s(e, "detail")))
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                lines(log, |e| format!("{:<18} {}", s(e, "kind"), s(e, "detail")))
             });
         }
-        Command::Env(EnvCommand::Ls) => {
+    }
+    Ok(())
+}
+
+async fn env(client: &Client, json_mode: bool, command: EnvCommand) -> anyhow::Result<()> {
+    match command {
+        EnvCommand::Ls => {
             let envs = client.get("/v1/environments").await?;
             print(json_mode, &envs, |envs| {
-                envs.as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|e| {
-                        let status = e.get("latest").map_or("never built", |l| s(l, "status"));
-                        format!("{:<16} {:<12} {}", s(e, "name"), status, s(e, "source"))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                lines(envs, |e| {
+                    let status = e.get("latest").map_or("never built", |l| s(l, "status"));
+                    format!("{:<16} {:<12} {}", s(e, "name"), status, s(e, "source"))
+                })
             });
         }
-        Command::Env(EnvCommand::Add { name, source }) => {
+        EnvCommand::Add { name, source } => {
             let reply = client
                 .post(
                     "/v1/environments",
@@ -388,36 +398,37 @@ async fn main() -> anyhow::Result<()> {
                 format!("building {name}; check with `iglu env ls`")
             });
         }
-        Command::Env(EnvCommand::Build { name }) => {
+        EnvCommand::Build { name } => {
             let reply = client
                 .post(&format!("/v1/environments/{name}/builds"), &json!({}))
                 .await?;
             print(json_mode, &reply, |_| format!("rebuilding {name}"));
         }
-        Command::Secret(SecretCommand::Ls) => {
+    }
+    Ok(())
+}
+
+async fn secret(client: &Client, json_mode: bool, command: SecretCommand) -> anyhow::Result<()> {
+    match command {
+        SecretCommand::Ls => {
             let secrets = client.get("/v1/secrets").await?;
             print(json_mode, &secrets, |list| {
-                list.as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|secret| {
-                        format!(
-                            "{:<24} {}",
-                            s(secret, "name"),
-                            secret.get("target").unwrap_or(&Value::Null)
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                lines(list, |secret| {
+                    format!(
+                        "{:<24} {}",
+                        s(secret, "name"),
+                        secret.get("target").unwrap_or(&Value::Null)
+                    )
+                })
             });
         }
-        Command::Secret(SecretCommand::Set {
+        SecretCommand::Set {
             name,
             env,
             file,
             git,
             username,
-        }) => {
+        } => {
             // Files are stored exactly as read. Single-line values lose the
             // newline that `echo` or a text file adds.
             let (target, single_line) = match (env, file, git, username) {
@@ -448,7 +459,7 @@ async fn main() -> anyhow::Result<()> {
                 format!("stored {name}; running workspaces receive it shortly")
             });
         }
-        Command::Secret(SecretCommand::Rm { name }) => {
+        SecretCommand::Rm { name } => {
             client.delete(&format!("/v1/secrets/{name}")).await?;
             print(json_mode, &json!({ "name": name }), |_| {
                 format!("deleted {name}")

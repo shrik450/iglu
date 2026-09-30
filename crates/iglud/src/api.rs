@@ -210,23 +210,20 @@ async fn create_workspace(
             let Some((revision, _)) = db::latest_ready_revision(tx, env.id)? else {
                 return Ok(Err("the environment has no built image yet"));
             };
-            let name = match request.name {
-                Some(name) => {
-                    if db::workspace_name_taken(tx, owner, name.as_str())? {
-                        return Ok(Err("a workspace with that name exists"));
-                    }
-                    name
+            let name = if let Some(name) = request.name {
+                if db::workspace_name_taken(tx, owner, name.as_str())? {
+                    return Ok(Err("a workspace with that name exists"));
                 }
-                None => {
-                    let mut attempt = 0;
-                    loop {
-                        let candidate = WorkspaceName::try_from(names::candidate(entropy, attempt))
-                            .expect("generated names start with a letter");
-                        if !db::workspace_name_taken(tx, owner, candidate.as_str())? {
-                            break candidate;
-                        }
-                        attempt += 1;
+                name
+            } else {
+                let mut attempt = 0;
+                loop {
+                    let candidate = WorkspaceName::try_from(names::candidate(entropy, attempt))
+                        .expect("generated names start with a letter");
+                    if !db::workspace_name_taken(tx, owner, candidate.as_str())? {
+                        break candidate;
                     }
+                    attempt += 1;
                 }
             };
             let branch = match request.branch {

@@ -104,6 +104,7 @@ pub enum PreviewAccess {
 /// A workspace's routes may call each other, so a frontend can talk to its
 /// API. Every other cross-origin request is rejected, except top-level
 /// navigations, so following a link between apps still works.
+#[must_use]
 pub fn preview_access(
     transport: Transport,
     fetch: FetchMetadata,
@@ -174,6 +175,10 @@ pub enum ConsoleRejection {
 /// Whether the console accepts a request. Without these checks, a preview
 /// page could make the browser open a terminal WebSocket to the console with
 /// the user's cookie and get a shell in any workspace.
+///
+/// # Errors
+///
+/// Why the console refuses the request.
 pub fn console_access(
     credential: Credential,
     transport: Transport,

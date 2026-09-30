@@ -20,6 +20,7 @@ use crate::repo::GitHost;
 pub struct SecretName(String);
 
 impl SecretName {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -65,6 +66,7 @@ impl EnvVarName {
         "ZMX_DIR",
     ];
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -104,11 +106,13 @@ impl FromStr for EnvVarName {
 pub struct HomePath(String);
 
 impl HomePath {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Parent directories that must exist, shallowest first.
+    #[must_use]
     pub fn parents(&self) -> Vec<&str> {
         self.0
             .match_indices('/')
@@ -145,6 +149,7 @@ impl FromStr for HomePath {
 pub struct GitUsername(String);
 
 impl GitUsername {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -207,6 +212,7 @@ impl SecretValue {
     pub const MAX_BYTES: usize = 64 * 1024;
 
     /// The value itself, for the one place that must write it into a guest.
+    #[must_use]
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -263,6 +269,10 @@ pub enum BundleError {
 
 /// Groups an owner's secrets for delivery, rejecting any two that claim the
 /// same destination.
+///
+/// # Errors
+///
+/// When two secrets target the same variable, file, or Git host.
 pub fn bundle(
     generation: SecretsGeneration,
     secrets: impl IntoIterator<Item = (SecretTarget, SecretValue)>,

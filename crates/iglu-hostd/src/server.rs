@@ -174,7 +174,7 @@ async fn attach(
 ) -> Response {
     let size = TerminalSize::new(params.cols, params.rows).unwrap_or(TerminalSize::DEFAULT);
     upgrade.on_upgrade(move |socket| async move {
-        crate::terminal::attach(&app, workspace, session, size, socket).await
+        crate::terminal::attach(&app, workspace, session, size, socket).await;
     })
 }
 

@@ -16,6 +16,7 @@ use crate::parse::text_type;
 pub struct FlakeRef(String);
 
 impl FlakeRef {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -47,6 +48,7 @@ impl FromStr for FlakeRef {
 pub struct FlakeAttr(String);
 
 impl FlakeAttr {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -84,6 +86,7 @@ pub struct EnvSource {
 
 impl EnvSource {
     /// The installable that builds this environment's image.
+    #[must_use]
     pub fn image_installable(&self) -> String {
         format!(
             "{}#nixosConfigurations.{}.config.system.build.igluImage",
@@ -124,6 +127,7 @@ pub type EnvName = DnsLabel;
 pub struct ImageFingerprint(String);
 
 impl ImageFingerprint {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -150,6 +154,7 @@ impl FromStr for ImageFingerprint {
 pub struct UnixUser(String);
 
 impl UnixUser {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -184,11 +189,13 @@ impl FromStr for UnixUser {
 pub struct GuestPath(String);
 
 impl GuestPath {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// `self/relative`, for paths the core already proved stay inside `self`.
+    #[must_use]
     pub fn join(&self, relative: &str) -> String {
         format!("{}/{}", self.0.trim_end_matches('/'), relative)
     }
@@ -238,6 +245,7 @@ pub struct GuestUser {
 pub struct Uid(u32);
 
 impl Uid {
+    #[must_use]
     pub const fn get(self) -> u32 {
         self.0
     }

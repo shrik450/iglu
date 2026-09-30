@@ -38,27 +38,25 @@ async fn dispatch(State(app): State<Arc<App>>, request: Request, next: Next) -> 
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned)
         .unwrap_or_default();
-    match gateway::preview_label(&app, &host).map(str::to_owned) {
-        Some(label) => gateway::handle(app, label, request).await,
-        None => {
-            let mut response = next.run(request).await;
-            let headers = response.headers_mut();
-            let set =
-                |headers: &mut axum::http::HeaderMap, name: &'static str, value: &'static str| {
-                    headers.insert(name, HeaderValue::from_static(value));
-                };
-            set(
-                headers,
-                "content-security-policy",
-                "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
-                 img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' http://127.0.0.1:*",
-            );
-            set(headers, "x-frame-options", "DENY");
-            set(headers, "x-content-type-options", "nosniff");
-            set(headers, "referrer-policy", "same-origin");
-            set(headers, "strict-transport-security", "max-age=31536000");
-            response
-        }
+    if let Some(label) = gateway::preview_label(&app, &host).map(str::to_owned) {
+        gateway::handle(app, label, request).await
+    } else {
+        let mut response = next.run(request).await;
+        let headers = response.headers_mut();
+        let set = |headers: &mut axum::http::HeaderMap, name: &'static str, value: &'static str| {
+            headers.insert(name, HeaderValue::from_static(value));
+        };
+        set(
+            headers,
+            "content-security-policy",
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' http://127.0.0.1:*",
+        );
+        set(headers, "x-frame-options", "DENY");
+        set(headers, "x-content-type-options", "nosniff");
+        set(headers, "referrer-policy", "same-origin");
+        set(headers, "strict-transport-security", "max-age=31536000");
+        response
     }
 }
 

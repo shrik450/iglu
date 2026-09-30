@@ -10,6 +10,11 @@ const BARE_ATTEMPTS: u32 = 8;
 
 /// A candidate name for `entropy` on the given attempt. Attempts from
 /// [`BARE_ATTEMPTS`] onward append `-<n>`.
+///
+/// # Panics
+///
+/// Never: the word lists are lowercase ASCII, so every candidate is a label.
+#[must_use]
 pub fn candidate(entropy: u64, attempt: u32) -> DnsLabel {
     let mixed = splitmix64(entropy ^ u64::from(attempt).wrapping_mul(0x9e37_79b9_7f4a_7c15));
     let adjective = pick(ADJECTIVES, mixed);

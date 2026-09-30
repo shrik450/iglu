@@ -14,6 +14,7 @@ use crate::parse::text_type;
 pub struct GitHost(String);
 
 impl GitHost {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -77,19 +78,23 @@ pub struct RepoUrl {
 }
 
 impl RepoUrl {
+    #[must_use]
     pub const fn transport(&self) -> Transport {
         self.transport
     }
 
+    #[must_use]
     pub const fn host(&self) -> &GitHost {
         &self.host
     }
 
     /// The directory the repository is cloned into, under the guest user's home.
+    #[must_use]
     pub const fn checkout_dir(&self) -> &CheckoutDir {
         &self.dir
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.original
     }
@@ -162,6 +167,7 @@ text_type!(RepoUrl);
 pub struct CheckoutDir(String);
 
 impl CheckoutDir {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -201,9 +207,20 @@ text_type!(CheckoutDir);
 pub struct BranchName(String);
 
 impl BranchName {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Git reserves a `.lock` suffix on every ref component, and compares it
+/// case-sensitively.
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "Git's own check is case-sensitive"
+)]
+fn ends_with_lock(component: &str) -> bool {
+    component.ends_with(".lock")
 }
 
 impl FromStr for BranchName {
@@ -225,7 +242,7 @@ impl FromStr for BranchName {
             && !s.contains("@{")
             && !s
                 .split('/')
-                .any(|part| part.starts_with('.') || part.ends_with(".lock"))
+                .any(|part| part.starts_with('.') || ends_with_lock(part))
             && !s.chars().any(forbidden_char);
         if valid {
             Ok(Self(s.to_owned()))

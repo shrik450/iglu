@@ -171,8 +171,14 @@ pub fn upsert_principal(
             new_id.to_string(),
             identity.issuer.as_str(),
             identity.subject.as_str(),
-            identity.email.as_ref().map(|e| e.as_str()),
-            identity.name.as_ref().map(|n| n.as_str()),
+            identity
+                .email
+                .as_ref()
+                .map(iglu_domain::auth::Email::as_str),
+            identity
+                .name
+                .as_ref()
+                .map(iglu_domain::auth::DisplayName::as_str),
             now.unix_millis(),
         ],
     )?;
@@ -589,7 +595,7 @@ pub fn insert_workspace(
             ws.name.as_str(),
             ws.repo.as_str(),
             ws.branch.as_str(),
-            ws.base.as_ref().map(|b| b.as_str()),
+            ws.base.as_ref().map(iglu_domain::repo::BranchName::as_str),
             ws.desired.as_str(),
             i64_of(ws.revision.get()),
             create_key,

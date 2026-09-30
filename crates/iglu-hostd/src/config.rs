@@ -75,6 +75,10 @@ const fn default_build_timeout() -> u64 {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the unit belongs in the configuration keys operators write"
+)]
 pub struct Timeouts {
     pub operation_secs: u64,
     pub stop_secs: u32,

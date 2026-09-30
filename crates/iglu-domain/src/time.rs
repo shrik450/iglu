@@ -10,20 +10,24 @@ use serde::{Deserialize, Serialize};
 pub struct Timestamp(i64);
 
 impl Timestamp {
+    #[must_use]
     pub const fn from_unix_millis(millis: i64) -> Self {
         Self(millis)
     }
 
+    #[must_use]
     pub const fn unix_millis(self) -> i64 {
         self.0
     }
 
     /// `self + duration`, saturating at the end of time.
+    #[must_use]
     pub const fn plus(self, duration: Millis) -> Self {
         Self(self.0.saturating_add(duration.0))
     }
 
     /// How long ago `earlier` was, or zero if it's in the future.
+    #[must_use]
     pub const fn since(self, earlier: Self) -> Millis {
         let elapsed = self.0.saturating_sub(earlier.0);
         Millis(if elapsed < 0 { 0 } else { elapsed })
@@ -42,10 +46,12 @@ impl fmt::Display for Timestamp {
 pub struct Millis(i64);
 
 impl Millis {
+    #[must_use]
     pub const fn from_secs(secs: u32) -> Self {
         Self(secs as i64 * 1000)
     }
 
+    #[must_use]
     pub const fn as_millis(self) -> i64 {
         self.0
     }

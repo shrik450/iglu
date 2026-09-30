@@ -15,6 +15,7 @@ use crate::parse::text_type;
 pub struct DnsLabel(String);
 
 impl DnsLabel {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
