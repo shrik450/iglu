@@ -12,6 +12,7 @@ use axum::routing::{get, post};
 use iglu_api::{CliToken, CliTokenRequest};
 use iglu_domain::id::PrincipalId;
 use iglu_domain::preview::FetchSite;
+use iglu_domain::signin::{ReturnPath, same_browser};
 use iglu_domain::time::Millis;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -36,13 +37,6 @@ pub fn console_router() -> Router<Arc<App>> {
 struct ReturnTo {
     #[serde(default)]
     r#return: Option<String>,
-}
-
-/// Only same-site paths: never `//host` or a scheme, so sign-in can't be
-/// used as an open redirect.
-fn safe_path(path: Option<String>) -> String {
-    path.filter(|p| p.starts_with('/') && !p.starts_with("//") && !p.contains('\\'))
-        .unwrap_or_else(|| "/".into())
 }
 
 /// An unreachable provider is worth retrying; anything else is a refusal.
@@ -77,10 +71,16 @@ async fn begin(
         return_to,
     };
     let state = pending.state.clone();
+    let stored = state.clone();
     app.db
-        .call(move |tx| db::insert_login(tx, &state, &login, now()))
+        .call(move |tx| db::insert_login(tx, &stored, &login, now()))
         .await?;
-    Ok(Redirect::to(pending.url.as_str()).into_response())
+    let cookie =
+        format!("{SIGNIN_COOKIE}={state}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600");
+    Ok(with_cookie(
+        Redirect::to(pending.url.as_str()).into_response(),
+        &cookie,
+    ))
 }
 
 async fn console_login(
@@ -91,7 +91,11 @@ async fn console_login(
         &app,
         &app.console,
         SessionKind::Console,
-        safe_path(query.r#return),
+        query
+            .r#return
+            .and_then(|path| path.parse().ok())
+            .unwrap_or_else(ReturnPath::root)
+            .to_string(),
     )
     .await
 }
@@ -103,12 +107,14 @@ struct Callback {
     error: Option<String>,
 }
 
-/// Completes a sign-in and returns the principal and where to go next.
+/// Completes a sign-in started in the browser holding `signin_cookie`, and
+/// returns the principal and where to go next.
 async fn complete(
     app: &App,
     rp: &RelyingParty,
     kind: SessionKind,
     callback: Callback,
+    signin_cookie: Option<&str>,
 ) -> Result<(PrincipalId, String), ApiError> {
     if let Some(error) = callback.error {
         return Err(ApiError::Forbidden(format!(
@@ -119,6 +125,11 @@ async fn complete(
         .code
         .zip(callback.state)
         .ok_or_else(|| ApiError::BadRequest("missing code".into()))?;
+    if !same_browser(signin_cookie, &state) {
+        return Err(ApiError::BadRequest(
+            "finish signing in in the browser that started it".into(),
+        ));
+    }
     let login = app
         .db
         .call(move |tx| db::take_login(tx, &state))
@@ -173,6 +184,10 @@ fn browser_lifetime(app: &App) -> Millis {
     Millis::from_secs(app.config.sessions.absolute_hours.saturating_mul(3600))
 }
 
+/// Holds a sign-in's `state` in the browser that started it.
+const SIGNIN_COOKIE: &str = "__Host-iglu-signin";
+const CLEAR_SIGNIN: &str = "__Host-iglu-signin=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0";
+
 fn with_cookie(mut response: Response, cookie: &str) -> Response {
     if let Ok(value) = HeaderValue::from_str(cookie) {
         response.headers_mut().append(header::SET_COOKIE, value);
@@ -183,9 +198,16 @@ fn with_cookie(mut response: Response, cookie: &str) -> Response {
 async fn console_callback(
     State(app): State<Arc<App>>,
     Query(callback): Query<Callback>,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let (principal, return_to) =
-        complete(&app, &app.console, SessionKind::Console, callback).await?;
+    let (principal, return_to) = complete(
+        &app,
+        &app.console,
+        SessionKind::Console,
+        callback,
+        cookie(&headers, SIGNIN_COOKIE),
+    )
+    .await?;
     let token = new_session(
         &app,
         principal,
@@ -194,10 +216,8 @@ async fn console_callback(
     )
     .await?;
     let cookie = format!("{CONSOLE_COOKIE}={token}; Path=/; Secure; HttpOnly; SameSite=Lax");
-    Ok(with_cookie(
-        Redirect::to(&return_to).into_response(),
-        &cookie,
-    ))
+    let response = with_cookie(Redirect::to(&return_to).into_response(), &cookie);
+    Ok(with_cookie(response, CLEAR_SIGNIN))
 }
 
 async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> Result<Response, ApiError> {
@@ -365,7 +385,12 @@ fn preview_return(app: &App, value: Option<String>) -> Option<String> {
     (url.scheme() == "https" && !label.contains('.')).then(|| url.to_string())
 }
 
-pub async fn preview_auth(app: &Arc<App>, path: &str, query: Option<&str>) -> Response {
+pub async fn preview_auth(
+    app: &Arc<App>,
+    path: &str,
+    query: Option<&str>,
+    headers: &HeaderMap,
+) -> Response {
     let params: Vec<(String, String)> =
         url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
             .into_owned()
@@ -387,7 +412,8 @@ pub async fn preview_auth(app: &Arc<App>, path: &str, query: Option<&str>) -> Re
                 state: get("state"),
                 error: get("error"),
             };
-            match complete(app, &app.preview, SessionKind::Preview, callback).await {
+            let signin = cookie(headers, SIGNIN_COOKIE);
+            match complete(app, &app.preview, SessionKind::Preview, callback, signin).await {
                 Ok((principal, return_to)) => {
                     match new_session(app, principal, SessionKind::Preview, browser_lifetime(app))
                         .await
@@ -397,10 +423,9 @@ pub async fn preview_auth(app: &Arc<App>, path: &str, query: Option<&str>) -> Re
                                 "{PREVIEW_COOKIE}={token}; Domain={}; Path=/; Secure; HttpOnly; SameSite=Lax",
                                 app.config.preview_domain
                             );
-                            Ok(with_cookie(
-                                Redirect::to(&return_to).into_response(),
-                                &cookie,
-                            ))
+                            let response =
+                                with_cookie(Redirect::to(&return_to).into_response(), &cookie);
+                            Ok(with_cookie(response, CLEAR_SIGNIN))
                         }
                         Err(error) => Err(error),
                     }
@@ -411,18 +436,4 @@ pub async fn preview_auth(app: &Arc<App>, path: &str, query: Option<&str>) -> Re
         _ => Err(ApiError::NotFound),
     };
     result.unwrap_or_else(IntoResponse::into_response)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::safe_path;
-
-    #[test]
-    fn return_paths_stay_on_the_console() {
-        assert_eq!(safe_path(Some("/w/abc".into())), "/w/abc");
-        assert_eq!(safe_path(Some("//evil.example".into())), "/");
-        assert_eq!(safe_path(Some("https://evil.example".into())), "/");
-        assert_eq!(safe_path(Some("/\\evil.example".into())), "/");
-        assert_eq!(safe_path(None), "/");
-    }
 }

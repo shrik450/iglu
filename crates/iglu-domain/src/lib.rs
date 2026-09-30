@@ -19,6 +19,7 @@ pub mod port;
 pub mod preview;
 pub mod repo;
 pub mod secret;
+pub mod signin;
 pub mod terminal;
 pub mod time;
 

@@ -155,7 +155,7 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
     if label == PREVIEW_AUTH_LABEL {
         let path = request.uri().path().to_owned();
         let query = request.uri().query().map(str::to_owned);
-        return crate::login::preview_auth(&app, &path, query.as_deref()).await;
+        return crate::login::preview_auth(&app, &path, query.as_deref(), request.headers()).await;
     }
     let Ok(name) = label.parse::<RouteName>() else {
         return reject(StatusCode::NOT_FOUND, "no such preview");
