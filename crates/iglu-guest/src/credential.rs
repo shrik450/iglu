@@ -4,14 +4,15 @@
 //! the answer is `username` and `password` for a matching HTTPS host.
 
 use iglu_domain::repo::GitHost;
+use iglu_domain::secret::{GitUsername, SecretValue};
 use serde::{Deserialize, Serialize};
 
 /// One stored credential, as `install-secrets` writes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stored {
     pub host: GitHost,
-    pub username: String,
-    pub password: String,
+    pub username: GitUsername,
+    pub password: SecretValue,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,13 +51,14 @@ pub fn answer(request: &Request, stored: &[Stored]) -> Option<String> {
     let found = stored
         .iter()
         .find(|credential| credential.host.as_str() == host)?;
-    let safe = |value: &str| !value.contains('\n') && !value.contains('\0');
-    if !safe(&found.username) || !safe(&found.password) {
+    // Usernames are already free of newlines; a password with one would end the answer early.
+    if found.password.expose().contains(['\n', '\0']) {
         return None;
     }
     Some(format!(
         "username={}\npassword={}\n",
-        found.username, found.password
+        found.username,
+        found.password.expose()
     ))
 }
 
@@ -67,8 +69,8 @@ mod tests {
     fn stored() -> Vec<Stored> {
         vec![Stored {
             host: "github.com".parse().expect("valid host"),
-            username: "x-access-token".into(),
-            password: "tok".into(),
+            username: "x-access-token".parse().expect("valid username"),
+            password: SecretValue::try_from("tok".to_owned()).expect("valid secret"),
         }]
     }
 

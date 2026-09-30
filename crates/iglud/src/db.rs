@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
 use iglu_domain::attention::{Seen, SessionStatus};
-use iglu_domain::auth::{PrincipalStatus, VerifiedIdentity};
+use iglu_domain::auth::VerifiedIdentity;
 use iglu_domain::capacity::Bytes;
 use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, RouteId, SecretId, WorkspaceId};
@@ -160,16 +160,11 @@ fn i64_of(value: u64) -> i64 {
 const PRINCIPAL_COLUMNS: &str = "id, email, name, status, secrets_generation";
 
 fn principal_row(row: &Row<'_>) -> rusqlite::Result<PrincipalRecord> {
-    let status: String = row.get(3)?;
     Ok(PrincipalRecord {
         id: text(row, 0)?,
         email: opt_text(row, 1)?,
         name: opt_text(row, 2)?,
-        status: if status == "disabled" {
-            PrincipalStatus::Disabled
-        } else {
-            PrincipalStatus::Active
-        },
+        status: text(row, 3)?,
         secrets_generation: SecretsGeneration::from_u64(u64_col(row, 4)?),
     })
 }
@@ -239,6 +234,23 @@ impl SessionKind {
             Self::Console => "console",
             Self::Preview => "preview",
             Self::Api => "api",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("expected a session kind: console, preview or api")]
+pub struct UnknownSessionKind;
+
+impl FromStr for SessionKind {
+    type Err = UnknownSessionKind;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "console" => Ok(Self::Console),
+            "preview" => Ok(Self::Preview),
+            "api" => Ok(Self::Api),
+            _ => Err(UnknownSessionKind),
         }
     }
 }
@@ -352,13 +364,8 @@ pub fn take_login(tx: &Connection, state: &str) -> Result<Option<LoginRow>, DbEr
             "SELECT kind, nonce, pkce_verifier, return_to FROM login WHERE state = ?1",
             [state],
             |row| {
-                let kind: String = row.get(0)?;
                 Ok(LoginRow {
-                    kind: if kind == "preview" {
-                        SessionKind::Preview
-                    } else {
-                        SessionKind::Console
-                    },
+                    kind: text(row, 0)?,
                     nonce: row.get(1)?,
                     pkce_verifier: row.get(2)?,
                     return_to: row.get(3)?,
@@ -468,7 +475,13 @@ fn revision_row(row: &Row<'_>) -> rusqlite::Result<RevisionView> {
         "failed" => RevisionStatus::Failed {
             log_tail: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
         },
-        _ => RevisionStatus::Building,
+        "building" => RevisionStatus::Building,
+        _ => {
+            return Err(conversion(
+                1,
+                std::io::Error::other("unknown revision status"),
+            ));
+        }
     };
     Ok(RevisionView {
         id: text(row, 0)?,

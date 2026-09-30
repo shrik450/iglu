@@ -174,6 +174,21 @@ pub enum PrincipalStatus {
     Disabled,
 }
 
+impl FromStr for PrincipalStatus {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "active" => Ok(Self::Active),
+            "disabled" => Ok(Self::Disabled),
+            _ => Err(ParseError::new(
+                "principal status",
+                "expected active or disabled",
+            )),
+        }
+    }
+}
+
 /// A signed-in principal, as authorization sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Principal {

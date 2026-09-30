@@ -79,22 +79,11 @@ pub fn router() -> Router<Arc<App>> {
 }
 
 async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, ApiError> {
-    let hash = caller.session_hash.clone();
-    let csrf = app
-        .db
-        .call(move |tx| {
-            Ok(tx.query_row(
-                "SELECT csrf FROM web_session WHERE token_hash = ?1",
-                [hash],
-                |row| row.get::<_, String>(0),
-            )?)
-        })
-        .await?;
     Ok(Json(Me {
         id: caller.principal.id,
         name: caller.principal.name,
         email: caller.principal.email,
-        csrf_token: csrf,
+        csrf_token: caller.csrf_token,
         preview_domain: app.config.preview_domain.clone(),
     }))
 }

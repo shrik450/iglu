@@ -145,8 +145,8 @@ pub fn install(incoming: &Path) -> Result<(), InstallError> {
         .iter()
         .map(|c| Stored {
             host: c.host.clone(),
-            username: c.username.to_string(),
-            password: c.password.expose().to_owned(),
+            username: c.username.clone(),
+            password: c.password.clone(),
         })
         .collect();
     write_private(

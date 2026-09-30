@@ -184,10 +184,12 @@ pub fn session_valid(row: &SessionRow, kind: SessionKind, now: Timestamp, idle: 
 }
 
 /// The signed-in caller of a console or API request.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Caller {
     pub principal: PrincipalRecord,
     pub session_hash: String,
+    /// The session's CSRF token, which the console sends back on writes.
+    pub csrf_token: String,
     pub kind: SessionKind,
 }
 
@@ -275,6 +277,7 @@ impl FromRequestParts<Arc<App>> for Caller {
         Ok(Self {
             principal,
             session_hash: crypto::hash(&token),
+            csrf_token: row.csrf,
             kind,
         })
     }
