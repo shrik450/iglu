@@ -740,19 +740,23 @@ pub fn set_desired(
     Ok(Some(next))
 }
 
+/// Records what the host reported at `at`, unless something newer is already
+/// recorded, such as the outcome of a command that finished after the report
+/// was asked for.
 pub fn record_observation(
     tx: &Connection,
     id: WorkspaceId,
     instance: &Instance,
     memory: Option<Bytes>,
-    now: Timestamp,
+    at: Timestamp,
 ) -> Result<(), DbError> {
     tx.execute(
-        "UPDATE workspace SET observed = ?2, observed_at = ?3, memory = ?4 WHERE id = ?1",
+        "UPDATE workspace SET observed = ?2, observed_at = ?3, memory = ?4
+         WHERE id = ?1 AND (observed_at IS NULL OR observed_at <= ?3)",
         params![
             id.to_string(),
             to_json(instance)?,
-            now.unix_millis(),
+            at.unix_millis(),
             memory.map(|m| i64_of(m.get()))
         ],
     )?;

@@ -89,9 +89,8 @@ impl DesiredState {
     }
 }
 
-/// Increases every time the desired state or anything it depends on changes.
-/// Used for optimistic concurrency at the API and to discard stale
-/// observations.
+/// Increases every time the desired state changes. A change applies only from
+/// the revision its author saw, so concurrent changes can't undo each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]
@@ -410,6 +409,8 @@ pub fn phase(desired: DesiredState, instance: Instance) -> Phase {
 )]
 fn live_phase(live: Live, present: Present) -> Phase {
     match (live, present.runtime, present.provisioning) {
+        // A failed runtime reads as stopped whatever else is true; its condition says why.
+        (Live::Running | Live::Frozen, Runtime::Failed, _) => Phase::Stopped,
         (Live::Running, _, Provisioning::Pending) => Phase::Creating,
 
         (Live::Running, Runtime::Running(running), Provisioning::Complete) => {
@@ -424,7 +425,6 @@ fn live_phase(live: Live, present: Present) -> Phase {
             Runtime::Stopped | Runtime::Frozen | Runtime::Transitioning,
             Provisioning::Complete,
         ) => Phase::Starting,
-        (Live::Running | Live::Frozen, Runtime::Failed, _) => Phase::Stopped,
 
         (Live::Frozen, Runtime::Frozen, _) => Phase::Frozen,
         (Live::Frozen, Runtime::Running(_) | Runtime::Transitioning, _) => Phase::Freezing,
@@ -500,6 +500,18 @@ mod tests {
         available: Bytes::gib(1),
         needed: Bytes::gib(3),
     };
+
+    #[test]
+    fn a_failed_runtime_never_looks_like_progress() {
+        for provisioning in [Provisioning::Pending, Provisioning::Complete] {
+            let failed = present(Runtime::Failed, provisioning);
+            assert_eq!(phase(DesiredState::Running, failed), Phase::Stopped);
+            assert_eq!(
+                plan(desired(DesiredState::Running), failed, Capacity::Fits),
+                Plan::Blocked(Blocker::RuntimeFailed)
+            );
+        }
+    }
 
     #[test]
     fn one_pass_admits_only_what_fits() {

@@ -11,6 +11,7 @@ use iglu_domain::lifecycle::{
     AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
 use iglu_domain::secret::{SecretValue, bundle};
+use iglu_domain::time::Timestamp;
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
     Limits, ProvisionSpec,
@@ -90,13 +91,17 @@ pub async fn run(app: Arc<App>) {
     let mut last_cleanup = Instant::now();
     loop {
         for host in &app.hosts {
+            // Observations are dated from when they were asked for.
+            let asked_at = now();
             match host.inventory().await {
                 Ok(inventory) => {
                     app.host_seen
                         .lock()
                         .expect("the host lock is never held across a panic")
                         .insert(host.id.clone(), now());
-                    if let Err(error) = reconcile_host(&app, &reconciler, host, inventory).await {
+                    if let Err(error) =
+                        reconcile_host(&app, &reconciler, host, inventory, asked_at).await
+                    {
                         tracing::error!(host = %host.id, %error, "reconciling failed");
                     }
                 }
@@ -152,6 +157,7 @@ async fn reconcile_host(
     reconciler: &Arc<Reconciler>,
     host: &Arc<HostClient>,
     inventory: Inventory,
+    asked_at: Timestamp,
 ) -> anyhow::Result<()> {
     let reports: HashMap<WorkspaceId, InstanceReport> = inventory
         .workspaces
@@ -179,7 +185,7 @@ async fn reconcile_host(
     for ws in workspaces {
         let report = reports.get(&ws.id);
         let instance = report.map_or(Instance::Absent, |r| r.instance);
-        let (principal, observed) = observe(app, &ws, instance, report).await?;
+        let (principal, observed) = observe(app, &ws, instance, report, asked_at).await?;
         changed |= observed;
         let Some(principal) = principal else { continue };
         let desired = Desired {
@@ -251,6 +257,7 @@ async fn observe(
     ws: &WorkspaceRecord,
     instance: Instance,
     report: Option<&InstanceReport>,
+    asked_at: Timestamp,
 ) -> anyhow::Result<(Option<PrincipalRecord>, bool)> {
     let memory = report.and_then(|r| r.memory);
     let sessions = report.map(|r| r.sessions.clone()).unwrap_or_default();
@@ -263,7 +270,7 @@ async fn observe(
         .db
         .call(move |tx| {
             if observed_changed {
-                db::record_observation(tx, id, &instance, memory, now())?;
+                db::record_observation(tx, id, &instance, memory, asked_at)?;
             }
             if clear_offline {
                 db::set_condition(tx, id, None)?;
