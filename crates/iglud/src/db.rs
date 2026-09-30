@@ -980,6 +980,7 @@ pub fn flag_service_worker(tx: &Connection, name: &RouteName) -> Result<(), DbEr
 // ---- secrets ----
 
 pub struct SealedSecret {
+    pub name: SecretName,
     pub target: SecretTarget,
     pub nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,
@@ -989,7 +990,6 @@ pub fn put_secret(
     tx: &Connection,
     id: SecretId,
     owner: PrincipalId,
-    name: &SecretName,
     sealed: &SealedSecret,
     now: Timestamp,
 ) -> Result<(), DbError> {
@@ -997,9 +997,28 @@ pub fn put_secret(
         "INSERT INTO secret (id, owner_id, name, target, nonce, ciphertext, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT (owner_id, name) DO UPDATE SET
            target = excluded.target, nonce = excluded.nonce, ciphertext = excluded.ciphertext, updated_at = excluded.updated_at",
-        params![id.to_string(), owner.to_string(), name.as_str(), to_json(&sealed.target)?, sealed.nonce, sealed.ciphertext, now.unix_millis()],
+        params![id.to_string(), owner.to_string(), sealed.name.as_str(), to_json(&sealed.target)?, sealed.nonce, sealed.ciphertext, now.unix_millis()],
     )?;
     bump_secrets_generation(tx, owner)
+}
+
+/// Where the owner's other secrets go, to refuse a second one for the same place.
+pub fn other_secret_targets(
+    tx: &Connection,
+    owner: PrincipalId,
+    name: &SecretName,
+) -> Result<Vec<(SecretName, SecretTarget)>, DbError> {
+    let mut statement =
+        tx.prepare("SELECT name, target FROM secret WHERE owner_id = ?1 AND name != ?2")?;
+    Ok(statement
+        .query_map(params![owner.to_string(), name.as_str()], |row| {
+            Ok((
+                text(row, 0)?,
+                opt_json(row, 1)?
+                    .ok_or_else(|| conversion(1, std::io::Error::other("missing target")))?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?)
 }
 
 pub fn delete_secret(
@@ -1036,15 +1055,16 @@ pub fn secrets(tx: &Connection, owner: PrincipalId) -> Result<Vec<SecretView>, D
 
 pub fn sealed_secrets(tx: &Connection, owner: PrincipalId) -> Result<Vec<SealedSecret>, DbError> {
     let mut statement = tx.prepare(
-        "SELECT target, nonce, ciphertext FROM secret WHERE owner_id = ?1 ORDER BY name",
+        "SELECT name, target, nonce, ciphertext FROM secret WHERE owner_id = ?1 ORDER BY name",
     )?;
     Ok(statement
         .query_map([owner.to_string()], |row| {
             Ok(SealedSecret {
-                target: opt_json(row, 0)?
-                    .ok_or_else(|| conversion(0, std::io::Error::other("missing target")))?,
-                nonce: row.get(1)?,
-                ciphertext: row.get(2)?,
+                name: text(row, 0)?,
+                target: opt_json(row, 1)?
+                    .ok_or_else(|| conversion(1, std::io::Error::other("missing target")))?,
+                nonce: row.get(2)?,
+                ciphertext: row.get(3)?,
             })
         })?
         .collect::<Result<_, _>>()?)

@@ -116,6 +116,8 @@ in
       # workspace user. hostd reads both through the container's root.
       systemd.tmpfiles.rules = [
         "d /run/iglu 0755 root root -"
+        # hostd writes bundles here as root: the user may read them, not replace them.
+        "d /run/iglu/incoming 0711 root root -"
         "d /run/iglu/secrets 0700 ${cfg.user} ${account.group} -"
         "d /run/iglu/status 0700 ${cfg.user} ${account.group} -"
       ];

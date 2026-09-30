@@ -13,7 +13,7 @@ pub mod paths {
     /// Per-session attention status, maintained by `iglu-status`.
     pub const STATUS: &str = "run/iglu/status/sessions.json";
     /// Where hostd drops a secrets bundle for the guest tool to install.
-    pub const SECRETS_INCOMING: &str = "/run/iglu/secrets/.incoming.json";
+    pub const SECRETS_INCOMING: &str = "/run/iglu/incoming/secrets.json";
     /// The guest tool, installed by the platform module.
     pub const GUEST_TOOL: &str = "/run/current-system/sw/bin/iglu-guest";
 }

@@ -2,8 +2,9 @@
 
 /// The user-owned tmpfs directory secrets are delivered into.
 pub const SECRETS_DIR: &str = "/run/iglu/secrets";
-/// Where hostd drops a bundle for `install-secrets`.
-pub const SECRETS_INCOMING: &str = "/run/iglu/secrets/.incoming.json";
+/// Where hostd drops a bundle for `install-secrets`. Its directory is root's,
+/// so the user can't plant a symlink there for hostd's root write to follow.
+pub const SECRETS_INCOMING: &str = "/run/iglu/incoming/secrets.json";
 pub const SECRETS_FILES: &str = "/run/iglu/secrets/files";
 pub const SECRETS_ENV: &str = "/run/iglu/secrets/env.json";
 pub const GIT_CREDENTIALS: &str = "/run/iglu/secrets/git-credentials.json";

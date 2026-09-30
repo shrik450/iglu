@@ -212,6 +212,22 @@ pub enum SecretTarget {
     },
 }
 
+impl SecretTarget {
+    /// Whether two secrets would be delivered to the same place. A file
+    /// inside another file's path counts: one path can't be both.
+    #[must_use]
+    pub fn conflicts_with(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Env { name: a }, Self::Env { name: b }) => a == b,
+            (Self::File { path: a }, Self::File { path: b }) => {
+                a == b || a.parents().contains(&b.as_str()) || b.parents().contains(&a.as_str())
+            }
+            (Self::GitCredential { host: a, .. }, Self::GitCredential { host: b, .. }) => a == b,
+            (Self::Env { .. } | Self::File { .. } | Self::GitCredential { .. }, _) => false,
+        }
+    }
+}
+
 /// A secret's value. Never printed: `Debug` is redacted and there is no `Display`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
@@ -371,6 +387,28 @@ mod tests {
             assert!(bad.parse::<EnvVarName>().is_err(), "{bad}");
         }
         assert!("CLAUDE_CODE_OAUTH_TOKEN".parse::<EnvVarName>().is_ok());
+    }
+
+    #[test]
+    fn destinations_conflict_when_they_overlap() {
+        let env = |n: &str| SecretTarget::Env {
+            name: n.parse().expect("valid"),
+        };
+        let file = |p: &str| SecretTarget::File {
+            path: p.parse().expect("valid"),
+        };
+        let git = |h: &str, u: &str| SecretTarget::GitCredential {
+            host: h.parse().expect("valid"),
+            username: u.parse().expect("valid"),
+        };
+        assert!(env("TOKEN").conflicts_with(&env("TOKEN")));
+        assert!(!env("TOKEN").conflicts_with(&env("OTHER")));
+        assert!(file(".config/gh").conflicts_with(&file(".config/gh/hosts.yml")));
+        assert!(file(".config/gh/hosts.yml").conflicts_with(&file(".config/gh")));
+        assert!(!file(".config/gh").conflicts_with(&file(".config/ghost")));
+        assert!(git("github.com", "a").conflicts_with(&git("github.com", "b")));
+        assert!(!git("github.com", "a").conflicts_with(&git("gitlab.com", "a")));
+        assert!(!env("TOKEN").conflicts_with(&file("TOKEN")));
     }
 
     #[test]

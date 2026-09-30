@@ -166,8 +166,10 @@ fn running_pid(owned: &Owned) -> Result<i64, CommandError> {
 }
 
 /// Hands the bundle to `iglu-guest install-secrets`, which lays the files out
-/// and records the generation last. Both run as the workspace user, in a
-/// directory that user owns, so installing secrets grants no extra authority.
+/// and records the generation last. The bundle lands, owned by the user, in a
+/// root-owned directory, so hostd's write can't be redirected; the install
+/// runs as the user and so grants no extra authority. Each delivery overwrites
+/// the last bundle.
 async fn deliver_secrets(
     app: &App,
     name: InstanceName,

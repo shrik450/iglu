@@ -7,6 +7,9 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::XChaCha20Poly1305;
 use chacha20poly1305::aead::{Aead, KeyInit};
+use iglu_domain::id::PrincipalId;
+use iglu_domain::secret::{SecretName, SecretTarget};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +20,8 @@ pub enum CryptoError {
     Random,
     #[error("a stored secret couldn't be decrypted")]
     Decrypt,
+    #[error("couldn't encode a secret's binding")]
+    Binding,
 }
 
 pub fn random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
@@ -49,6 +54,22 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// What a stored secret is bound to, as associated data: its ciphertext opens
+/// only for the owner, name and destination it was sealed for, so rows can't
+/// be swapped, and a Git credential can't be pointed at another host.
+#[derive(Serialize)]
+pub struct Binding<'a> {
+    pub owner: PrincipalId,
+    pub name: &'a SecretName,
+    pub target: &'a SecretTarget,
+}
+
+impl Binding<'_> {
+    fn bytes(&self) -> Result<Vec<u8>, CryptoError> {
+        serde_json::to_vec(self).map_err(|_| CryptoError::Binding)
+    }
+}
+
 /// Encrypts secrets at rest with a key the operator provisions.
 pub struct Sealer(XChaCha20Poly1305);
 
@@ -60,9 +81,13 @@ impl Sealer {
         Ok(Self(cipher))
     }
 
-    /// Returns `(nonce, ciphertext)`. The secret's name and owner are bound
-    /// as associated data, so ciphertexts can't be swapped between rows.
-    pub fn seal(&self, plaintext: &[u8], context: &str) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
+    /// Returns `(nonce, ciphertext)`.
+    pub fn seal(
+        &self,
+        plaintext: &[u8],
+        binding: &Binding<'_>,
+    ) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
+        let aad = binding.bytes()?;
         let nonce = random_bytes::<24>()?;
         let ciphertext = self
             .0
@@ -70,7 +95,7 @@ impl Sealer {
                 &nonce.into(),
                 chacha20poly1305::aead::Payload {
                     msg: plaintext,
-                    aad: context.as_bytes(),
+                    aad: &aad,
                 },
             )
             .map_err(|_| CryptoError::Random)?;
@@ -81,15 +106,16 @@ impl Sealer {
         &self,
         nonce: &[u8],
         ciphertext: &[u8],
-        context: &str,
+        binding: &Binding<'_>,
     ) -> Result<Vec<u8>, CryptoError> {
         let nonce: [u8; 24] = nonce.try_into().map_err(|_| CryptoError::Decrypt)?;
+        let aad = binding.bytes()?;
         self.0
             .decrypt(
                 &nonce.into(),
                 chacha20poly1305::aead::Payload {
                     msg: ciphertext,
-                    aad: context.as_bytes(),
+                    aad: &aad,
                 },
             )
             .map_err(|_| CryptoError::Decrypt)

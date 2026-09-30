@@ -17,6 +17,7 @@ use iglu_proto::{
 };
 
 use crate::app::{App, now};
+use crate::crypto::Binding;
 use crate::db;
 use crate::hosts::HostClient;
 use crate::model::{Condition, PrincipalRecord, WorkspaceRecord};
@@ -484,12 +485,16 @@ async fn command_for(
                 .call(move |tx| db::sealed_secrets(tx, owner))
                 .await
                 .map_err(internal)?;
-            let context = owner.to_string();
             let mut opened = Vec::with_capacity(sealed.len());
             for secret in sealed {
+                let binding = Binding {
+                    owner,
+                    name: &secret.name,
+                    target: &secret.target,
+                };
                 let plaintext = app
                     .sealer
-                    .open(&secret.nonce, &secret.ciphertext, &context)
+                    .open(&secret.nonce, &secret.ciphertext, &binding)
                     .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))?;
                 let value = String::from_utf8(plaintext)
                     .ok()

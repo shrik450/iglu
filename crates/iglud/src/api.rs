@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::app::{ApiError, App, Caller, now};
-use crate::crypto;
+use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, SealedSecret};
 use crate::model::WorkspaceRecord;
 use crate::views::{route_view, workspace_view};
@@ -609,21 +609,34 @@ async fn put_secret(
 ) -> Result<StatusCode, ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageSecrets, owner)?;
-    let (nonce, ciphertext) = app
-        .sealer
-        .seal(request.value.expose().as_bytes(), &owner.to_string())?;
+    let (nonce, ciphertext) = app.sealer.seal(
+        request.value.expose().as_bytes(),
+        &Binding {
+            owner,
+            name: &name,
+            target: &request.target,
+        },
+    )?;
     let sealed = SealedSecret {
+        name,
         target: request.target,
         nonce,
         ciphertext,
     };
-    app.db
+    let stored = app
+        .db
         .call(move |tx| {
+            let others = db::other_secret_targets(tx, owner, &sealed.name)?;
+            if let Some((other, _)) = others
+                .iter()
+                .find(|(_, target)| target.conflicts_with(&sealed.target))
+            {
+                return Ok(Err(format!("{other} already goes there")));
+            }
             db::put_secret(
                 tx,
                 SecretId::from_uuid(Uuid::new_v4()),
                 owner,
-                &name,
                 &sealed,
                 now(),
             )?;
@@ -632,11 +645,13 @@ async fn put_secret(
                 None,
                 Some(owner),
                 "secret-updated",
-                name.as_str(),
+                sealed.name.as_str(),
                 now(),
-            )
+            )?;
+            Ok(Ok(()))
         })
         .await?;
+    stored.map_err(ApiError::Conflict)?;
     app.kick();
     Ok(StatusCode::NO_CONTENT)
 }

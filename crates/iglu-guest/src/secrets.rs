@@ -113,14 +113,11 @@ pub fn install(incoming: &Path) -> Result<(), InstallError> {
         .unwrap_or_default();
     let plan = layout(&bundle, &previous);
 
-    // Start from an empty directory, keeping only the incoming bundle.
+    // Start from an empty directory.
     let secrets = Path::new(paths::SECRETS_DIR);
     for entry in fs::read_dir(secrets).map_err(io(paths::SECRETS_DIR))? {
         let entry = entry.map_err(io(paths::SECRETS_DIR))?;
         let path = entry.path();
-        if path == incoming {
-            continue;
-        }
         let result = if entry
             .file_type()
             .map_err(io(path.display().to_string()))?
@@ -180,7 +177,6 @@ pub fn install(incoming: &Path) -> Result<(), InstallError> {
     write_atomic(&links_file, &serde_json::to_vec(&linked)?)
         .map_err(io(links_file.display().to_string()))?;
 
-    fs::remove_file(incoming).map_err(io("the incoming bundle"))?;
     write_atomic(
         Path::new(paths::SECRETS_GENERATION),
         bundle.generation.get().to_string().as_bytes(),
