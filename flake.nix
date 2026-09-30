@@ -33,6 +33,7 @@
       };
 
       # A minimal environment: `iglu env add example <this flake>#example`.
+      # The end-to-end test builds it on its execution host.
       nixosConfigurations.example = lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
@@ -49,7 +50,13 @@
         description = "An iglu environment: a NixOS workspace for coding agents";
       };
 
-      checks = forSystems linux (pkgs: self.packages.${pkgs.stdenv.hostPlatform.system});
+      checks = forSystems linux (pkgs: self.packages.${pkgs.stdenv.hostPlatform.system}) // {
+        x86_64-linux = self.packages.x86_64-linux // {
+          e2e = nixpkgs.legacyPackages.x86_64-linux.testers.runNixOSTest (
+            import ./nix/tests/e2e.nix { inherit self nixpkgs; }
+          );
+        };
+      };
 
       devShells = forSystems systems (pkgs: {
         default = pkgs.mkShell {
