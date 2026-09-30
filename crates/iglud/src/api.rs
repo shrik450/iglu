@@ -684,7 +684,7 @@ async fn events(
     let mut changes = app.changes.subscribe();
     let stream = async_stream(move |sender| async move {
         loop {
-            if !crate::terminal::lease_valid(&app, &caller).await {
+            if !crate::terminal::lease_valid(&app, &caller, crate::terminal::Use::Idle).await {
                 break;
             }
             match views_for(&app, caller.principal.id).await {

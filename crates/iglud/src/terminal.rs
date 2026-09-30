@@ -18,9 +18,18 @@ use crate::model::WorkspaceRecord;
 /// How long an authorization decision for an open stream lasts.
 pub const LEASE: Duration = Duration::from_secs(5);
 
+/// Whether the person used a stream since its last lease check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Use {
+    /// They typed, which keeps an idle browser session alive like a request does.
+    Active,
+    /// It only carried output, which doesn't.
+    Idle,
+}
+
 /// Re-checks that the caller's session is still valid and the principal
 /// still active. Streams close when this fails.
-pub async fn lease_valid(app: &App, caller: &Caller) -> bool {
+pub async fn lease_valid(app: &App, caller: &Caller, used: Use) -> bool {
     let hash = caller.session_hash.clone();
     let kind = caller.kind;
     let idle =
@@ -43,13 +52,17 @@ pub async fn lease_valid(app: &App, caller: &Caller) -> bool {
                 ),
                 Decision::Allow
             );
-            Ok(active && session_valid(&row, kind, now(), idle))
+            let valid = active && session_valid(&row, kind, now(), idle);
+            if valid && used == Use::Active {
+                db::touch_session(tx, &hash, now())?;
+            }
+            Ok(valid)
         })
         .await;
     result.unwrap_or(false)
 }
 
-async fn still_allowed(app: &App, caller: &Caller, ws: &WorkspaceRecord) -> bool {
+async fn still_allowed(app: &App, caller: &Caller, ws: &WorkspaceRecord, used: Use) -> bool {
     let id = ws.id;
     let live = app
         .db
@@ -57,7 +70,7 @@ async fn still_allowed(app: &App, caller: &Caller, ws: &WorkspaceRecord) -> bool
         .await
         .ok()
         .flatten();
-    lease_valid(app, caller).await
+    lease_valid(app, caller, used).await
         && live.is_some_and(|ws| caller.authorize(Action::OperateWorkspace, ws.owner).is_ok())
 }
 
@@ -82,11 +95,13 @@ pub async fn relay(
     let (mut to_host, mut from_host) = upstream.split();
     let mut lease = tokio::time::interval(LEASE);
     lease.tick().await;
+    let mut used = Use::Idle;
 
     loop {
         tokio::select! {
             message = from_browser.next() => match message {
                 Some(Ok(Browser::Binary(bytes))) => {
+                    used = Use::Active;
                     if to_host.send(Host::Binary(bytes)).await.is_err() { break; }
                 }
                 Some(Ok(Browser::Text(text))) => {
@@ -107,10 +122,11 @@ pub async fn relay(
                 Some(Ok(Host::Close(_)) | Err(_)) | None => break,
             },
             _ = lease.tick() => {
-                if !still_allowed(&app, &caller, &ws).await {
+                if !still_allowed(&app, &caller, &ws, used).await {
                     tracing::info!(workspace = %ws.id, "closing a terminal whose authorization ended");
                     break;
                 }
+                used = Use::Idle;
             }
         }
     }
