@@ -1,4 +1,4 @@
--- iglud's schema. SQLite owns intent; Incus owns what exists.
+-- The initial schema. SQLite owns intent; Incus owns what exists.
 
 CREATE TABLE principal (
     id                  TEXT PRIMARY KEY,

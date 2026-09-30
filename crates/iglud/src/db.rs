@@ -29,8 +29,9 @@ use crate::model::{
     RouteRecord, SecretSummary, WorkspaceRecord,
 };
 
-const SCHEMA: &str = include_str!("schema.sql");
-const SCHEMA_VERSION: i64 = 1;
+/// The schema's history, oldest first. `user_version` records how many have
+/// been applied. Never edit one that has shipped; add another.
+const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_initial.sql")];
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -38,8 +39,11 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("database: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("database schema version {found} isn't supported (expected {SCHEMA_VERSION})")]
-    Version { found: i64 },
+    #[error(
+        "the database has schema version {found}, newer than this iglud ({}); run a newer iglud",
+        MIGRATIONS.len()
+    )]
+    TooNew { found: usize },
     #[error("database worker stopped")]
     Worker,
 }
@@ -47,22 +51,35 @@ pub enum DbError {
 #[derive(Clone)]
 pub struct Db(Arc<Mutex<Connection>>);
 
+/// Brings the schema up to date, one migration per transaction.
+fn migrate(conn: &mut Connection) -> Result<(), DbError> {
+    let raw: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let applied = usize::try_from(raw).unwrap_or(usize::MAX);
+    if applied > MIGRATIONS.len() {
+        return Err(DbError::TooNew { found: applied });
+    }
+    for (index, migration) in MIGRATIONS.iter().enumerate().skip(applied) {
+        let tx = conn.transaction()?;
+        tx.execute_batch(migration)?;
+        let version = i64::try_from(index + 1).expect("there are fewer migrations than i64::MAX");
+        tx.pragma_update(None, "user_version", version)?;
+        tx.commit()?;
+        tracing::info!(version, "applied a database migration");
+    }
+    Ok(())
+}
+
 impl Db {
     pub fn open(path: &Path) -> Result<Self, DbError> {
-        let conn = Connection::open(path)?;
+        Self::from_connection(Connection::open(path)?)
+    }
+
+    fn from_connection(mut conn: Connection) -> Result<Self, DbError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        match version {
-            0 => {
-                conn.execute_batch(SCHEMA)?;
-                conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-            }
-            SCHEMA_VERSION => {}
-            found => return Err(DbError::Version { found }),
-        }
+        migrate(&mut conn)?;
         Ok(Self(Arc::new(Mutex::new(conn))))
     }
 
@@ -1060,4 +1077,246 @@ pub fn activity(
             })
         })?
         .collect::<Result<_, _>>()?)
+}
+
+// Real SQLite, in memory: the queries and schema constraints are what's
+// under test, so nothing here is faked.
+#[cfg(test)]
+mod tests {
+    use iglu_domain::attention::{AttentionState, Summary};
+    use iglu_domain::auth::{Email, Issuer, Subject};
+    use iglu_domain::terminal::SessionName;
+
+    use super::*;
+
+    fn conn() -> Connection {
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate(&mut conn).expect("the migrations apply");
+        conn
+    }
+
+    fn at(millis: i64) -> Timestamp {
+        Timestamp::from_unix_millis(millis)
+    }
+
+    fn identity(subject: &str, email: &str) -> VerifiedIdentity {
+        VerifiedIdentity {
+            issuer: "https://id.example.org".parse::<Issuer>().expect("issuer"),
+            subject: subject.parse::<Subject>().expect("subject"),
+            email: Some(email.parse::<Email>().expect("email")),
+            name: None,
+        }
+    }
+
+    fn principal(conn: &Connection, subject: &str) -> PrincipalId {
+        upsert_principal(
+            conn,
+            PrincipalId::from_uuid(Uuid::new_v4()),
+            &identity(subject, "someone@example.org"),
+            at(1),
+        )
+        .expect("principal")
+        .id
+    }
+
+    fn revision(conn: &Connection, owner: PrincipalId) -> EnvRevisionId {
+        let env = Uuid::new_v4();
+        let name: EnvName = "default".parse().expect("env name");
+        let source: EnvSource = "github:acme/env#default".parse().expect("source");
+        create_environment(conn, env, owner, &name, &source, at(1)).expect("environment");
+        let id = EnvRevisionId::from_uuid(Uuid::new_v4());
+        insert_revision(conn, id, env, at(1)).expect("revision");
+        id
+    }
+
+    fn workspace_record(owner: PrincipalId, env: EnvRevisionId, name: &str) -> WorkspaceRecord {
+        WorkspaceRecord {
+            id: WorkspaceId::from_uuid(Uuid::new_v4()),
+            owner,
+            host: "host-1".parse().expect("host"),
+            env_revision: env,
+            name: name.parse().expect("workspace name"),
+            repo: "https://github.com/acme/app.git".parse().expect("repo"),
+            branch: name.parse().expect("branch"),
+            base: None,
+            desired: DesiredState::Running,
+            revision: Revision::from_u64(1),
+            observed: None,
+            observed_at: None,
+            memory: None,
+            condition: None,
+            created_at: at(1),
+        }
+    }
+
+    fn new_workspace(conn: &Connection, owner: PrincipalId, name: &str) -> WorkspaceRecord {
+        let ws = workspace_record(owner, revision(conn, owner), name);
+        insert_workspace(conn, &ws, None, "hash").expect("workspace");
+        ws
+    }
+
+    #[test]
+    fn migrations_apply_once_and_refuse_a_newer_schema() {
+        let mut conn = conn();
+        migrate(&mut conn).expect("applying again is a no-op");
+        conn.pragma_update(None, "user_version", 99)
+            .expect("set version");
+        assert!(matches!(
+            migrate(&mut conn),
+            Err(DbError::TooNew { found: 99 })
+        ));
+    }
+
+    #[test]
+    fn a_principal_is_keyed_by_issuer_and_subject() {
+        let conn = conn();
+        let first = upsert_principal(
+            &conn,
+            PrincipalId::from_uuid(Uuid::new_v4()),
+            &identity("alice", "alice@example.org"),
+            at(1),
+        )
+        .expect("insert");
+        let again = upsert_principal(
+            &conn,
+            PrincipalId::from_uuid(Uuid::new_v4()),
+            &identity("alice", "alice@new.example.org"),
+            at(2),
+        )
+        .expect("update");
+        assert_eq!(first.id, again.id);
+        assert_eq!(
+            again.email.as_ref().map(Email::as_str),
+            Some("alice@new.example.org")
+        );
+        let bob = principal(&conn, "bob");
+        assert_ne!(bob, first.id);
+    }
+
+    #[test]
+    fn logins_and_cli_codes_work_once() {
+        let conn = conn();
+        let login = LoginRow {
+            kind: SessionKind::Preview,
+            nonce: "n".into(),
+            pkce_verifier: "v".into(),
+            return_to: "/".into(),
+        };
+        insert_login(&conn, "state", &login, at(1)).expect("login");
+        let taken = take_login(&conn, "state").expect("take");
+        assert_eq!(taken.map(|l| l.kind), Some(SessionKind::Preview));
+        assert!(take_login(&conn, "state").expect("take").is_none());
+
+        let owner = principal(&conn, "alice");
+        insert_cli_code(&conn, "fresh", owner, "challenge", at(100)).expect("code");
+        insert_cli_code(&conn, "stale", owner, "challenge", at(10)).expect("code");
+        assert!(
+            take_cli_code(&conn, "stale", at(50))
+                .expect("take")
+                .is_none()
+        );
+        let fresh = take_cli_code(&conn, "fresh", at(50)).expect("take");
+        assert_eq!(fresh, Some((owner, "challenge".to_owned())));
+        assert!(
+            take_cli_code(&conn, "fresh", at(50))
+                .expect("take")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_name_is_taken_while_its_workspace_is_live() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        assert!(workspace_name_taken(&conn, owner, "demo").expect("query"));
+        let duplicate = workspace_record(owner, ws.env_revision, "demo");
+        assert!(insert_workspace(&conn, &duplicate, None, "hash").is_err());
+        let other = principal(&conn, "bob");
+        assert!(!workspace_name_taken(&conn, other, "demo").expect("query"));
+
+        mark_deleted(&conn, ws.id, at(5)).expect("delete");
+        assert!(workspace(&conn, ws.id).expect("query").is_none());
+        assert!(!workspace_name_taken(&conn, owner, "demo").expect("query"));
+        insert_workspace(&conn, &duplicate, None, "hash").expect("the name is free again");
+    }
+
+    #[test]
+    fn desired_state_changes_only_from_the_expected_revision() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let stale = Some(Revision::from_u64(7));
+        assert_eq!(
+            set_desired(&conn, ws.id, DesiredState::Frozen, stale).expect("query"),
+            None
+        );
+        let next = set_desired(&conn, ws.id, DesiredState::Frozen, Some(ws.revision))
+            .expect("query")
+            .expect("the revision matched");
+        assert_eq!(next, ws.revision.next());
+        let stored = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(stored.desired, DesiredState::Frozen);
+    }
+
+    #[test]
+    fn route_names_are_never_reused() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let name: RouteName = "brave-hopping".parse().expect("route name");
+        let port: GuestPort = "3000".parse().expect("port");
+        let created = match create_route(
+            &conn,
+            RouteId::from_uuid(Uuid::new_v4()),
+            ws.id,
+            owner,
+            &name,
+            port,
+            at(1),
+        )
+        .expect("route")
+        {
+            NewRoute::Created(route) => route,
+            NewRoute::Exists(_) | NewRoute::NameTaken => panic!("a fresh name is created"),
+        };
+        assert!(matches!(
+            create_route(&conn, RouteId::from_uuid(Uuid::new_v4()), ws.id, owner, &name, port, at(2)),
+            Ok(NewRoute::Exists(route)) if route.id == created.id
+        ));
+        assert!(delete_route(&conn, ws.id, created.id, at(3)).expect("delete"));
+
+        let other = workspace_record(owner, ws.env_revision, "other");
+        insert_workspace(&conn, &other, None, "hash").expect("workspace");
+        assert!(matches!(
+            create_route(
+                &conn,
+                RouteId::from_uuid(Uuid::new_v4()),
+                other.id,
+                owner,
+                &name,
+                port,
+                at(4)
+            ),
+            Ok(NewRoute::NameTaken)
+        ));
+    }
+
+    #[test]
+    fn attention_sync_reports_only_changes() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let statuses = vec![SessionStatus {
+            session: "t1".parse::<SessionName>().expect("session"),
+            state: AttentionState::Waiting,
+            summary: Summary::sanitize("approve Bash?"),
+            updated_at: at(10),
+        }];
+        assert!(sync_attention(&conn, ws.id, &statuses).expect("sync"));
+        assert!(!sync_attention(&conn, ws.id, &statuses).expect("sync"));
+        assert!(sync_attention(&conn, ws.id, &[]).expect("sync"));
+    }
 }
