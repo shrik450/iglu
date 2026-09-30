@@ -1,6 +1,7 @@
 //! iglud's configuration, written by the NixOS module as JSON.
 
 use std::net::SocketAddr;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
 
 use iglu_domain::auth::{Issuer, SignInPolicy};
@@ -29,6 +30,9 @@ pub struct Config {
     pub workspaces: WorkspaceDefaults,
     #[serde(default)]
     pub sessions: SessionPolicy,
+    /// Copies of the database; none when absent.
+    #[serde(default)]
+    pub backups: Option<Backups>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +126,16 @@ impl Default for SessionPolicy {
             cli_days: 30,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Backups {
+    pub directory: PathBuf,
+    /// Minutes between copies. One is also taken at startup, before migrating.
+    pub interval_minutes: NonZeroU32,
+    /// How many copies to keep, newest first.
+    pub keep: NonZeroUsize,
 }
 
 pub fn read_secret(path: &Path) -> anyhow::Result<String> {

@@ -164,6 +164,20 @@ iglu env add default github:you/iglu-env#default
 `iglu env build default` rebuilds it after you change the flake. New
 workspaces use the newest image; existing ones keep theirs.
 
+### Backups
+
+iglud copies its database to `/var/lib/iglud/backups` at every start, before
+any migration, and every six hours, keeping the newest 28
+(`services.iglu.control.backups`). Ship that directory off the box. The copies
+hold stored secrets sealed with `/var/lib/iglud/secret-key`, which they don't
+include: back the key up once, separately.
+
+To restore, stop `iglud`, replace `/var/lib/iglud/iglu.db` with a copy and
+delete any `iglu.db-wal` and `iglu.db-shm` beside it, then start `iglud`.
+Workspaces created since the copy are left running and logged, because iglud
+never deletes an instance it has no record of. Workspaces deleted since the
+copy come back, freshly cloned.
+
 ## Using it
 
 ```sh

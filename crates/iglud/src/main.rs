@@ -3,6 +3,7 @@
 
 mod api;
 mod app;
+mod backup;
 mod config;
 mod crypto;
 mod db;
@@ -75,6 +76,15 @@ async fn main() -> anyhow::Result<()> {
         .map(PathBuf::from)
         .context("usage: iglud --config <path>")?;
     let config = config::Config::load(&config_path)?;
+    // Copy the database before opening it, so an upgrade's migrations can be undone.
+    if let Some(policy) = &config.backups
+        && config.database.exists()
+    {
+        match backup::back_up(&config.database, policy, app::now()) {
+            Ok(path) => tracing::info!(path = %path.display(), "backed up the database"),
+            Err(error) => tracing::warn!(%error, "couldn't back up the database"),
+        }
+    }
     let db = db::Db::open(&config.database).context("opening the database")?;
     let sealer = crypto::Sealer::load(&config.secret_key_file).context("loading the secret key")?;
 
@@ -144,6 +154,9 @@ async fn main() -> anyhow::Result<()> {
         pool: gateway::Pool::default(),
     });
     tokio::spawn(reconcile::run(app.clone()));
+    if let Some(policy) = app.config.backups.clone() {
+        tokio::spawn(backup::run(app.config.database.clone(), policy));
+    }
 
     let console_app = ServeDir::new(&assets).fallback(ServeFile::new(assets.join("index.html")));
     let router = Router::new()

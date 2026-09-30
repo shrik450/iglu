@@ -14,6 +14,7 @@ let
   settingsFormat = pkgs.formats.json { };
   stateDir = "/var/lib/iglud";
   secretKeyFile = "${stateDir}/secret-key";
+  backupDir = "${stateDir}/backups";
 
   clientOptions = name: {
     clientId = lib.mkOption {
@@ -59,6 +60,13 @@ let
       map (subject: { inherit subject; }) cfg.signIn.subjects
       ++ map (email: { verified_email = email; }) cfg.signIn.emails;
     hosts = lib.mapAttrsToList (id: url: { inherit id url; }) cfg.hosts;
+  }
+  // lib.optionalAttrs cfg.backups.enable {
+    backups = {
+      directory = backupDir;
+      interval_minutes = cfg.backups.intervalMinutes;
+      inherit (cfg.backups) keep;
+    };
   }
   // cfg.extraSettings;
 
@@ -170,6 +178,30 @@ in
         host-1 = "https://host-1.lan:7443";
       };
       description = "Execution hosts by ID, and the URL each one's hostd serves.";
+    };
+
+    backups = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Keep copies of iglud's database in `/var/lib/iglud/backups`: one at
+          every start, before any migration, and one every
+          `intervalMinutes`. Ship that directory off the box to survive
+          losing the disk. Stored secrets in the copies are sealed with
+          `/var/lib/iglud/secret-key`, which they don't include; back the
+          key up once, separately.
+        '';
+      };
+      intervalMinutes = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 360;
+      };
+      keep = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 28;
+        description = "How many copies to keep, newest first.";
+      };
     };
 
     extraSettings = lib.mkOption {
