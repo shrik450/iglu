@@ -16,21 +16,33 @@ crates/
 ├── iglu-cli/      # the `iglu` command
 └── iglu-guest/    # tools baked into workspace images (status, provisioning, git credentials)
 console/           # TypeScript web console (ghostty-web terminals)
-nix/               # NixOS modules, packages, and VM integration tests
+nix/               # NixOS modules, packages, checks, and VM integration tests
 templates/         # `nix flake init -t` starting points for environments
+justfile           # development commands
+.github/workflows/ # CI, which runs the flake checks
 ```
 
 ## Commands
 
-Everything comes from the flake. Don't install tools globally.
+Everything comes from the flake. Don't install tools globally. Enter the dev
+shell with `nix develop`, then use `just`:
 
 ```sh
-nix develop                      # toolchain: cargo, clippy, rustfmt, node
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace           # pure unit tests; fast, run anywhere
-nix flake check                  # builds packages; on x86_64-linux with KVM, also runs VM integration tests
+just fmt       # format Rust and Nix
+just lint      # rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint
+just test      # the unit tests; fast, run anywhere
+just console   # type-check and bundle the console
+just check     # everything CI runs: `nix flake check`
+just e2e       # the VM test; needs x86_64-linux with KVM, locally or as a remote builder
 ```
+
+CI runs every flake check on pull requests and on `main`
+(`.github/workflows/ci.yml`). The checks live in `nix/checks.nix` and the
+flake, so adding one there adds it to CI. Run `just lint test` before pushing.
+
+Clippy's pedantic group is on for the whole workspace. Fix what it finds.
+When a lint is wrong for a specific item, silence it there with
+`#[expect(clippy::..., reason = "...")]`, never a crate-wide `allow`.
 
 ## Design rules
 

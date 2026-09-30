@@ -7,16 +7,8 @@
 }:
 
 let
-  version = (lib.importTOML ../Cargo.toml).workspace.package.version;
-
-  src = lib.fileset.toSource {
-    root = ../.;
-    fileset = lib.fileset.unions [
-      ../Cargo.toml
-      ../Cargo.lock
-      ../crates
-    ];
-  };
+  workspace = import ./rust-workspace.nix { inherit lib; };
+  inherit (workspace) version;
 
   crate =
     {
@@ -26,16 +18,14 @@ let
       mainProgram,
     }:
     rustPlatform.buildRustPackage {
-      inherit pname version src;
-      cargoLock.lockFile = ../Cargo.lock;
+      inherit pname version;
+      inherit (workspace) src cargoLock;
       cargoBuildFlags = [
         "--package"
         crateName
       ];
-      cargoTestFlags = [
-        "--package"
-        crateName
-      ];
+      # The workspace test check runs every crate's tests once.
+      doCheck = false;
       meta = {
         inherit description mainProgram;
         license = lib.licenses.mit;

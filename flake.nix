@@ -50,13 +50,30 @@
         description = "An iglu environment: a NixOS workspace for coding agents";
       };
 
-      checks = forSystems linux (pkgs: self.packages.${pkgs.stdenv.hostPlatform.system}) // {
-        x86_64-linux = self.packages.x86_64-linux // {
-          e2e = nixpkgs.legacyPackages.x86_64-linux.testers.runNixOSTest (
-            import ./nix/tests/e2e.nix { inherit self nixpkgs; }
-          );
-        };
-      };
+      # Lints and unit tests everywhere; on x86_64-linux, also the VM test.
+      checks = forSystems systems (
+        pkgs:
+        let
+          system = pkgs.stdenv.hostPlatform.system;
+        in
+        self.packages.${system}
+        // import ./nix/checks.nix {
+          inherit (pkgs)
+            lib
+            rustPlatform
+            runCommand
+            cargo
+            clippy
+            rustfmt
+            nixfmt
+            actionlint
+            shellcheck
+            ;
+        }
+        // lib.optionalAttrs (system == "x86_64-linux") {
+          e2e = pkgs.testers.runNixOSTest (import ./nix/tests/e2e.nix { inherit self nixpkgs; });
+        }
+      );
 
       devShells = forSystems systems (pkgs: {
         default = pkgs.mkShell {
@@ -68,6 +85,10 @@
             rust-analyzer
             nodejs
             sqlite
+            just
+            nixfmt
+            actionlint
+            shellcheck
           ];
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
         };

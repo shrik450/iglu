@@ -181,6 +181,8 @@ Every command takes `--json`.
 
 ## Developing
 
-See [AGENTS.md](AGENTS.md) for the layout, commands, and design rules.
-`nix flake check` on x86_64-linux with KVM runs the end-to-end VM test in
-`nix/tests/e2e.nix`, which uses a real identity provider, Incus, and Git server.
+See [AGENTS.md](AGENTS.md) for the layout, commands, and design rules. In
+short: `nix develop`, then `just lint test` while you work and `just check`
+for everything CI runs. On x86_64-linux with KVM, that includes the
+end-to-end VM test in `nix/tests/e2e.nix`, which uses a real identity
+provider, Incus, and Git server.
