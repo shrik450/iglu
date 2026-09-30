@@ -29,7 +29,8 @@ export class TerminalPane {
     this.term.open(container);
     this.fit.fit();
     this.fit.observeResize();
-    this.term.attachCustomKeyEventHandler((event) => !shortcuts(event));
+    // Unlike xterm.js, ghostty-web drops the key when the handler returns true.
+    this.term.attachCustomKeyEventHandler(shortcuts);
     this.term.onData((data) => this.send(this.encoder.encode(data)));
     // zmx applies the most recent resize from any client, so only the
     // focused client sends one.
