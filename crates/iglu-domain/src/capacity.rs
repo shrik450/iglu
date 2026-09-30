@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// A number of bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]
 pub struct Bytes(u64);
 

@@ -11,6 +11,7 @@ use crate::parse::text_type;
 /// One DNS label: 1–63 characters of `a-z`, `0-9` and `-`, not starting or
 /// ending with `-`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct DnsLabel(String);
 
@@ -64,6 +65,7 @@ macro_rules! label_type {
     ($(#[$meta:meta])* $name:ident, $what:literal, $check:expr) => {
         $(#[$meta])*
         #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
         #[serde(try_from = "String", into = "String")]
         pub struct $name(DnsLabel);
 

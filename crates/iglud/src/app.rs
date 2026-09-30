@@ -9,6 +9,7 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use iglu_api::ErrorBody;
 use iglu_domain::auth::{Action, Decision, Resource, authorize};
 use iglu_domain::id::PrincipalId;
 use iglu_domain::label::HostId;
@@ -16,7 +17,6 @@ use iglu_domain::preview::{
     ConsoleOrigin, Credential, CsrfToken, FetchMetadata, MethodClass, Transport, console_access,
 };
 use iglu_domain::time::{Millis, Timestamp};
-use serde_json::json;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
@@ -126,7 +126,10 @@ impl IntoResponse for ApiError {
         };
         (
             status,
-            Json(json!({ "error": code, "message": self.to_string() })),
+            Json(ErrorBody {
+                error: code.to_owned(),
+                message: self.to_string(),
+            }),
         )
             .into_response()
     }

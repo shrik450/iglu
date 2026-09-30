@@ -1,0 +1,24 @@
+[package]
+name = "iglu-api"
+description = "iglud's HTTP API: the requests it accepts and the views it returns"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+iglu-domain.workspace = true
+iglu-proto.workspace = true
+serde.workspace = true
+ts-rs = { version = "12.0.1", default-features = false, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[features]
+# Generates the console's TypeScript declarations when the tests run; see
+# `just api-types`.
+ts = ["dep:ts-rs", "iglu-domain/ts", "iglu-proto/ts"]
+
+[lints]
+workspace = true

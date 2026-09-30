@@ -1,9 +1,9 @@
 // How much a workspace wants the user. Mirrors the server's urgency order so
 // the sidebar and the server agree on what "needs you" means.
 
-import type { Attention, Workspace } from "./api";
+import type { AttentionView, WorkspaceView } from "./api";
 
-export function urgency(attention: Attention | null): number {
+export function urgency(attention: AttentionView | null): number {
   if (attention === null) return 0;
   switch (attention.state) {
     case "waiting":
@@ -19,17 +19,17 @@ export function urgency(attention: Attention | null): number {
   }
 }
 
-export function needsYou(ws: Workspace): boolean {
+export function needsYou(ws: WorkspaceView): boolean {
   return urgency(ws.attention) >= 5 || ws.condition?.kind === "error" || ws.condition?.kind === "runtime_failed";
 }
 
-export function byAttention(a: Workspace, b: Workspace): number {
+export function byAttention(a: WorkspaceView, b: WorkspaceView): number {
   const difference = urgency(b.attention) - urgency(a.attention);
   if (difference !== 0) return difference;
   return (b.attention?.updated_at ?? b.created_at) - (a.attention?.updated_at ?? a.created_at);
 }
 
-export function glyph(ws: Workspace): string {
+export function glyph(ws: WorkspaceView): string {
   if (ws.condition?.kind === "error" || ws.condition?.kind === "runtime_failed") return "!";
   switch (ws.phase) {
     case "creating":

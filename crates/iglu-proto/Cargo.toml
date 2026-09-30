@@ -9,9 +9,14 @@ rust-version.workspace = true
 [dependencies]
 iglu-domain.workspace = true
 serde.workspace = true
+ts-rs = { version = "12.0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# TypeScript declarations for the protocol types iglud's API exposes.
+ts = ["dep:ts-rs", "iglu-domain/ts"]

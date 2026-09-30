@@ -13,6 +13,7 @@ macro_rules! uuid_id {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
         #[serde(transparent)]
         pub struct $name(Uuid);
 
@@ -77,6 +78,7 @@ impl WorkspaceId {
 
 /// The name of the Incus instance for a workspace: `iglu-<32 hex digits>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct InstanceName(WorkspaceId);
 

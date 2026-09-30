@@ -3,14 +3,14 @@
 
 import { Ghostty } from "ghostty-web";
 
-import { api, ApiError, type Condition, type Environment, type Me, type Workspace, watchWorkspaces } from "./api";
+import { api, ApiError, type Condition, type CreateWorkspace, type EnvironmentView, type Me, type WorkspaceView, watchWorkspaces } from "./api";
 import { byAttention, glyph, needsYou } from "./attention";
 import { h, replace } from "./dom";
 import { TerminalPane } from "./terminal";
 
 interface State {
   me: Me | null;
-  workspaces: Workspace[];
+  workspaces: WorkspaceView[];
   selected: string | null;
   terminals: string[];
   activeTerminal: string | null;
@@ -32,11 +32,11 @@ if (!sidebar || !header || !tabs || !terminalBox || !ports || !statusLine || !di
 
 let pane: TerminalPane | null = null;
 
-function selected(): Workspace | undefined {
+function selected(): WorkspaceView | undefined {
   return state.workspaces.find((ws) => ws.id === state.selected);
 }
 
-function sorted(): Workspace[] {
+function sorted(): WorkspaceView[] {
   return [...state.workspaces].sort(byAttention);
 }
 
@@ -303,7 +303,7 @@ function shortcut(event: KeyboardEvent): boolean {
 }
 
 async function openCreate(): Promise<void> {
-  const environments: Environment[] = await api.environments().catch(() => []);
+  const environments: EnvironmentView[] = await api.environments().catch(() => []);
   const ready = environments.filter((e) => e.latest?.status === "ready");
   const form = dialog!.querySelector("form");
   const select = dialog!.querySelector<HTMLSelectElement>("select[name=environment]");
@@ -329,7 +329,7 @@ function setupCreate(): void {
     const environment = text("environment");
     const repo = text("repo");
     if (!environment || !repo) return;
-    const body: { environment: string; repo: string; branch?: string; base?: string; name?: string } = { environment, repo };
+    const body: CreateWorkspace = { environment, repo };
     const branch = text("branch");
     const base = text("base");
     const name = text("name");
@@ -350,7 +350,7 @@ function setupCreate(): void {
   });
 }
 
-function onWorkspaces(workspaces: Workspace[]): void {
+function onWorkspaces(workspaces: WorkspaceView[]): void {
   const before = selected();
   state.workspaces = workspaces;
   const after = selected();

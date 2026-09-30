@@ -11,6 +11,7 @@ name = "iglu"
 path = "src/main.rs"
 
 [dependencies]
+iglu-api.workspace = true
 iglu-domain.workspace = true
 anyhow.workspace = true
 serde.workspace = true

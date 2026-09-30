@@ -1,7 +1,15 @@
-//! A thin client for iglud's API using a stored API token.
+//! A typed client for iglud's API using a stored API token.
 
 use anyhow::{Context, bail};
-use serde_json::Value;
+use iglu_api::{
+    ActivityEntry, BuildStarted, CreateEnvironment, CreateWorkspace, EnvironmentView, ErrorBody,
+    PublishPort, PutSecret, RouteView, SecretView, SetDesiredState, WorkspaceView,
+};
+use iglu_domain::env::EnvName;
+use iglu_domain::id::WorkspaceId;
+use iglu_domain::secret::SecretName;
+use reqwest::{RequestBuilder, Response, StatusCode};
+use serde::de::DeserializeOwned;
 
 use crate::login::Stored;
 
@@ -24,78 +32,144 @@ impl Client {
         })
     }
 
-    async fn send(&self, request: reqwest::RequestBuilder) -> anyhow::Result<Value> {
-        let response = request
-            .bearer_auth(&self.token)
-            .send()
+    pub async fn workspaces(&self) -> anyhow::Result<Vec<WorkspaceView>> {
+        self.json(self.http.get(self.url("/v1/workspaces")?)).await
+    }
+
+    /// `None` once the workspace is gone.
+    pub async fn workspace(&self, id: WorkspaceId) -> anyhow::Result<Option<WorkspaceView>> {
+        let response = self
+            .start(self.http.get(self.url(&format!("/v1/workspaces/{id}"))?))
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(Some(parse(response).await?))
+    }
+
+    /// Finds a workspace by name or ID.
+    pub async fn resolve(&self, reference: &str) -> anyhow::Result<WorkspaceView> {
+        self.workspaces()
+            .await?
+            .into_iter()
+            .find(|ws| ws.name.as_str() == reference || ws.id.to_string() == reference)
+            .with_context(|| format!("no workspace named {reference}"))
+    }
+
+    /// Safe to retry: the same key returns the same workspace.
+    pub async fn create_workspace(
+        &self,
+        request: &CreateWorkspace,
+        key: &str,
+    ) -> anyhow::Result<WorkspaceView> {
+        self.json(
+            self.http
+                .post(self.url("/v1/workspaces")?)
+                .header("idempotency-key", key)
+                .json(request),
+        )
+        .await
+    }
+
+    pub async fn set_desired_state(
+        &self,
+        id: WorkspaceId,
+        request: &SetDesiredState,
+    ) -> anyhow::Result<WorkspaceView> {
+        let url = self.url(&format!("/v1/workspaces/{id}/desired-state"))?;
+        self.json(self.http.put(url).json(request)).await
+    }
+
+    pub async fn publish(
+        &self,
+        id: WorkspaceId,
+        request: &PublishPort,
+    ) -> anyhow::Result<RouteView> {
+        let url = self.url(&format!("/v1/workspaces/{id}/routes"))?;
+        self.json(self.http.post(url).json(request)).await
+    }
+
+    pub async fn routes(&self, id: WorkspaceId) -> anyhow::Result<Vec<RouteView>> {
+        let url = self.url(&format!("/v1/workspaces/{id}/routes"))?;
+        self.json(self.http.get(url)).await
+    }
+
+    pub async fn activity(&self, id: WorkspaceId) -> anyhow::Result<Vec<ActivityEntry>> {
+        let url = self.url(&format!("/v1/workspaces/{id}/activity"))?;
+        self.json(self.http.get(url)).await
+    }
+
+    pub async fn environments(&self) -> anyhow::Result<Vec<EnvironmentView>> {
+        self.json(self.http.get(self.url("/v1/environments")?))
             .await
-            .context("reaching iglu")?;
-        let status = response.status();
-        if status == reqwest::StatusCode::NO_CONTENT {
-            return Ok(Value::Null);
-        }
-        let body: Value = response.json().await.unwrap_or(Value::Null);
-        if status.is_success() {
-            return Ok(body);
-        }
-        let message = body
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("request failed");
-        match status {
-            reqwest::StatusCode::UNAUTHORIZED => bail!("{message}; run `iglu login` again"),
-            reqwest::StatusCode::NOT_FOUND => bail!("not found"),
-            _ => bail!("{message} ({status})"),
-        }
+    }
+
+    pub async fn create_environment(
+        &self,
+        request: &CreateEnvironment,
+    ) -> anyhow::Result<BuildStarted> {
+        let url = self.url("/v1/environments")?;
+        self.json(self.http.post(url).json(request)).await
+    }
+
+    pub async fn build_environment(&self, name: &EnvName) -> anyhow::Result<BuildStarted> {
+        let url = self.url(&format!("/v1/environments/{name}/builds"))?;
+        self.json(self.http.post(url)).await
+    }
+
+    pub async fn secrets(&self) -> anyhow::Result<Vec<SecretView>> {
+        self.json(self.http.get(self.url("/v1/secrets")?)).await
+    }
+
+    pub async fn put_secret(&self, name: &SecretName, request: &PutSecret) -> anyhow::Result<()> {
+        let url = self.url(&format!("/v1/secrets/{name}"))?;
+        check(self.start(self.http.put(url).json(request)).await?).await?;
+        Ok(())
+    }
+
+    pub async fn delete_secret(&self, name: &SecretName) -> anyhow::Result<()> {
+        let url = self.url(&format!("/v1/secrets/{name}"))?;
+        check(self.start(self.http.delete(url)).await?).await?;
+        Ok(())
     }
 
     fn url(&self, path: &str) -> anyhow::Result<url::Url> {
         Ok(self.server.join(path)?)
     }
 
-    pub async fn get(&self, path: &str) -> anyhow::Result<Value> {
-        self.send(self.http.get(self.url(path)?)).await
+    async fn start(&self, request: RequestBuilder) -> anyhow::Result<Response> {
+        request
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .context("reaching iglu")
     }
 
-    pub async fn post(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        self.send(self.http.post(self.url(path)?).json(body)).await
+    async fn json<T: DeserializeOwned>(&self, request: RequestBuilder) -> anyhow::Result<T> {
+        parse(self.start(request).await?).await
     }
+}
 
-    /// A create that is safe to retry: the same key returns the same workspace.
-    pub async fn post_idempotent(
-        &self,
-        path: &str,
-        body: &Value,
-        key: &str,
-    ) -> anyhow::Result<Value> {
-        self.send(
-            self.http
-                .post(self.url(path)?)
-                .header("idempotency-key", key)
-                .json(body),
-        )
+async fn parse<T: DeserializeOwned>(response: Response) -> anyhow::Result<T> {
+    check(response)
+        .await?
+        .json()
         .await
-    }
+        .context("reading iglu's reply")
+}
 
-    pub async fn put(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        self.send(self.http.put(self.url(path)?).json(body)).await
+/// Turns an error status into an error carrying iglud's message.
+async fn check(response: Response) -> anyhow::Result<Response> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
     }
-
-    pub async fn delete(&self, path: &str) -> anyhow::Result<Value> {
-        self.send(self.http.delete(self.url(path)?)).await
+    let message = response
+        .json::<ErrorBody>()
+        .await
+        .map_or_else(|_| "request failed".to_owned(), |body| body.message);
+    if status == StatusCode::UNAUTHORIZED {
+        bail!("{message}; run `iglu login` again");
     }
-
-    /// Finds a workspace by name or ID.
-    pub async fn resolve(&self, reference: &str) -> anyhow::Result<Value> {
-        let list = self.get("/v1/workspaces").await?;
-        list.as_array()
-            .into_iter()
-            .flatten()
-            .find(|ws| {
-                ws.get("name").and_then(Value::as_str) == Some(reference)
-                    || ws.get("id").and_then(Value::as_str) == Some(reference)
-            })
-            .cloned()
-            .with_context(|| format!("no workspace named {reference}"))
-    }
+    bail!("{message} ({status})")
 }

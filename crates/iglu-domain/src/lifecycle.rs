@@ -14,6 +14,7 @@ use crate::parse::text_type;
 /// control plane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
 pub enum DesiredState {
     Running,
     Frozen,
@@ -29,6 +30,17 @@ impl DesiredState {
             Self::Frozen => "frozen",
             Self::Stopped => "stopped",
             Self::Deleted => "deleted",
+        }
+    }
+
+    /// The phase a workspace is in once it has reached this state.
+    #[must_use]
+    pub const fn settled(self) -> Phase {
+        match self {
+            Self::Running => Phase::Running,
+            Self::Frozen => Phase::Frozen,
+            Self::Stopped => Phase::Stopped,
+            Self::Deleted => Phase::Deleted,
         }
     }
 }
@@ -81,6 +93,7 @@ impl DesiredState {
 /// Used for optimistic concurrency at the API and to discard stale
 /// observations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]
 pub struct Revision(u64);
 
@@ -106,6 +119,7 @@ impl Revision {
 /// Which delivery of an owner's secrets a workspace should hold. Increases
 /// whenever the owner's secrets change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]
 pub struct SecretsGeneration(u64);
 
@@ -315,6 +329,7 @@ fn bring_up(
 /// What the user sees a workspace doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
 pub enum Phase {
     Creating,
     Starting,

@@ -10,6 +10,7 @@ use crate::parse::text_type;
 
 /// A Git host name, used to match credentials to remotes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct GitHost(String);
 
@@ -69,6 +70,7 @@ pub enum Transport {
 /// A clone URL: `https://host/path`, `ssh://[user@]host/path`, or the scp-like
 /// `user@host:path`. Parsed so the host and checkout directory are known.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct RepoUrl {
     original: String,
@@ -163,6 +165,7 @@ text_type!(RepoUrl);
 
 /// A single, safe path component for a checkout directory.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct CheckoutDir(String);
 
@@ -203,6 +206,7 @@ text_type!(CheckoutDir);
 /// A Git branch name, following the rules of `git check-ref-format --branch`
 /// closely enough to never be interpreted as an option or a revision expression.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct BranchName(String);
 

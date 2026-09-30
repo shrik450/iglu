@@ -33,3 +33,8 @@ check:
 # Run the end-to-end VM test. Needs x86_64-linux with KVM, here or as a remote builder.
 e2e:
     nix build .#checks.x86_64-linux.e2e -L --no-link
+
+# Regenerate the console's TypeScript API types from the Rust ones.
+api-types:
+    rm -rf console/src/generated
+    TS_RS_EXPORT_DIR={{justfile_directory()}}/console/src/generated cargo test -p iglu-api --features ts

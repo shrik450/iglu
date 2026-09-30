@@ -12,6 +12,7 @@ use crate::parse::text_type;
 /// A flake reference as Nix accepts it, such as `github:alice/dotfiles`.
 /// Nix parses it properly; this only keeps it from being anything else.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct FlakeRef(String);
 
@@ -44,6 +45,7 @@ impl FromStr for FlakeRef {
 
 /// The name of an attribute under `nixosConfigurations`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct FlakeAttr(String);
 
@@ -78,6 +80,7 @@ impl FromStr for FlakeAttr {
 
 /// Where an environment comes from: `<flake>#<nixosConfigurations attribute>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct EnvSource {
     pub flake: FlakeRef,
@@ -123,6 +126,7 @@ pub type EnvName = DnsLabel;
 
 /// An Incus image fingerprint: 64 lowercase hex digits (SHA-256).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct ImageFingerprint(String);
 
@@ -150,6 +154,7 @@ impl FromStr for ImageFingerprint {
 
 /// A Unix account name inside a guest.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct UnixUser(String);
 
@@ -185,6 +190,7 @@ impl FromStr for UnixUser {
 
 /// An absolute path inside a guest.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct GuestPath(String);
 
@@ -232,6 +238,7 @@ display_inner!(FlakeRef, FlakeAttr, ImageFingerprint, UnixUser, GuestPath);
 
 /// The account terminals run as, read from the built image.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GuestUser {
     pub name: UnixUser,
     pub uid: Uid,
@@ -241,6 +248,7 @@ pub struct GuestUser {
 
 /// A non-root user or group ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(try_from = "u32", into = "u32")]
 pub struct Uid(u32);
 
@@ -271,8 +279,10 @@ impl From<Uid> for u32 {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
 pub enum Arch {
     #[serde(rename = "x86_64")]
+    #[cfg_attr(feature = "ts", ts(rename = "x86_64"))]
     X86_64,
     Aarch64,
 }
@@ -294,6 +304,7 @@ impl FromStr for Arch {
 
 /// What an image build produced, as reported by the host.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct BuiltImage {
     pub fingerprint: ImageFingerprint,
     pub arch: Arch,

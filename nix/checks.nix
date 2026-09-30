@@ -44,6 +44,13 @@ in
 
   cargo-test = cargoCheck "cargo-test" [ ] "cargo test --workspace --offline";
 
+  # The console's API types must match what the Rust types generate.
+  api-types = cargoCheck "api-types" [ ] ''
+    TS_RS_EXPORT_DIR=$PWD/api-types cargo test -p iglu-api --features ts --offline
+    diff -r ${../console/src/generated} api-types \
+      || { echo "console/src/generated is stale; run 'just api-types'"; exit 1; }
+  '';
+
   rustfmt =
     runCommand "iglu-rustfmt"
       {

@@ -1,77 +1,24 @@
-// Typed access to iglud's API. Shapes mirror the server's JSON views.
+// Typed access to iglud's API. The shapes are generated from the server's
+// Rust types (`just api-types`), so the two can't drift apart.
 
-export type Phase =
-  | "creating"
-  | "starting"
-  | "running"
-  | "freezing"
-  | "frozen"
-  | "stopping"
-  | "stopped"
-  | "deleting"
-  | "deleted";
+import type { CreateWorkspace } from "./generated/CreateWorkspace";
+import type { DesiredState } from "./generated/DesiredState";
+import type { EnvironmentView } from "./generated/EnvironmentView";
+import type { ErrorBody } from "./generated/ErrorBody";
+import type { Me } from "./generated/Me";
+import type { NewTerminal } from "./generated/NewTerminal";
+import type { PublishPort } from "./generated/PublishPort";
+import type { RouteId } from "./generated/RouteId";
+import type { RouteView } from "./generated/RouteView";
+import type { SessionName } from "./generated/SessionName";
+import type { SetDesiredState } from "./generated/SetDesiredState";
+import type { TerminalView } from "./generated/TerminalView";
+import type { WorkspaceId } from "./generated/WorkspaceId";
+import type { WorkspaceView } from "./generated/WorkspaceView";
 
-export type DesiredState = "running" | "frozen" | "stopped" | "deleted";
-export type AttentionState = "working" | "waiting" | "done" | "idle" | "exited";
-export type Seen = "seen" | "unseen";
-
-export interface Attention {
-  session: string;
-  state: AttentionState;
-  summary: string;
-  updated_at: number;
-  seen: Seen;
-}
-
-export interface Route {
-  id: string;
-  name: string;
-  port: number;
-  url: string;
-}
-
-export type Condition =
-  | { kind: "error"; code: string; message: string; at: number }
-  | { kind: "capacity"; available: number; needed: number }
-  | { kind: "runtime_failed" }
-  | { kind: "host_offline"; last_seen: number | null };
-
-export interface Workspace {
-  id: string;
-  name: string;
-  repo: string;
-  branch: string;
-  environment: string;
-  phase: Phase;
-  desired: DesiredState;
-  revision: number;
-  condition: Condition | null;
-  memory: number | null;
-  observed_at: number | null;
-  attention: Attention | null;
-  sessions: Attention[];
-  routes: Route[];
-  created_at: number;
-}
-
-export interface Me {
-  id: string;
-  name: string | null;
-  email: string | null;
-  csrf_token: string;
-  preview_domain: string;
-}
-
-export interface Environment {
-  name: string;
-  source: string;
-  latest: { status: "building" | "ready" | "failed"; log_tail?: string } | null;
-}
-
-export interface TerminalInfo {
-  name: string;
-  clients: number;
-}
+export type { AttentionView } from "./generated/AttentionView";
+export type { Condition } from "./generated/Condition";
+export type { CreateWorkspace, DesiredState, EnvironmentView, Me, WorkspaceView };
 
 export class ApiError extends Error {
   constructor(
@@ -83,6 +30,10 @@ export class ApiError extends Error {
 }
 
 let csrf = "";
+
+function isErrorBody(data: unknown): data is ErrorBody {
+  return typeof data === "object" && data !== null && "message" in data && typeof data.message === "string";
+}
 
 async function request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   const init: RequestInit = {
@@ -99,8 +50,7 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
   if (response.status === 204) return undefined as T;
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = typeof data === "object" && data !== null && "message" in data ? String(data.message) : response.statusText;
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, isErrorBody(data) ? data.message : response.statusText);
   }
   return data as T;
 }
@@ -111,26 +61,31 @@ export const api = {
     csrf = me.csrf_token;
     return me;
   },
-  workspaces: () => request<Workspace[]>("GET", "/v1/workspaces"),
-  environments: () => request<Environment[]>("GET", "/v1/environments"),
-  create: (body: { environment: string; repo: string; branch?: string; base?: string; name?: string }) =>
-    request<Workspace>("POST", "/v1/workspaces", body, { "idempotency-key": crypto.randomUUID() }),
-  setState: (ws: Workspace, state: DesiredState) =>
-    request<Workspace>("PUT", `/v1/workspaces/${ws.id}/desired-state`, { state, expected_revision: ws.revision }),
-  seen: (id: string) => request<void>("POST", `/v1/workspaces/${id}/seen`),
-  terminals: (id: string) => request<TerminalInfo[]>("GET", `/v1/workspaces/${id}/terminals`),
-  newTerminal: (id: string) => request<{ name: string }>("POST", `/v1/workspaces/${id}/terminals`),
-  closeTerminal: (id: string, session: string) => request<void>("DELETE", `/v1/workspaces/${id}/terminals/${session}`),
-  publish: (id: string, port: number) => request<Route>("POST", `/v1/workspaces/${id}/routes`, { port }),
-  unpublish: (id: string, route: string) => request<void>("DELETE", `/v1/workspaces/${id}/routes/${route}`),
+  workspaces: () => request<WorkspaceView[]>("GET", "/v1/workspaces"),
+  environments: () => request<EnvironmentView[]>("GET", "/v1/environments"),
+  create: (body: CreateWorkspace) =>
+    request<WorkspaceView>("POST", "/v1/workspaces", body, { "idempotency-key": crypto.randomUUID() }),
+  setState: (ws: WorkspaceView, state: DesiredState) =>
+    request<WorkspaceView>("PUT", `/v1/workspaces/${ws.id}/desired-state`, {
+      state,
+      expected_revision: ws.revision,
+    } satisfies SetDesiredState),
+  seen: (id: WorkspaceId) => request<void>("POST", `/v1/workspaces/${id}/seen`),
+  terminals: (id: WorkspaceId) => request<TerminalView[]>("GET", `/v1/workspaces/${id}/terminals`),
+  newTerminal: (id: WorkspaceId) => request<NewTerminal>("POST", `/v1/workspaces/${id}/terminals`),
+  closeTerminal: (id: WorkspaceId, session: SessionName) =>
+    request<void>("DELETE", `/v1/workspaces/${id}/terminals/${session}`),
+  publish: (id: WorkspaceId, port: number) =>
+    request<RouteView>("POST", `/v1/workspaces/${id}/routes`, { port } satisfies PublishPort),
+  unpublish: (id: WorkspaceId, route: RouteId) => request<void>("DELETE", `/v1/workspaces/${id}/routes/${route}`),
   logout: () => request<void>("POST", "/auth/logout"),
 };
 
 /** Streams the caller's workspaces; reconnects on its own. */
-export function watchWorkspaces(onUpdate: (workspaces: Workspace[]) => void): EventSource {
+export function watchWorkspaces(onUpdate: (workspaces: WorkspaceView[]) => void): EventSource {
   const source = new EventSource("/v1/events");
   source.addEventListener("workspaces", (event) => {
-    onUpdate(JSON.parse((event as MessageEvent<string>).data) as Workspace[]);
+    onUpdate(JSON.parse((event as MessageEvent<string>).data) as WorkspaceView[]);
   });
   return source;
 }

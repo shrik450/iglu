@@ -11,6 +11,7 @@ use crate::ParseError;
 /// A TCP port on the guest's loopback interface. Routes can only ever point
 /// at `127.0.0.1:<GuestPort>` inside their own workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(try_from = "u16", into = "u16")]
 pub struct GuestPort(NonZeroU16);
 

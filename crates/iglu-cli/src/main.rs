@@ -11,12 +11,21 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
+use iglu_api::{
+    Condition, CreateEnvironment, CreateWorkspace, PublishPort, PutSecret, RevisionStatus,
+    RouteView, SetDesiredState, WorkspaceView,
+};
 use iglu_domain::env::{EnvName, EnvSource};
+use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::WorkspaceName;
+use iglu_domain::lifecycle::DesiredState;
 use iglu_domain::port::GuestPort;
 use iglu_domain::repo::{BranchName, GitHost, RepoUrl};
-use iglu_domain::secret::{EnvVarName, GitUsername, HomePath, SecretName};
-use serde_json::{Value, json};
+use iglu_domain::secret::{
+    EnvVarName, GitUsername, HomePath, SecretName, SecretTarget, SecretValue,
+};
+use serde::Serialize;
+use serde_json::json;
 
 use crate::client::Client;
 
@@ -137,7 +146,7 @@ enum SecretCommand {
     Rm { name: SecretName },
 }
 
-fn print(json_mode: bool, value: &Value, text: impl FnOnce(&Value) -> String) {
+fn print<T: Serialize + ?Sized>(json_mode: bool, value: &T, text: impl FnOnce(&T) -> String) {
     if json_mode {
         println!(
             "{}",
@@ -148,102 +157,99 @@ fn print(json_mode: bool, value: &Value, text: impl FnOnce(&Value) -> String) {
     }
 }
 
-fn s<'a>(value: &'a Value, key: &str) -> &'a str {
-    value.get(key).and_then(Value::as_str).unwrap_or("")
-}
-
-fn describe(ws: &Value) -> String {
+fn describe(ws: &WorkspaceView) -> String {
     let mut lines = vec![format!(
         "{:<24} {:<10} {}  {}",
-        s(ws, "name"),
-        s(ws, "phase"),
-        s(ws, "branch"),
-        s(ws, "repo")
+        ws.name, ws.phase, ws.branch, ws.repo
     )];
-    if let Some(attention) = ws.get("attention").filter(|a| !a.is_null()) {
+    if let Some(attention) = &ws.attention {
         lines.push(format!(
             "  {}: {} {}",
-            s(attention, "session"),
-            s(attention, "state"),
-            s(attention, "summary")
+            attention.session, attention.state, attention.summary
         ));
     }
-    if let Some(condition) = ws.get("condition").filter(|c| !c.is_null()) {
+    if let Some(condition) = &ws.condition {
         lines.push(format!("  ! {}", condition_text(condition)));
     }
-    for route in ws
-        .get("routes")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        lines.push(format!(
-            "  :{} → {}",
-            route.get("port").unwrap_or(&Value::Null),
-            s(route, "url")
-        ));
-    }
+    lines.extend(
+        ws.routes
+            .iter()
+            .map(|route| format!("  {}", route_line(route))),
+    );
     lines.join("\n")
 }
 
-fn condition_text(condition: &Value) -> String {
-    match s(condition, "kind") {
-        "error" => format!("{} ({})", s(condition, "message"), s(condition, "code")),
-        "capacity" => "waiting for the host to have room".into(),
-        "runtime_failed" => "the runtime reports the workspace as broken; stop or delete it".into(),
-        "host_offline" => "the host isn't answering".into(),
-        other => other.to_owned(),
+fn route_line(route: &RouteView) -> String {
+    format!(":{} → {}", route.port, route.url)
+}
+
+fn condition_text(condition: &Condition) -> String {
+    match condition {
+        Condition::Error { message, .. } => message.clone(),
+        Condition::Capacity { available, needed } => {
+            format!("waiting for the host to have room: {needed} needed, {available} free")
+        }
+        Condition::RuntimeFailed => {
+            "the runtime reports the workspace as broken; stop or delete it".into()
+        }
+        Condition::HostOffline { .. } => "the host isn't answering".into(),
     }
 }
 
-/// Polls until the workspace reaches `phase` (or disappears, for deletion).
-async fn wait_for(client: &Client, id: &str, phase: &str) -> anyhow::Result<Value> {
+/// Polls until the workspace settles in `desired`. `None` means it's gone,
+/// which is how a deletion finishes.
+async fn wait_for(
+    client: &Client,
+    id: WorkspaceId,
+    desired: DesiredState,
+) -> anyhow::Result<Option<WorkspaceView>> {
     let started = Instant::now();
     loop {
-        match client.get(&format!("/v1/workspaces/{id}")).await {
-            Ok(ws) => {
-                if s(&ws, "phase") == phase {
-                    return Ok(ws);
-                }
-                if let Some(condition) = ws
-                    .get("condition")
-                    .filter(|c| s(c, "kind") == "error" || s(c, "kind") == "runtime_failed")
-                {
+        match client.workspace(id).await? {
+            None if desired == DesiredState::Deleted => return Ok(None),
+            None => bail!("the workspace was deleted"),
+            Some(ws) if ws.phase == desired.settled() => return Ok(Some(ws)),
+            Some(ws) => match &ws.condition {
+                Some(condition @ (Condition::Error { .. } | Condition::RuntimeFailed)) => {
                     bail!("{}", condition_text(condition));
                 }
-            }
-            Err(error) if phase == "deleted" && error.to_string().contains("not found") => {
-                return Ok(json!({ "phase": "deleted" }));
-            }
-            Err(error) => return Err(error),
+                Some(Condition::Capacity { .. } | Condition::HostOffline { .. }) | None => {}
+            },
         }
         if started.elapsed() > Duration::from_secs(1800) {
-            bail!("timed out waiting for the workspace to be {phase}");
+            bail!("timed out waiting for the workspace to be {desired}");
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
-async fn set_state(
+/// Requests `state` and prints the workspace, with `wait` once it gets there.
+async fn transition(
     client: &Client,
+    json_mode: bool,
     reference: &str,
-    state: &str,
+    state: DesiredState,
     wait: bool,
-    target: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<()> {
     let ws = client.resolve(reference).await?;
-    let id = s(&ws, "id").to_owned();
     let updated = client
-        .put(
-            &format!("/v1/workspaces/{id}/desired-state"),
-            &json!({ "state": state, "expected_revision": ws["revision"] }),
+        .set_desired_state(
+            ws.id,
+            &SetDesiredState {
+                state,
+                expected_revision: Some(ws.revision),
+            },
         )
         .await?;
-    if wait {
-        wait_for(client, &id, target).await
+    let ws = if wait {
+        wait_for(client, ws.id, state).await?
     } else {
-        Ok(updated)
-    }
+        Some(updated)
+    };
+    print(json_mode, &ws, |ws| {
+        ws.as_ref().map_or_else(|| "deleted".into(), describe)
+    });
+    Ok(())
 }
 
 #[tokio::main]
@@ -272,13 +278,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn lines(list: &Value, line: impl Fn(&Value) -> String) -> String {
-    list.as_array()
-        .into_iter()
-        .flatten()
-        .map(line)
-        .collect::<Vec<_>>()
-        .join("\n")
+fn lines<T>(list: &[T], line: impl Fn(&T) -> String) -> String {
+    list.iter().map(line).collect::<Vec<_>>().join("\n")
 }
 
 async fn workspace(
@@ -288,13 +289,12 @@ async fn workspace(
 ) -> anyhow::Result<()> {
     match command {
         WorkspaceCommand::Ls => {
-            let list = client.get("/v1/workspaces").await?;
-            print(json_mode, &list, |list| {
-                let text = lines(list, describe);
-                if text.is_empty() {
+            let list = client.workspaces().await?;
+            print(json_mode, list.as_slice(), |list| {
+                if list.is_empty() {
                     "no workspaces".into()
                 } else {
-                    text
+                    lines(list, describe)
                 }
             });
         }
@@ -306,13 +306,19 @@ async fn workspace(
             name,
             wait,
         } => {
-            let body = json!({ "environment": env, "repo": repo, "branch": branch, "base": base, "name": name });
+            let request = CreateWorkspace {
+                environment: env,
+                repo,
+                branch,
+                base,
+                name,
+            };
             let key = uuid::Uuid::new_v4().to_string();
-            let ws = client
-                .post_idempotent("/v1/workspaces", &body, &key)
-                .await?;
+            let ws = client.create_workspace(&request, &key).await?;
             let ws = if wait {
-                wait_for(client, s(&ws, "id"), "running").await?
+                wait_for(client, ws.id, DesiredState::Running)
+                    .await?
+                    .context("the workspace was deleted")?
             } else {
                 ws
             };
@@ -323,53 +329,34 @@ async fn workspace(
             print(json_mode, &ws, describe);
         }
         WorkspaceCommand::Start { workspace, wait } => {
-            let ws = set_state(client, &workspace, "running", wait, "running").await?;
-            print(json_mode, &ws, describe);
+            transition(client, json_mode, &workspace, DesiredState::Running, wait).await?;
         }
         WorkspaceCommand::Freeze { workspace, wait } => {
-            let ws = set_state(client, &workspace, "frozen", wait, "frozen").await?;
-            print(json_mode, &ws, describe);
+            transition(client, json_mode, &workspace, DesiredState::Frozen, wait).await?;
         }
         WorkspaceCommand::Stop { workspace, wait } => {
-            let ws = set_state(client, &workspace, "stopped", wait, "stopped").await?;
-            print(json_mode, &ws, describe);
+            transition(client, json_mode, &workspace, DesiredState::Stopped, wait).await?;
         }
         WorkspaceCommand::Rm { workspace, wait } => {
-            let ws = set_state(client, &workspace, "deleted", wait, "deleted").await?;
-            print(json_mode, &ws, |_| "deleting".into());
+            transition(client, json_mode, &workspace, DesiredState::Deleted, wait).await?;
         }
         WorkspaceCommand::Port { workspace, port } => {
             let ws = client.resolve(&workspace).await?;
-            let route = client
-                .post(
-                    &format!("/v1/workspaces/{}/routes", s(&ws, "id")),
-                    &json!({ "port": port }),
-                )
-                .await?;
-            print(json_mode, &route, |r| s(r, "url").to_owned());
+            let route = client.publish(ws.id, &PublishPort { port }).await?;
+            print(json_mode, &route, |route| route.url.clone());
         }
         WorkspaceCommand::Ports { workspace } => {
             let ws = client.resolve(&workspace).await?;
-            let routes = client
-                .get(&format!("/v1/workspaces/{}/routes", s(&ws, "id")))
-                .await?;
-            print(json_mode, &routes, |routes| {
-                lines(routes, |r| {
-                    format!(
-                        ":{} → {}",
-                        r.get("port").unwrap_or(&Value::Null),
-                        s(r, "url")
-                    )
-                })
+            let routes = client.routes(ws.id).await?;
+            print(json_mode, routes.as_slice(), |routes| {
+                lines(routes, route_line)
             });
         }
         WorkspaceCommand::Log { workspace } => {
             let ws = client.resolve(&workspace).await?;
-            let log = client
-                .get(&format!("/v1/workspaces/{}/activity", s(&ws, "id")))
-                .await?;
-            print(json_mode, &log, |log| {
-                lines(log, |e| format!("{:<18} {}", s(e, "kind"), s(e, "detail")))
+            let log = client.activity(ws.id).await?;
+            print(json_mode, log.as_slice(), |log| {
+                lines(log, |entry| format!("{:<18} {}", entry.kind, entry.detail))
             });
         }
     }
@@ -379,46 +366,55 @@ async fn workspace(
 async fn env(client: &Client, json_mode: bool, command: EnvCommand) -> anyhow::Result<()> {
     match command {
         EnvCommand::Ls => {
-            let envs = client.get("/v1/environments").await?;
-            print(json_mode, &envs, |envs| {
-                lines(envs, |e| {
-                    let status = e.get("latest").map_or("never built", |l| s(l, "status"));
-                    format!("{:<16} {:<12} {}", s(e, "name"), status, s(e, "source"))
+            let envs = client.environments().await?;
+            print(json_mode, envs.as_slice(), |envs| {
+                lines(envs, |env| {
+                    let status =
+                        env.latest
+                            .as_ref()
+                            .map_or("never built", |latest| match latest.status {
+                                RevisionStatus::Building => "building",
+                                RevisionStatus::Ready { .. } => "ready",
+                                RevisionStatus::Failed { .. } => "failed",
+                            });
+                    format!("{:<16} {:<12} {}", env.name, status, env.source)
                 })
             });
         }
         EnvCommand::Add { name, source } => {
-            let reply = client
-                .post(
-                    "/v1/environments",
-                    &json!({ "name": name, "source": source }),
-                )
+            let started = client
+                .create_environment(&CreateEnvironment {
+                    name: name.clone(),
+                    source,
+                })
                 .await?;
-            print(json_mode, &reply, |_| {
+            print(json_mode, &started, |_| {
                 format!("building {name}; check with `iglu env ls`")
             });
         }
         EnvCommand::Build { name } => {
-            let reply = client
-                .post(&format!("/v1/environments/{name}/builds"), &json!({}))
-                .await?;
-            print(json_mode, &reply, |_| format!("rebuilding {name}"));
+            let started = client.build_environment(&name).await?;
+            print(json_mode, &started, |_| format!("rebuilding {name}"));
         }
     }
     Ok(())
 }
 
+fn target_text(target: &SecretTarget) -> String {
+    match target {
+        SecretTarget::Env { name } => format!("env {name}"),
+        SecretTarget::File { path } => format!("file ~/{path}"),
+        SecretTarget::GitCredential { host, username } => format!("git {username}@{host}"),
+    }
+}
+
 async fn secret(client: &Client, json_mode: bool, command: SecretCommand) -> anyhow::Result<()> {
     match command {
         SecretCommand::Ls => {
-            let secrets = client.get("/v1/secrets").await?;
-            print(json_mode, &secrets, |list| {
+            let secrets = client.secrets().await?;
+            print(json_mode, secrets.as_slice(), |list| {
                 lines(list, |secret| {
-                    format!(
-                        "{:<24} {}",
-                        s(secret, "name"),
-                        secret.get("target").unwrap_or(&Value::Null)
-                    )
+                    format!("{:<24} {}", secret.name, target_text(&secret.target))
                 })
             });
         }
@@ -429,38 +425,36 @@ async fn secret(client: &Client, json_mode: bool, command: SecretCommand) -> any
             git,
             username,
         } => {
-            // Files are stored exactly as read. Single-line values lose the
-            // newline that `echo` or a text file adds.
-            let (target, single_line) = match (env, file, git, username) {
-                (Some(name), None, None, _) => (json!({ "kind": "env", "name": name }), true),
-                (None, Some(path), None, _) => (json!({ "kind": "file", "path": path }), false),
-                (None, None, Some(host), Some(username)) => (
-                    json!({ "kind": "git_credential", "host": host, "username": username }),
-                    true,
-                ),
+            let target = match (env, file, git, username) {
+                (Some(name), None, None, _) => SecretTarget::Env { name },
+                (None, Some(path), None, _) => SecretTarget::File { path },
+                (None, None, Some(host), Some(username)) => {
+                    SecretTarget::GitCredential { host, username }
+                }
                 _ => bail!("choose exactly one of --env, --file or --git (with --username)"),
             };
             let mut value = String::new();
             std::io::stdin()
                 .read_to_string(&mut value)
                 .context("reading the secret from stdin")?;
-            let value = if single_line {
-                value.trim_end_matches(['\n', '\r'])
-            } else {
-                value.as_str()
+            // Files are stored exactly as read. Single-line values lose the
+            // newline that `echo` or a text file adds.
+            let value = match target {
+                SecretTarget::File { .. } => value,
+                SecretTarget::Env { .. } | SecretTarget::GitCredential { .. } => {
+                    value.trim_end_matches(['\n', '\r']).to_owned()
+                }
             };
+            let value = SecretValue::try_from(value)?;
             client
-                .put(
-                    &format!("/v1/secrets/{name}"),
-                    &json!({ "target": target, "value": value }),
-                )
+                .put_secret(&name, &PutSecret { target, value })
                 .await?;
             print(json_mode, &json!({ "name": name }), |_| {
                 format!("stored {name}; running workspaces receive it shortly")
             });
         }
         SecretCommand::Rm { name } => {
-            client.delete(&format!("/v1/secrets/{name}")).await?;
+            client.delete_secret(&name).await?;
             print(json_mode, &json!({ "name": name }), |_| {
                 format!("deleted {name}")
             });

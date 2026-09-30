@@ -8,6 +8,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
+use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::{PrincipalStatus, VerifiedIdentity};
 use iglu_domain::capacity::Bytes;
@@ -25,8 +26,7 @@ use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 use crate::model::{
-    AttentionRecord, Condition, EnvironmentRecord, PrincipalRecord, RevisionRecord, RevisionStatus,
-    RouteRecord, SecretSummary, WorkspaceRecord,
+    AttentionRecord, Condition, EnvironmentRecord, PrincipalRecord, RouteRecord, WorkspaceRecord,
 };
 
 /// The schema's history, oldest first. `user_version` records how many have
@@ -443,7 +443,7 @@ pub fn environment(
 pub fn environments(
     tx: &Connection,
     owner: PrincipalId,
-) -> Result<Vec<(EnvironmentRecord, Option<RevisionRecord>)>, DbError> {
+) -> Result<Vec<(EnvironmentRecord, Option<RevisionView>)>, DbError> {
     let mut statement = tx.prepare(
         "SELECT id, owner_id, name, source FROM environment WHERE owner_id = ?1 ORDER BY name",
     )?;
@@ -458,7 +458,7 @@ pub fn environments(
         .collect()
 }
 
-fn revision_row(row: &Row<'_>) -> rusqlite::Result<RevisionRecord> {
+fn revision_row(row: &Row<'_>) -> rusqlite::Result<RevisionView> {
     let status: String = row.get(1)?;
     let status = match status.as_str() {
         "ready" => RevisionStatus::Ready {
@@ -470,14 +470,14 @@ fn revision_row(row: &Row<'_>) -> rusqlite::Result<RevisionRecord> {
         },
         _ => RevisionStatus::Building,
     };
-    Ok(RevisionRecord {
+    Ok(RevisionView {
         id: text(row, 0)?,
         status,
         created_at: timestamp(row, 4)?,
     })
 }
 
-fn latest_revision(tx: &Connection, env: Uuid) -> Result<Option<RevisionRecord>, DbError> {
+fn latest_revision(tx: &Connection, env: Uuid) -> Result<Option<RevisionView>, DbError> {
     Ok(tx
         .query_row(
             "SELECT id, status, built, log_tail, created_at FROM env_revision WHERE environment_id = ?1
@@ -1017,13 +1017,13 @@ pub fn delete_secret(
     Ok(deleted > 0)
 }
 
-pub fn secrets(tx: &Connection, owner: PrincipalId) -> Result<Vec<SecretSummary>, DbError> {
+pub fn secrets(tx: &Connection, owner: PrincipalId) -> Result<Vec<SecretView>, DbError> {
     let mut statement = tx.prepare(
         "SELECT id, name, target, updated_at FROM secret WHERE owner_id = ?1 ORDER BY name",
     )?;
     Ok(statement
         .query_map([owner.to_string()], |row| {
-            Ok(SecretSummary {
+            Ok(SecretView {
                 id: text(row, 0)?,
                 name: text(row, 1)?,
                 target: opt_json(row, 2)?
@@ -1052,13 +1052,6 @@ pub fn sealed_secrets(tx: &Connection, owner: PrincipalId) -> Result<Vec<SealedS
 
 // ---- activity ----
 
-#[derive(Clone, Debug, Serialize)]
-pub struct ActivityView {
-    pub kind: String,
-    pub detail: String,
-    pub at: Timestamp,
-}
-
 pub fn add_activity(
     tx: &Connection,
     workspace: Option<WorkspaceId>,
@@ -1078,12 +1071,12 @@ pub fn activity(
     tx: &Connection,
     workspace: WorkspaceId,
     limit: u32,
-) -> Result<Vec<ActivityView>, DbError> {
+) -> Result<Vec<ActivityEntry>, DbError> {
     let mut statement =
         tx.prepare("SELECT kind, detail, at FROM activity WHERE workspace_id = ?1 ORDER BY at DESC, id DESC LIMIT ?2")?;
     Ok(statement
         .query_map(params![workspace.to_string(), limit], |row| {
-            Ok(ActivityView {
+            Ok(ActivityEntry {
                 kind: row.get(0)?,
                 detail: row.get(1)?,
                 at: timestamp(row, 2)?,

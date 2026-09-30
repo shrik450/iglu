@@ -16,6 +16,7 @@ use crate::repo::GitHost;
 
 /// A secret's name, chosen by its owner.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct SecretName(String);
 
@@ -51,6 +52,7 @@ impl FromStr for SecretName {
 /// An environment variable name for a secret. Variables the platform relies
 /// on can't be overridden.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct EnvVarName(String);
 
@@ -102,6 +104,7 @@ impl FromStr for EnvVarName {
 /// A path relative to the guest user's home directory, with no way to
 /// escape it: no absolute paths, `.` or `..` components, or empty components.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct HomePath(String);
 
@@ -145,6 +148,7 @@ impl FromStr for HomePath {
 /// The username half of a Git credential. Tokens usually pair with a fixed
 /// username such as `x-access-token`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct GitUsername(String);
 
@@ -191,6 +195,11 @@ display_inner!(SecretName, EnvVarName, HomePath, GitUsername);
 /// Where a secret is delivered.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(tag = "kind", rename_all = "snake_case")
+)]
 pub enum SecretTarget {
     /// Exported into every new terminal session.
     Env { name: EnvVarName },
@@ -205,6 +214,7 @@ pub enum SecretTarget {
 
 /// A secret's value. Never printed: `Debug` is redacted and there is no `Display`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct SecretValue(String);
 

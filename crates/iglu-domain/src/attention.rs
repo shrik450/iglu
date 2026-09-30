@@ -14,6 +14,7 @@ use crate::time::Timestamp;
 /// What an agent or shell in a session is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
 pub enum AttentionState {
     Working,
     /// Blocked on the user: a permission prompt or a question.
@@ -64,6 +65,7 @@ impl fmt::Display for AttentionState {
 /// A one-line, guest-supplied description. Untrusted: bounded and free of
 /// control characters, so it can't smuggle terminal escapes into the UI.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct Summary(String);
 
@@ -117,6 +119,7 @@ pub struct SessionStatus {
 /// Whether the user has looked at a status since it last changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
 pub enum Seen {
     Seen,
     Unseen,

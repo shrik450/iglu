@@ -13,26 +13,28 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use futures_util::Stream;
+use iglu_api::{
+    ActivityEntry, BuildStarted, CreateEnvironment, CreateWorkspace, EnvironmentView, Me,
+    NewTerminal, PublishPort, PutSecret, RouteView, SecretView, SetDesiredState, TerminalView,
+    WorkspaceView,
+};
 use iglu_domain::auth::Action;
-use iglu_domain::env::{EnvName, EnvSource};
+use iglu_domain::env::EnvName;
 use iglu_domain::id::{EnvRevisionId, PrincipalId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::label::{RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Revision, allow_transition};
 use iglu_domain::names;
-use iglu_domain::port::GuestPort;
-use iglu_domain::repo::{BranchName, RepoUrl};
-use iglu_domain::secret::{SecretName, SecretTarget, SecretValue};
+use iglu_domain::secret::SecretName;
 use iglu_domain::terminal::{SessionName, TerminalSize, next_session_name};
 use iglu_proto::BuildOutcome;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::app::{ApiError, App, Caller, now};
 use crate::crypto;
 use crate::db::{self, NewRoute, SealedSecret};
-use crate::model::{WorkspaceRecord, WorkspaceView};
+use crate::model::WorkspaceRecord;
 use crate::views::{route_view, workspace_view};
 
 pub fn router() -> Router<Arc<App>> {
@@ -76,10 +78,7 @@ pub fn router() -> Router<Arc<App>> {
         .route("/v1/events", get(events))
 }
 
-async fn me(
-    caller: Caller,
-    State(app): State<Arc<App>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, ApiError> {
     let hash = caller.session_hash.clone();
     let csrf = app
         .db
@@ -91,13 +90,13 @@ async fn me(
             )?)
         })
         .await?;
-    Ok(Json(json!({
-        "id": caller.principal.id,
-        "name": caller.principal.name,
-        "email": caller.principal.email,
-        "csrf_token": csrf,
-        "preview_domain": app.config.preview_domain,
-    })))
+    Ok(Json(Me {
+        id: caller.principal.id,
+        name: caller.principal.name,
+        email: caller.principal.email,
+        csrf_token: csrf,
+        preview_domain: app.config.preview_domain.clone(),
+    }))
 }
 
 /// Loads a live workspace the caller may act on.
@@ -151,19 +150,6 @@ async fn get_workspace(
 ) -> Result<Json<WorkspaceView>, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
     Ok(Json(view(&app, ws).await?))
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct CreateWorkspace {
-    environment: EnvName,
-    repo: RepoUrl,
-    #[serde(default)]
-    branch: Option<BranchName>,
-    #[serde(default)]
-    base: Option<BranchName>,
-    #[serde(default)]
-    name: Option<WorkspaceName>,
 }
 
 async fn create_workspace(
@@ -269,19 +255,11 @@ async fn create_workspace(
     Ok((StatusCode::ACCEPTED, Json(view)).into_response())
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SetDesired {
-    state: DesiredState,
-    #[serde(default)]
-    expected_revision: Option<Revision>,
-}
-
 async fn set_desired_state(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Json(request): Json<SetDesired>,
+    Json(request): Json<SetDesiredState>,
 ) -> Result<Json<WorkspaceView>, ApiError> {
     let action = match request.state {
         DesiredState::Deleted => Action::DeleteWorkspace,
@@ -332,7 +310,7 @@ async fn activity(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-) -> Result<Json<Vec<db::ActivityView>>, ApiError> {
+) -> Result<Json<Vec<ActivityEntry>>, ApiError> {
     owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
     Ok(Json(
         app.db.call(move |tx| db::activity(tx, id, 100)).await?,
@@ -362,13 +340,20 @@ async fn list_terminals(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-) -> Result<Json<Vec<iglu_proto::TerminalInfo>>, ApiError> {
+) -> Result<Json<Vec<TerminalView>>, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
+    let terminals = host_for(&app, &ws)?
+        .terminals(id)
+        .await
+        .map_err(host_error)?;
     Ok(Json(
-        host_for(&app, &ws)?
-            .terminals(id)
-            .await
-            .map_err(host_error)?,
+        terminals
+            .into_iter()
+            .map(|t| TerminalView {
+                name: t.name,
+                clients: t.clients,
+            })
+            .collect(),
     ))
 }
 
@@ -377,14 +362,14 @@ async fn new_terminal(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<NewTerminal>, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let existing = host_for(&app, &ws)?
         .terminals(id)
         .await
         .map_err(host_error)?;
     let name = next_session_name(existing.iter().map(|t| &t.name));
-    Ok(Json(json!({ "name": name })))
+    Ok(Json(NewTerminal { name }))
 }
 
 async fn close_terminal(
@@ -425,7 +410,7 @@ async fn list_routes(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-) -> Result<Json<Vec<crate::model::RouteView>>, ApiError> {
+) -> Result<Json<Vec<RouteView>>, ApiError> {
     owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
     let app2 = app.clone();
     Ok(Json(
@@ -440,18 +425,12 @@ async fn list_routes(
     ))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Publish {
-    port: GuestPort,
-}
-
 async fn publish_route(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Json(request): Json<Publish>,
-) -> Result<(StatusCode, Json<crate::model::RouteView>), ApiError> {
+    Json(request): Json<PublishPort>,
+) -> Result<(StatusCode, Json<RouteView>), ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::PublishRoute).await?;
     let entropy = crypto::random_u64()?;
     let owner = ws.owner;
@@ -511,13 +490,6 @@ async fn unpublish_route(
     }
 }
 
-#[derive(Serialize)]
-struct EnvironmentView {
-    name: EnvName,
-    source: EnvSource,
-    latest: Option<crate::model::RevisionRecord>,
-}
-
 async fn list_environments(
     caller: Caller,
     State(app): State<Arc<App>>,
@@ -535,18 +507,11 @@ async fn list_environments(
     ))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CreateEnvironment {
-    name: EnvName,
-    source: EnvSource,
-}
-
 async fn create_environment(
     caller: Caller,
     State(app): State<Arc<App>>,
     Json(request): Json<CreateEnvironment>,
-) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+) -> Result<(StatusCode, Json<BuildStarted>), ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageEnvironment, owner)?;
     let name = request.name.clone();
@@ -569,18 +534,18 @@ async fn create_environment(
         ));
     }
     let revision = start_build(&app, owner, name).await?;
-    Ok((StatusCode::ACCEPTED, Json(json!({ "revision": revision }))))
+    Ok((StatusCode::ACCEPTED, Json(BuildStarted { revision })))
 }
 
 async fn build_environment(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(name): Path<EnvName>,
-) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+) -> Result<(StatusCode, Json<BuildStarted>), ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageEnvironment, owner)?;
     let revision = start_build(&app, owner, name).await?;
-    Ok((StatusCode::ACCEPTED, Json(json!({ "revision": revision }))))
+    Ok((StatusCode::ACCEPTED, Json(BuildStarted { revision })))
 }
 
 /// Records a new revision and builds it on the host in the background.
@@ -630,17 +595,10 @@ async fn start_build(
 async fn list_secrets(
     caller: Caller,
     State(app): State<Arc<App>>,
-) -> Result<Json<Vec<crate::model::SecretSummary>>, ApiError> {
+) -> Result<Json<Vec<SecretView>>, ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageSecrets, owner)?;
     Ok(Json(app.db.call(move |tx| db::secrets(tx, owner)).await?))
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PutSecret {
-    target: SecretTarget,
-    value: SecretValue,
 }
 
 async fn put_secret(

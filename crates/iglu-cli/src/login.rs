@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use anyhow::{Context, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use iglu_api::{CliToken, CliTokenRequest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -118,18 +119,13 @@ pub async fn login(server: &url::Url) -> anyhow::Result<()> {
     let http = reqwest::Client::new();
     let response = http
         .post(server.join("/v1/cli/token")?)
-        .json(&serde_json::json!({ "code": code, "verifier": verifier }))
+        .json(&CliTokenRequest { code, verifier })
         .send()
         .await?;
     if !response.status().is_success() {
         bail!("iglu refused the sign-in ({})", response.status());
     }
-    let reply: serde_json::Value = response.json().await?;
-    let token = reply
-        .get("token")
-        .and_then(|t| t.as_str())
-        .context("no token in the reply")?
-        .to_owned();
+    let CliToken { token } = response.json().await.context("reading iglu's reply")?;
     Stored {
         server: server.clone(),
         token,

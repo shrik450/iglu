@@ -9,11 +9,11 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
+use iglu_api::{CliToken, CliTokenRequest};
 use iglu_domain::id::PrincipalId;
 use iglu_domain::preview::FetchSite;
 use iglu_domain::time::Millis;
 use serde::Deserialize;
-use serde_json::json;
 use uuid::Uuid;
 
 use crate::app::{
@@ -337,16 +337,10 @@ async fn cli_approve(
     .into_response())
 }
 
-#[derive(Deserialize)]
-struct CliExchange {
-    code: String,
-    verifier: String,
-}
-
 async fn cli_token(
     State(app): State<Arc<App>>,
-    Json(exchange): Json<CliExchange>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    Json(exchange): Json<CliTokenRequest>,
+) -> Result<Json<CliToken>, ApiError> {
     let hash = crypto::hash(&exchange.code);
     let (principal, challenge) = app
         .db
@@ -358,7 +352,7 @@ async fn cli_token(
     }
     let lifetime = Millis::from_secs(app.config.sessions.cli_days.saturating_mul(86_400));
     let token = new_session(&app, principal, SessionKind::Api, lifetime).await?;
-    Ok(Json(json!({ "token": token })))
+    Ok(Json(CliToken { token }))
 }
 
 // ---- the preview gateway's own sign-in, on auth.<preview domain> ----

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Milliseconds since the Unix epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]
 pub struct Timestamp(i64);
 
@@ -42,6 +43,7 @@ impl fmt::Display for Timestamp {
 
 /// A non-negative duration in milliseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]
 pub struct Millis(i64);
 

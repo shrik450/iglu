@@ -11,6 +11,7 @@ rust-version = "1.90"
 [workspace.dependencies]
 iglu-domain = { path = "crates/iglu-domain" }
 iglu-proto = { path = "crates/iglu-proto" }
+iglu-api = { path = "crates/iglu-api" }
 
 anyhow = "1"
 thiserror = "2"

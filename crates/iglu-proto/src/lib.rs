@@ -137,6 +137,7 @@ pub struct CommandError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
 pub enum ErrorCode {
     NotFound,
     /// An instance with this workspace's name exists but isn't iglu's.

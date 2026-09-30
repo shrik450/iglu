@@ -11,11 +11,12 @@ code.
 crates/
 ├── iglu-domain/   # pure core: domain types, parsing, planning, policy. No I/O.
 ├── iglu-proto/    # the iglud ⇄ hostd wire protocol, built from domain types
+├── iglu-api/      # iglud's HTTP API types, shared with the CLI and, generated, the console
 ├── iglu-hostd/    # execution-host daemon: the only thing that talks to Incus
 ├── iglud/         # control plane: API, console, preview gateway, OIDC, reconciler
 ├── iglu-cli/      # the `iglu` command
 └── iglu-guest/    # tools baked into workspace images (status, provisioning, git credentials)
-console/           # TypeScript web console (ghostty-web terminals)
+console/           # TypeScript web console (ghostty-web terminals); src/generated is from iglu-api
 nix/               # NixOS modules, packages, checks, and VM integration tests
 templates/         # `nix flake init -t` starting points for environments
 justfile           # development commands
@@ -32,6 +33,7 @@ just fmt       # format Rust and Nix
 just lint      # rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint
 just test      # the unit tests; fast, run anywhere
 just console   # type-check and bundle the console
+just api-types # regenerate console/src/generated after changing iglu-api; a check fails if stale
 just check     # every flake check: CI's, plus the VM test on x86_64-linux
 just e2e       # the VM test; needs x86_64-linux with KVM, locally or as a remote builder
 ```

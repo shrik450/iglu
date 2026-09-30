@@ -1,12 +1,13 @@
 //! Assembling what the API shows from stored records.
 
+use iglu_api::{AttentionView, RouteView, WorkspaceView};
 use iglu_domain::attention::most_urgent;
 use iglu_domain::env::EnvName;
 use rusqlite::Connection;
 
 use crate::config::Config;
 use crate::db::{self, DbError};
-use crate::model::{AttentionView, RouteRecord, RouteView, WorkspaceRecord, WorkspaceView};
+use crate::model::{AttentionRecord, RouteRecord, WorkspaceRecord};
 
 pub fn route_view(config: &Config, route: &RouteRecord) -> RouteView {
     RouteView {
@@ -35,7 +36,7 @@ pub fn workspace_view(
                 .iter()
                 .find(|record| record.status.session == status.session)
         })
-        .map(AttentionView::from);
+        .map(attention_view);
     Ok(WorkspaceView {
         id: ws.id,
         phase: ws.phase(),
@@ -49,11 +50,21 @@ pub fn workspace_view(
         memory: ws.memory,
         observed_at: ws.observed_at,
         attention: top,
-        sessions: attention.iter().map(AttentionView::from).collect(),
+        sessions: attention.iter().map(attention_view).collect(),
         routes: routes
             .iter()
             .map(|route| route_view(config, route))
             .collect(),
         created_at: ws.created_at,
     })
+}
+
+pub fn attention_view(record: &AttentionRecord) -> AttentionView {
+    AttentionView {
+        session: record.status.session.clone(),
+        state: record.status.state,
+        summary: record.status.summary.clone(),
+        updated_at: record.status.updated_at,
+        seen: record.seen,
+    }
 }

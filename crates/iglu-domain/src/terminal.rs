@@ -11,6 +11,7 @@ use crate::parse::text_type;
 /// A zmx session name: 1–32 characters of `a-z`, `0-9` and `-`, starting with
 /// a letter or digit.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
 #[serde(try_from = "String", into = "String")]
 pub struct SessionName(String);
 
