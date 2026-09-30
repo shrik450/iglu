@@ -220,11 +220,12 @@ impl FromStr for BranchName {
             && !s.starts_with('/')
             && !s.ends_with('/')
             && !s.ends_with('.')
-            && !s.ends_with(".lock")
             && !s.contains("..")
             && !s.contains("//")
             && !s.contains("@{")
-            && !s.split('/').any(|part| part.starts_with('.'))
+            && !s
+                .split('/')
+                .any(|part| part.starts_with('.') || part.ends_with(".lock"))
             && !s.chars().any(forbidden_char);
         if valid {
             Ok(Self(s.to_owned()))
@@ -313,8 +314,8 @@ mod tests {
             assert!(ok.parse::<BranchName>().is_ok(), "{ok}");
         }
         for bad in [
-            "", "-f", "a..b", "a b", "a~1", "x.lock", "/a", "a/", "@", "a@{1}", ".hidden", "a/.b",
-            "HEAD",
+            "", "-f", "a..b", "a b", "a~1", "x.lock", "a.lock/b", "/a", "a/", "@", "a@{1}",
+            ".hidden", "a/.b", "HEAD",
         ] {
             assert!(bad.parse::<BranchName>().is_err(), "{bad}");
         }
