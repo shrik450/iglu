@@ -43,7 +43,7 @@ CI runs every flake check except the VM test on pull requests and on `main`
 flake, so adding one there adds it to CI. Run `just lint test` before pushing.
 
 The VM test is too heavy for hosted runners, so it runs only locally. Run
-`just e2e` before merging changes to hostd, the guest tools, the NixOS
+`just e2e` before merging changes to hostd, the guest tools, the console, the NixOS
 modules, or anything else that touches a real host or guest.
 
 Clippy's pedantic group is on for the whole workspace. Fix what it finds.

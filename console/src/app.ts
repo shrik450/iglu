@@ -32,6 +32,9 @@ if (!sidebar || !header || !tabs || !terminalBox || !ports || !statusLine || !di
 
 let pane: TerminalPane | null = null;
 
+// Read-only access to the terminal's text, for browser tests and automation.
+Object.assign(globalThis, { iglu: { screen: () => pane?.screen() ?? "" } });
+
 function selected(): WorkspaceView | undefined {
   return state.workspaces.find((ws) => ws.id === state.selected);
 }

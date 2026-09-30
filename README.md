@@ -203,5 +203,5 @@ Every command takes `--json`.
 See [AGENTS.md](AGENTS.md) for the layout, commands, and design rules. In
 short: `nix develop`, then `just lint test` while you work and `just check`
 for every check. CI runs all of them except the end-to-end VM test in
-`nix/tests/e2e.nix`, which uses a real identity provider, Incus, and Git
-server; run it with `just e2e` on x86_64-linux with KVM.
+`nix/tests/e2e.nix`, which uses a real identity provider, Incus, Git server,
+and browser; run it with `just e2e` on x86_64-linux with KVM.

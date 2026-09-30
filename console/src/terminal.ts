@@ -79,6 +79,15 @@ export class TerminalPane {
     this.term.reset();
   }
 
+  /** The visible screen as text, one line per row. The canvas has no text to read. */
+  screen(): string {
+    const buffer = this.term.buffer.active;
+    const top = Math.max(0, buffer.length - this.term.rows);
+    const lines: string[] = [];
+    for (let y = top; y < buffer.length; y++) lines.push(buffer.getLine(y)?.translateToString(true) ?? "");
+    return lines.join("\n");
+  }
+
   focus(): void {
     this.term.focus();
   }

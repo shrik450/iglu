@@ -1,7 +1,11 @@
 # End to end: an identity provider, the control box, an execution host with
-# real Incus, and a Git server on "public" address space. A user signs in,
-# signs in the CLI, builds an environment, creates a workspace from a private
-# repository, uses a terminal, publishes a port, freezes, thaws and deletes.
+# real Incus, a Git server on "public" address space, and a client running
+# Chromium. A person signs in and approves the CLI in the browser, creates a
+# workspace from a private repository, types in its terminals, gets Claude
+# Code's attention, publishes a port, and has a preview page try to act on
+# the console. Then workspaces clone over HTTPS, freeze and thaw, survive a
+# host restart, wait for memory, and are cleaned up after an interrupted
+# delete, and iglud's backups are checked.
 { self, nixpkgs }:
 { lib, pkgs, ... }:
 
@@ -34,9 +38,10 @@ let
           openssl x509 -req -in "$1.csr" -CA ca.crt -CAkey ca.key -CAcreateserial -days 3650 \
             -extfile "$1.ext" -out "$1.crt"
         }
-        leaf control 'DNS:iglu.test,DNS:*.preview.test'
+        leaf control 'DNS:iglu.example.test,DNS:*.dev.example.test'
         leaf host 'DNS:host'
         leaf idp 'DNS:auth.idp.test'
+        leaf git 'IP:${gitAddress}'
         chmod 644 *.key
 
         openssl genrsa -out oidc.pem 2048
@@ -49,13 +54,33 @@ let
         } > authelia-jwks.yml
 
         ssh-keygen -q -t ed25519 -N "" -C deploy -f deploy
+        printf 'alice:%s\n' "$(openssl passwd -apr1 pass)" > htpasswd
       '';
 
   secret = name: pkgs.writeText "${name}-secret" "${name}-secret-for-tests";
 
+  # Playwright's Chromium, trusting the test CA (see the test script) and
+  # resolving the console and every preview to the control box.
+  browser =
+    nodes:
+    let
+      control = nodes.control.networking.primaryIPAddress;
+      idp = nodes.idp.networking.primaryIPAddress;
+    in
+    pkgs.writeShellApplication {
+      name = "browser";
+      text = ''
+        export HOME=/root
+        export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+        export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+        export BROWSER_RESOLVER_RULES='MAP iglu.example.test ${control}, MAP *.dev.example.test ${control}, MAP auth.idp.test ${idp}'
+        exec ${pkgs.python3.withPackages (ps: [ ps.playwright ])}/bin/python3 ${./browser.py} "$@"
+      '';
+    };
+
   hostsEntries = nodes: ''
     ${nodes.idp.networking.primaryIPAddress} auth.idp.test
-    ${nodes.control.networking.primaryIPAddress} iglu.test auth.preview.test
+    ${nodes.control.networking.primaryIPAddress} iglu.example.test auth.dev.example.test
   '';
 
   common =
@@ -147,11 +172,11 @@ in
                   [
                     {
                       id = "console";
-                      redirect = "https://iglu.test/auth/callback";
+                      redirect = "https://iglu.example.test/auth/callback";
                     }
                     {
                       id = "preview";
-                      redirect = "https://auth.preview.test/callback";
+                      redirect = "https://auth.dev.example.test/callback";
                     }
                   ]
                 ++ [
@@ -186,8 +211,8 @@ in
 
         services.iglu.control = {
           enable = true;
-          consoleHost = "iglu.test";
-          previewDomain = "preview.test";
+          consoleHost = "iglu.example.test";
+          previewDomain = "dev.example.test";
           acmeHost = "unused-in-tests";
           oidc = {
             inherit issuer;
@@ -205,6 +230,7 @@ in
             };
           };
           signIn.emails = [ "alice@example.org" ];
+          backups.keep = 2;
           hosts.host = "https://host:7443";
           extraSettings.workspaces = {
             cpus = 2;
@@ -220,8 +246,8 @@ in
         services.caddy.virtualHosts =
           lib.genAttrs
             [
-              "iglu.test"
-              "*.preview.test"
+              "iglu.example.test"
+              "*.dev.example.test"
             ]
             (_: {
               useACMEHost = lib.mkForce null;
@@ -231,12 +257,7 @@ in
               '';
             });
 
-        environment.systemPackages = [
-          packages.iglu
-          pkgs.curl
-          pkgs.jq
-          pkgs.websocat
-        ];
+        environment.systemPackages = [ pkgs.sqlite ];
       };
 
     host =
@@ -290,7 +311,7 @@ in
       };
 
     git =
-      { ... }:
+      { config, ... }:
       {
         virtualisation.vlans = [ 2 ];
         networking.interfaces.eth1.ipv4.addresses = lib.mkForce [
@@ -299,191 +320,65 @@ in
             prefixLength = 24;
           }
         ];
+        networking.firewall.allowedTCPPorts = [ 443 ];
         services.openssh.enable = true;
         users.users.git.isNormalUser = true;
         environment.systemPackages = [ pkgs.git ];
+
+        # Smart HTTP behind basic auth, so cloning needs the credential helper.
+        services.fcgiwrap.instances.git = {
+          process.user = "git";
+          process.group = "users";
+          socket.user = "nginx";
+          socket.group = "nginx";
+        };
+        services.nginx = {
+          enable = true;
+          virtualHosts.git = {
+            default = true;
+            onlySSL = true;
+            sslCertificate = "${pki}/git.crt";
+            sslCertificateKey = "${pki}/git.key";
+            locations."/".extraConfig = ''
+              auth_basic git;
+              auth_basic_user_file ${pki}/htpasswd;
+              fastcgi_pass unix:${config.services.fcgiwrap.instances.git.socket.address};
+              include ${config.services.nginx.package}/conf/fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME ${pkgs.git}/libexec/git-core/git-http-backend;
+              fastcgi_param GIT_PROJECT_ROOT /srv/git;
+              fastcgi_param GIT_HTTP_EXPORT_ALL "";
+              fastcgi_param PATH_INFO $uri;
+              fastcgi_param REMOTE_USER $remote_user;
+            '';
+          };
+        };
+      };
+
+    client =
+      { nodes, ... }:
+      {
+        imports = [ common ];
+        virtualisation.memorySize = 2048;
+        environment.systemPackages = [
+          packages.iglu
+          (browser nodes)
+          pkgs.curl
+          pkgs.jq
+          pkgs.nssTools
+          pkgs.websocat
+        ];
       };
   };
 
   testScript =
     { nodes, ... }:
     ''
-      import json
-      import re
-      import shlex
-      import urllib.parse
-
-      def found(pattern: str, text: str) -> str:
-          match = re.search(pattern, text)
-          assert match, f"{pattern} not in {text}"
-          return match.group(1)
-
-      def diagnose() -> None:
-          for machine, units in [
-              (control, "iglud caddy"),
-              (host, "iglu-hostd incus incus-preseed"),
-              (idp, "authelia-main"),
-          ]:
-              flags = " ".join(f"-u {unit}" for unit in units.split())
-              _, logs = machine.execute(f"journalctl --no-pager -n 150 {flags}")
-              print(f"===== {machine.name}: {units} =====\n{logs}")
-
-      try:
-          start_all()
-
-          with subtest("the Git server has a private repository"):
-              git.wait_for_unit("sshd.service")
-              git.succeed(
-                  "install -d -o git -m 700 /home/git/.ssh",
-                  "install -o git -m 600 ${pki}/deploy.pub /home/git/.ssh/authorized_keys",
-                  "install -d -o git -m 755 /srv/git",
-                  "su git -c 'set -e; git init -q --bare -b main /srv/git/app.git; "
-                  "git init -q -b main /tmp/seed; cd /tmp/seed; echo hello > README; git add README; "
-                  "git -c user.name=t -c user.email=t@t commit -q -m init; git push -q /srv/git/app.git main'",
-              )
-
-          with subtest("services come up"):
-              idp.wait_for_unit("authelia-main.service")
-              idp.wait_for_open_port(9091)
-              host.wait_for_unit("iglu-hostd.service")
-              host.wait_for_open_port(7443)
-              control.wait_for_unit("iglud.service")
-              control.wait_for_open_port(443)
-
-          with subtest("hostd put the egress policy on the bridge"):
-              acl = json.loads(host.succeed("incus query /1.0/network-acls/iglu-egress"))
-              assert any(rule["action"] == "allow" for rule in acl["egress"]), acl
-              bridge = host.succeed("incus network get iglubr0 security.acls").strip()
-              assert bridge == "iglu-egress", bridge
-
-          jar = "/tmp/browser-cookies"
-          curl = f"curl -sS --fail-with-body -c {jar} -b {jar}"
-
-          def location(url, *extra):
-              args = " ".join(extra)
-              return control.succeed(f"{curl} {args} -o /dev/null -w '%{{redirect_url}}' {shlex.quote(url)}").strip()
-
-          with subtest("a person signs in to the console through the IdP"):
-              authorize = location("https://iglu.test/auth/login")
-              assert authorize.startswith("${issuer}/api/oidc/authorization"), authorize
-              location(authorize)
-              body = json.dumps({"username": "alice", "password": "password", "keepMeLoggedIn": False})
-              control.succeed(f"{curl} -H 'Content-Type: application/json' -d {shlex.quote(body)} ${issuer}/api/firstfactor")
-              callback = location(authorize)
-              assert callback.startswith("https://iglu.test/auth/callback?"), callback
-              assert location(callback) == "https://iglu.test/", "the callback should land on the console"
-              me = json.loads(control.succeed(f"{curl} https://iglu.test/v1/me"))
-              assert me["email"] == "alice@example.org", me
-
-          with subtest("cross-origin mutations are refused"):
-              status = control.succeed(
-                  f"curl -sS -b {jar} -o /dev/null -w '%{{http_code}}' -X POST -H 'Sec-Fetch-Site: cross-site' "
-                  "-H 'Content-Type: application/json' -d '{}' https://iglu.test/v1/workspaces"
-              )
-              assert status == "403", status
-
-          with subtest("the CLI signs in through the console"):
-              control.succeed(
-                  "systemd-run --unit=cli-login --setenv=HOME=/root "
-                  "-p StandardOutput=file:/tmp/login.log -p StandardError=file:/tmp/login.log "
-                  "${packages.iglu}/bin/iglu login https://iglu.test"
-              )
-              control.wait_until_succeeds("grep -q 'Opening ' /tmp/login.log")
-              url = found(r"Opening (\S+)", control.succeed("cat /tmp/login.log"))
-              page = control.succeed(f"{curl} {shlex.quote(url)}")
-              csrf = found(r'name="csrf" value="([^"]+)"', page)
-              query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
-              form = " ".join(
-                  f"--data-urlencode {shlex.quote(k + '=' + v)}"
-                  for k, v in [*query.items(), ("csrf", csrf)]
-              )
-              loopback = location("https://iglu.test/auth/cli", "-H 'Sec-Fetch-Site: same-origin'", form)
-              assert loopback.startswith("http://127.0.0.1:"), loopback
-              control.succeed(f"curl -sS {shlex.quote(loopback)}")
-              control.wait_until_succeeds("grep -q 'signed in' /tmp/login.log")
-
-          def iglu(args):
-              return json.loads(control.succeed(f"HOME=/root iglu --json {args}"))
-
-          with subtest("an environment builds on the host"):
-              iglu("env add example 'path:${self}#example'")
-              control.wait_until_succeeds(
-                  "HOME=/root iglu --json env ls | jq -e '.[] | select(.name == \"example\") | .latest.status == \"ready\"'",
-                  timeout=900,
-              )
-
-          with subtest("secrets are stored"):
-              control.succeed("HOME=/root iglu secret set deploy-key --file .ssh/id_ed25519 < ${pki}/deploy")
-              control.succeed("printf hunter2 | HOME=/root iglu secret set token --env TEST_TOKEN")
-
-          with subtest("a workspace starts from the private repository"):
-              ws = iglu("new ssh://git@${gitAddress}/srv/git/app.git --env example --name demo --wait")
-              assert ws["phase"] == "running", ws
-              instance = "iglu-" + ws["id"].replace("-", "")
-
-          def guest(command):
-              return host.succeed(f"incus exec {instance} --user 1000 --group 100 --env HOME=/home/dev -- bash -lc {shlex.quote(command)}")
-
-          with subtest("the checkout and secrets are in place"):
-              assert "init" in guest("git -C ~/app log --oneline")
-              assert guest("git -C ~/app branch --show-current").strip() == "demo"
-              guest("test -L ~/.ssh/id_ed25519")
-
-          with subtest("workspaces reach the Internet but not private networks"):
-              guest("nc -z -w 5 ${gitAddress} 22")
-              guest("! nc -z -w 5 ${nodes.host.networking.primaryIPAddress} 7443")
-              guest("! nc -z -w 5 ${nodes.control.networking.primaryIPAddress} 443")
-
-          token = json.loads(control.succeed("cat /root/.config/iglu/credentials.json"))["token"]
-          api = f"curl -sS --fail-with-body -H 'Authorization: Bearer {token}'"
-
-          with subtest("a terminal runs in the workspace with secrets in its environment"):
-              terminal = json.loads(control.succeed(f"{api} -X POST https://iglu.test/v1/workspaces/{ws['id']}/terminals"))["name"]
-              attach = f"wss://iglu.test/v1/workspaces/{ws['id']}/terminals/{terminal}/attach?cols=80&rows=24"
-              control.succeed(
-                  f"(sleep 2; printf 'echo token=$TEST_TOKEN\\r'; sleep 3) "
-                  f"| websocat {shlex.quote(attach)} -b -H 'Authorization: Bearer {token}' > /tmp/terminal.out || true"
-              )
-              output = control.succeed("cat /tmp/terminal.out")
-              assert "token=hunter2" in output, f"the terminal should see the secret: {output!r}"
-              sessions = json.loads(control.succeed(f"{api} https://iglu.test/v1/workspaces/{ws['id']}/terminals"))
-              assert any(s["name"] == terminal for s in sessions), sessions
-
-          with subtest("a published port is served behind preview sign-in"):
-              host.succeed(
-                  f"incus exec {instance} --user 1000 --group 100 -- bash -lc "
-                  "\"setsid bash -c 'while true; do printf \\\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\nConnection: close\\r\\n\\r\\nhello\\\" | nc -N -l 3000; done' >/dev/null 2>&1 &\""
-              )
-              route = iglu("port demo 3000")
-              preview = route["url"]
-              label = urllib.parse.urlsplit(preview).hostname
-              resolve = f"--resolve {label}:443:127.0.0.1 --resolve auth.preview.test:443:127.0.0.1"
-              anonymous = control.succeed(f"curl -sS {resolve} -o /dev/null -w '%{{http_code}} %{{redirect_url}}' {preview}")
-              assert anonymous.startswith("30") and "auth.preview.test" in anonymous, anonymous
-              authorize = location(anonymous.split(" ", 1)[1], resolve)
-              assert authorize.startswith("${issuer}/api/oidc/authorization"), authorize
-              callback = location(authorize, resolve)
-              back = location(callback, resolve)
-              assert back.startswith(preview), back
-              assert control.succeed(f"{curl} {resolve} {preview}") == "hello"
-
-          with subtest("freezing reclaims memory and thawing resumes"):
-              def resident() -> int:
-                  return int(host.succeed(f"cat /sys/fs/cgroup/lxc.payload.{instance}/memory.current"))
-
-              before = resident()
-              assert iglu("freeze demo --wait")["phase"] == "frozen"
-              after = resident()
-              assert after < before // 2, f"freezing should reclaim memory: {before} -> {after} bytes"
-              assert iglu("start demo --wait")["phase"] == "running"
-              assert "init" in guest("git -C ~/app log --oneline")
-
-          with subtest("stopping and deleting clean up the instance"):
-              assert iglu("stop demo --wait")["phase"] == "stopped"
-              iglu("rm demo --wait")
-              host.wait_until_succeeds(f"! incus info {instance}", timeout=120)
-      except Exception:
-          diagnose()
-          raise
-    '';
+      PKI = "${pki}"
+      SELF = "${self}"
+      GIT_ADDRESS = "${gitAddress}"
+      HOST_IP = "${nodes.host.networking.primaryIPAddress}"
+      CONTROL_IP = "${nodes.control.networking.primaryIPAddress}"
+      PYTHON = "${lib.getExe pkgs.python3}"
+    ''
+    + builtins.readFile ./e2e.py;
 }
