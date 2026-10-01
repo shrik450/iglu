@@ -10,6 +10,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
+use iglu_domain::secret::FetchTokens;
 use iglu_proto::BuildOutcome;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -37,8 +38,8 @@ enum BuildError {
     Import(String),
 }
 
-pub async fn build(app: &App, source: &EnvSource) -> BuildOutcome {
-    match run(app, source).await {
+pub async fn build(app: &App, source: &EnvSource, tokens: &FetchTokens) -> BuildOutcome {
+    match run(app, source, tokens).await {
         Ok(image) => BuildOutcome::Built(image),
         Err(error) => {
             tracing::warn!(%source, %error, "environment build failed");
@@ -49,8 +50,12 @@ pub async fn build(app: &App, source: &EnvSource) -> BuildOutcome {
     }
 }
 
-async fn run(app: &App, source: &EnvSource) -> Result<BuiltImage, BuildError> {
-    let store_path = nix_build(app, source).await?;
+async fn run(
+    app: &App,
+    source: &EnvSource,
+    tokens: &FetchTokens,
+) -> Result<BuiltImage, BuildError> {
+    let store_path = nix_build(app, source, tokens).await?;
     let manifest_bytes = tokio::fs::read(store_path.join("iglu.json"))
         .await
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
@@ -68,7 +73,11 @@ async fn run(app: &App, source: &EnvSource) -> Result<BuiltImage, BuildError> {
     })
 }
 
-async fn nix_build(app: &App, source: &EnvSource) -> Result<PathBuf, BuildError> {
+async fn nix_build(
+    app: &App,
+    source: &EnvSource,
+    tokens: &FetchTokens,
+) -> Result<PathBuf, BuildError> {
     let build = &app.config.build;
     let mut command = Command::new(&build.nix);
     command
@@ -91,6 +100,14 @@ async fn nix_build(app: &App, source: &EnvSource) -> Result<PathBuf, BuildError>
         .kill_on_drop(true);
     if let Ok(certs) = std::env::var("SSL_CERT_FILE") {
         command.env("SSL_CERT_FILE", certs);
+    }
+    // In the environment rather than the arguments, which anyone on the host
+    // can read, and only for this build, so nothing is left on disk. The
+    // build account is shared, though: what one owner's token fetches lands
+    // in the host's store and Nix's fetch cache, where other owners' builds
+    // could reuse it.
+    if let Some(setting) = tokens.nix_setting() {
+        command.env("NIX_CONFIG", setting);
     }
     let output = tokio::time::timeout(Duration::from_secs(build.timeout_secs), command.output())
         .await

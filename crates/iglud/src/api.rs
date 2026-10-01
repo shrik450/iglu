@@ -24,14 +24,14 @@ use iglu_domain::id::{EnvRevisionId, PrincipalId, RouteId, SecretId, WorkspaceId
 use iglu_domain::label::{RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Revision, allow_transition};
 use iglu_domain::names;
-use iglu_domain::secret::SecretName;
+use iglu_domain::secret::{FetchTokens, SecretName};
 use iglu_domain::terminal::{SessionName, TerminalSize, next_session_name};
 use iglu_proto::BuildOutcome;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::app::{ApiError, App, Caller, now};
+use crate::app::{ApiError, App, Caller, now, open_secrets};
 use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, SealedSecret};
 use crate::model::WorkspaceRecord;
@@ -558,9 +558,10 @@ async fn start_build(
         })
         .await?
         .ok_or(ApiError::NotFound)?;
+    let tokens = FetchTokens::from_secrets(open_secrets(app, owner).await?);
     let app = app.clone();
     tokio::spawn(async move {
-        let outcome = host.build(&env.source).await;
+        let outcome = host.build(&env.source, tokens).await;
         let stored = app
             .db
             .call(move |tx| match outcome {

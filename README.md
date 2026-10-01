@@ -153,8 +153,8 @@ Start from the template:
 nix flake init -t <iglu flake>#workspace
 ```
 
-Set `iglu.user`, add the tools your agents need, push the flake somewhere the
-host can fetch it, and register it:
+Set `iglu.user`, add the tools your agents need, push the flake and its
+`flake.lock` somewhere the host can fetch it, and register it:
 
 ```sh
 iglu login https://iglu.example.org
@@ -163,6 +163,13 @@ iglu env add default github:you/iglu-env#default
 
 `iglu env build default` rebuilds it after you change the flake. New
 workspaces use the newest image; existing ones keep theirs.
+
+The flake can be private. Builds use your Git credential secrets (see
+[Using it](#using-it)) as Nix access tokens, so the token that lets a
+workspace clone from GitHub also lets the host fetch
+`github:you/private-flake`. Nix sends these tokens for `github:` and `gitlab:`
+references, not `git+https:` ones. The host keeps what it fetched in its Nix
+store, and every owner's builds share that store.
 
 ### Backups
 

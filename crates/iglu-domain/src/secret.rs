@@ -283,6 +283,92 @@ pub struct GitCredential {
     pub password: SecretValue,
 }
 
+/// The tokens Nix may send when it fetches an owner's environment flakes:
+/// one per Git credential, so the credential that lets a workspace clone a
+/// private repository also lets the host build an environment from it.
+///
+/// Nix sends these for `github:` and `gitlab:` references. For `git+https:`
+/// it runs Git, which doesn't use them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchTokens(Vec<FetchToken>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct FetchToken {
+    host: GitHost,
+    token: AccessToken,
+}
+
+/// A credential's password as Nix can carry it in `access-tokens`. Nix reads
+/// its settings line by line, splits lists on whitespace, and drops anything
+/// after `#`, so a value with any of those could end the token early or set
+/// something else entirely. Credentials whose passwords aren't like this
+/// still answer Git; they just don't fetch flakes.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+struct AccessToken(String);
+
+impl fmt::Debug for AccessToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("AccessToken(<redacted>)")
+    }
+}
+
+impl TryFrom<String> for AccessToken {
+    type Error = ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let valid = !value.is_empty()
+            && value.len() <= 4096
+            && value.bytes().all(|b| b.is_ascii_graphic() && b != b'#');
+        if valid {
+            Ok(Self(value))
+        } else {
+            Err(ParseError::new(
+                "access token",
+                "expected printable ASCII without '#'",
+            ))
+        }
+    }
+}
+
+impl From<AccessToken> for String {
+    fn from(value: AccessToken) -> Self {
+        value.0
+    }
+}
+
+impl FetchTokens {
+    /// The tokens from an owner's secrets. Only Git credentials contribute.
+    pub fn from_secrets(secrets: impl IntoIterator<Item = (SecretTarget, SecretValue)>) -> Self {
+        Self(
+            secrets
+                .into_iter()
+                .filter_map(|(target, value)| match target {
+                    SecretTarget::GitCredential { host, .. } => AccessToken::try_from(value.0)
+                        .ok()
+                        .map(|token| FetchToken { host, token }),
+                    SecretTarget::Env { .. } | SecretTarget::File { .. } => None,
+                })
+                .collect(),
+        )
+    }
+
+    /// The `access-tokens` setting carrying them, as a line of `NIX_CONFIG`,
+    /// or nothing when there are none.
+    #[must_use]
+    pub fn nix_setting(&self) -> Option<String> {
+        if self.0.is_empty() {
+            return None;
+        }
+        let tokens: Vec<String> = self
+            .0
+            .iter()
+            .map(|t| format!("{}={}", t.host, t.token.0))
+            .collect();
+        Some(format!("access-tokens = {}", tokens.join(" ")))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum BundleError {
     #[error("two secrets set the environment variable {0}")]
@@ -409,6 +495,53 @@ mod tests {
         assert!(git("github.com", "a").conflicts_with(&git("github.com", "b")));
         assert!(!git("github.com", "a").conflicts_with(&git("gitlab.com", "a")));
         assert!(!env("TOKEN").conflicts_with(&file("TOKEN")));
+    }
+
+    #[test]
+    fn git_credentials_become_fetch_tokens() {
+        let git = |h: &str| SecretTarget::GitCredential {
+            host: h.parse().expect("valid"),
+            username: "x-access-token".parse().expect("valid"),
+        };
+        let tokens = FetchTokens::from_secrets([
+            (git("github.com"), value("ghp_abc")),
+            (
+                SecretTarget::Env {
+                    name: "GH_TOKEN".parse().expect("valid"),
+                },
+                value("ghp_env"),
+            ),
+            (git("gitlab.com"), value("PAT:glpat=x")),
+        ]);
+        assert_eq!(
+            tokens.nix_setting().as_deref(),
+            Some("access-tokens = github.com=ghp_abc gitlab.com=PAT:glpat=x")
+        );
+        assert!(!format!("{tokens:?}").contains("ghp_abc"));
+        assert_eq!(FetchTokens::from_secrets([]).nix_setting(), None);
+    }
+
+    #[test]
+    fn tokens_cannot_reach_other_nix_settings() {
+        let git = SecretTarget::GitCredential {
+            host: "github.com".parse().expect("valid"),
+            username: "x-access-token".parse().expect("valid"),
+        };
+        for bad in [
+            "tok\nsandbox = false",
+            "tok other.example=tok",
+            "tok#",
+            "tök",
+        ] {
+            let tokens = FetchTokens::from_secrets([(git.clone(), value(bad))]);
+            assert_eq!(tokens.nix_setting(), None, "{bad:?}");
+        }
+        assert!(
+            serde_json::from_str::<FetchTokens>(
+                r#"[{"host":"github.com","token":"tok\nsandbox = false"}]"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

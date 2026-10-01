@@ -131,6 +131,15 @@ try:
             timeout=900,
         )
 
+    with subtest("a private environment can't be fetched without its owner's Git credential"):
+        iglu(f"env add private 'github:alice/env?host={GIT_ADDRESS}#private'")
+        client.wait_until_succeeds(
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"failed\"'",
+            timeout=300,
+        )
+        private = next(e for e in iglu("env ls") if e["name"] == "private")
+        assert "404" in private["latest"]["log_tail"], private
+
     with subtest("secrets are stored"):
         client.succeed(f"{IGLU} secret set deploy-key --file .ssh/id_ed25519 < {PKI}/deploy")
         client.succeed(f"printf hunter2 | {IGLU} secret set token --env TEST_TOKEN")
@@ -146,6 +155,16 @@ try:
         # A second secret for a destination one already has is refused.
         client.fail(f"printf other | {IGLU} secret set clash --env TEST_TOKEN")
         client.fail(f"printf other | {IGLU} secret set clash --file .config/git/config/extra")
+
+    with subtest("the same Git credential lets the host fetch the private environment"):
+        iglu("env build private")
+        client.wait_until_succeeds(
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"ready\"'",
+            timeout=600,
+        )
+        # Only in the build's environment: not in its arguments, on disk, or in the logs.
+        host.fail("grep -rqs 'access-tokens' /etc/nix /var/lib/iglu-build")
+        host.fail("journalctl -u iglu-hostd --no-pager | grep -q '=pass'")
 
     with subtest("a workspace created in the browser starts from the private repository"):
         created = browser("create", "example", f"ssh://git@{GIT_ADDRESS}/srv/git/app.git", "demo")

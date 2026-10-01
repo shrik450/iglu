@@ -1,6 +1,7 @@
 # End to end: an identity provider, the control box, an execution host with
 # real Incus, a Git server on "public" address space, and a client running
-# Chromium. A person signs in and approves the CLI in the browser, creates a
+# Chromium. A person signs in and approves the CLI in the browser, builds an
+# environment from a private flake with their Git credential, creates a
 # workspace from a private repository, types in its terminals, gets Claude
 # Code's attention, publishes a port, and has a preview page try to act on
 # the console. Then workspaces clone over HTTPS, freeze and thaw, survive a
@@ -58,6 +59,51 @@ let
       '';
 
   secret = name: pkgs.writeText "${name}-secret" "${name}-secret-for-tests";
+
+  # A private environment flake, as GitHub would serve its tarball. It is the
+  # example environment under another name, so it builds offline. Like any
+  # flake fetched from a forge, it needs its lock file: Nix can't write one.
+  # The lock is iglu's own, beneath an `iglu` input.
+  privateEnvRev = "0123456789abcdef0123456789abcdef01234567";
+  igluLock = lib.importJSON "${self}/flake.lock";
+  privateEnvLock = builtins.toJSON {
+    version = 7;
+    root = "root";
+    nodes = removeAttrs igluLock.nodes [ "root" ] // {
+      iglu = {
+        inherit (igluLock.nodes.root) inputs;
+        locked = {
+          type = "path";
+          path = "${self}";
+          inherit (self) narHash;
+        };
+        original = {
+          type = "path";
+          path = "${self}";
+        };
+      };
+      root.inputs.iglu = "iglu";
+    };
+  };
+  privateEnv =
+    pkgs.runCommand "iglu-e2e-private-env.tar.gz"
+      {
+        flake = pkgs.writeText "flake.nix" ''
+          {
+            inputs.iglu.url = "path:${self}";
+            outputs = { iglu, ... }: {
+              nixosConfigurations.private = iglu.nixosConfigurations.example;
+            };
+          }
+        '';
+        lock = pkgs.writeText "flake.lock" privateEnvLock;
+      }
+      ''
+        mkdir alice-env-${privateEnvRev}
+        cp $flake alice-env-${privateEnvRev}/flake.nix
+        cp $lock alice-env-${privateEnvRev}/flake.lock
+        tar -czf $out alice-env-${privateEnvRev}
+      '';
 
   # Playwright's Chromium, trusting the test CA (see the test script) and
   # resolving the console and every preview to the control box.
@@ -349,6 +395,20 @@ in
               fastcgi_param GIT_HTTP_EXPORT_ALL "";
               fastcgi_param PATH_INFO $uri;
               fastcgi_param REMOTE_USER $remote_user;
+            '';
+            # GitHub's API for a private repository, as Nix's `github:`
+            # fetcher uses it with `?host=`. Like GitHub, it answers 404 to
+            # anyone without the token, which here is the password of
+            # alice's Git credential.
+            locations."= /api/v3/repos/alice/env/commits/HEAD".extraConfig = ''
+              if ($http_authorization != "token pass") { return 404; }
+              default_type application/json;
+              return 200 '{"sha":"${privateEnvRev}","commit":{"tree":{"sha":"${privateEnvRev}"}}}';
+            '';
+            locations."= /api/v3/repos/alice/env/tarball/${privateEnvRev}".extraConfig = ''
+              if ($http_authorization != "token pass") { return 404; }
+              default_type application/gzip;
+              alias ${privateEnv};
             '';
           };
         };

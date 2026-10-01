@@ -16,11 +16,12 @@ use iglu_domain::label::HostId;
 use iglu_domain::preview::{
     ConsoleOrigin, Credential, CsrfToken, FetchMetadata, MethodClass, Transport, console_access,
 };
+use iglu_domain::secret::{SecretTarget, SecretValue};
 use iglu_domain::time::{Millis, Timestamp};
 use tokio::sync::broadcast;
 
 use crate::config::Config;
-use crate::crypto::{self, Sealer};
+use crate::crypto::{self, Binding, Sealer};
 use crate::db::{self, Db, DbError, SessionKind, SessionRow};
 use crate::hosts::HostClient;
 use crate::model::PrincipalRecord;
@@ -65,6 +66,41 @@ impl App {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum OpenSecretsError {
+    #[error(transparent)]
+    Db(#[from] DbError),
+    #[error(transparent)]
+    Crypto(#[from] crypto::CryptoError),
+    #[error("a stored secret is unreadable")]
+    Unreadable,
+}
+
+/// An owner's stored secrets, decrypted.
+pub async fn open_secrets(
+    app: &App,
+    owner: PrincipalId,
+) -> Result<Vec<(SecretTarget, SecretValue)>, OpenSecretsError> {
+    let sealed = app.db.call(move |tx| db::sealed_secrets(tx, owner)).await?;
+    let mut opened = Vec::with_capacity(sealed.len());
+    for secret in sealed {
+        let binding = Binding {
+            owner,
+            name: &secret.name,
+            target: &secret.target,
+        };
+        let plaintext = app
+            .sealer
+            .open(&secret.nonce, &secret.ciphertext, &binding)?;
+        let value = String::from_utf8(plaintext)
+            .ok()
+            .and_then(|text| SecretValue::try_from(text).ok())
+            .ok_or(OpenSecretsError::Unreadable)?;
+        opened.push((secret.target, value));
+    }
+    Ok(opened)
+}
+
 pub fn now() -> Timestamp {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -103,6 +139,13 @@ impl From<DbError> for ApiError {
 impl From<crypto::CryptoError> for ApiError {
     fn from(error: crypto::CryptoError) -> Self {
         tracing::error!(%error, "crypto error");
+        Self::Internal
+    }
+}
+
+impl From<OpenSecretsError> for ApiError {
+    fn from(error: OpenSecretsError) -> Self {
+        tracing::error!(%error, "couldn't open stored secrets");
         Self::Internal
     }
 }

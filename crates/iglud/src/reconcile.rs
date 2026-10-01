@@ -10,15 +10,14 @@ use iglu_domain::id::WorkspaceId;
 use iglu_domain::lifecycle::{
     AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
-use iglu_domain::secret::{SecretValue, bundle};
+use iglu_domain::secret::bundle;
 use iglu_domain::time::Timestamp;
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
     Limits, ProvisionSpec,
 };
 
-use crate::app::{App, now};
-use crate::crypto::Binding;
+use crate::app::{App, now, open_secrets};
 use crate::db;
 use crate::hosts::HostClient;
 use crate::model::{Condition, PrincipalRecord, WorkspaceRecord};
@@ -492,31 +491,9 @@ async fn command_for(
         }
         Effect::Start => Command::Start,
         Effect::DeliverSecrets => {
-            let owner = ws.owner;
-            let sealed = app
-                .db
-                .call(move |tx| db::sealed_secrets(tx, owner))
+            let opened = open_secrets(app, ws.owner)
                 .await
-                .map_err(internal)?;
-            let mut opened = Vec::with_capacity(sealed.len());
-            for secret in sealed {
-                let binding = Binding {
-                    owner,
-                    name: &secret.name,
-                    target: &secret.target,
-                };
-                let plaintext = app
-                    .sealer
-                    .open(&secret.nonce, &secret.ciphertext, &binding)
-                    .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))?;
-                let value = String::from_utf8(plaintext)
-                    .ok()
-                    .and_then(|text| SecretValue::try_from(text).ok())
-                    .ok_or_else(|| {
-                        CommandError::new(ErrorCode::Runtime, "a stored secret is unreadable")
-                    })?;
-                opened.push((secret.target, value));
-            }
+                .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))?;
             let bundle = bundle(principal.secrets_generation, opened)
                 .map_err(|e| CommandError::new(ErrorCode::InvalidState, e.to_string()))?;
             Command::DeliverSecrets(bundle)

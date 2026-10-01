@@ -7,6 +7,7 @@ use iglu_domain::env::EnvSource;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::HostId;
 use iglu_domain::port::GuestPort;
+use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
     BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode, Inventory,
@@ -176,9 +177,14 @@ impl HostClient {
         }
     }
 
-    pub async fn build(&self, source: &EnvSource) -> Result<BuildOutcome, HostError> {
+    pub async fn build(
+        &self,
+        source: &EnvSource,
+        tokens: FetchTokens,
+    ) -> Result<BuildOutcome, HostError> {
         let request = BuildRequest {
             source: source.clone(),
+            tokens,
         };
         self.json(
             self.http

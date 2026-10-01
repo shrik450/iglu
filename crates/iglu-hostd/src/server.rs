@@ -221,5 +221,5 @@ async fn build(
     State(app): State<Arc<App>>,
     Json(request): Json<BuildRequest>,
 ) -> Json<BuildOutcome> {
-    Json(crate::build::build(&app, &request.source).await)
+    Json(crate::build::build(&app, &request.source, &request.tokens).await)
 }

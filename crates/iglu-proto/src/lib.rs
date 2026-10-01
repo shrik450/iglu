@@ -15,11 +15,11 @@ use iglu_domain::label::HostId;
 use iglu_domain::lifecycle::Instance;
 use iglu_domain::port::GuestPort;
 use iglu_domain::repo::{BranchName, RepoUrl};
-use iglu_domain::secret::SecretBundle;
+use iglu_domain::secret::{FetchTokens, SecretBundle};
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Paths, so client and server can't drift.
 pub mod path {
@@ -181,6 +181,8 @@ pub enum TerminalControl {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuildRequest {
     pub source: EnvSource,
+    /// The owner's tokens for fetching private flakes.
+    pub tokens: FetchTokens,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
