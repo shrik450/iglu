@@ -1,0 +1,36 @@
+# The dev stack's shared services. Caddy terminates TLS with
+# certificates from the dev CA and routes iglu's hostnames to iglud;
+# Authelia is the identity provider. Start it with `just dev-services`, which
+# sets IGLU_DEV_SHARED to where the CA and Authelia's signing key live.
+# The images are pinned by digest, so every machine runs the same ones. See
+# DEVELOPMENT.md.
+name: iglu-dev
+
+services:
+  caddy:
+    image: caddy:2.11.7@sha256:f2a1290d0463aad60660d4ec134943f183ee2a5f6c3eb7bf32dd984f2f020772
+    ports:
+      - "127.0.0.1:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${IGLU_DEV_SHARED:?start the services with just dev-services}/ca:/ca:ro
+      - caddy-data:/data
+    # iglud runs natively on the Mac.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  authelia:
+    image: authelia/authelia:4.39.28@sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54
+    environment:
+      X_AUTHELIA_CONFIG: /config/configuration.yml
+      X_AUTHELIA_CONFIG_FILTERS: template
+    volumes:
+      - ./authelia:/config:ro
+      - ./clients:/clients:ro
+      - ${IGLU_DEV_SHARED:?start the services with just dev-services}/authelia/jwks.pem:/keys/jwks.pem:ro
+      # Kept, not a volume: Authelia assigns each person their subject
+      # identifier here, and iglud knows people by it.
+      - ${IGLU_DEV_SHARED:?start the services with just dev-services}/authelia/data:/data
+
+volumes:
+  caddy-data:

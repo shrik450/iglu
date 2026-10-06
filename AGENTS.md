@@ -19,6 +19,7 @@ crates/
 console/           # TypeScript web console (ghostty-web terminals); src/generated is from iglu-api
 nix/               # NixOS modules, packages, checks, and VM integration tests
 templates/         # `nix flake init -t` starting points for environments
+dev/               # the local dev stack's shared services (Caddy, Authelia), run in Docker
 justfile           # development commands
 .github/workflows/ # CI, which runs the flake checks except the VM test
 ```
@@ -36,7 +37,11 @@ just console   # type-check and bundle the console
 just api-types # regenerate console/src/generated after changing iglu-api; a check fails if stale
 just check     # every flake check: CI's, plus the VM test on x86_64-linux
 just e2e       # the VM test; needs x86_64-linux with KVM, locally or as a remote builder
+just dev       # run iglud and the console locally; see DEVELOPMENT.md
 ```
+
+`DEVELOPMENT.md` explains the local dev stack, its `dev-*` recipes, and the
+dev CA it uses for HTTPS.
 
 CI runs every flake check except the VM test on pull requests and on `main`
 (`.github/workflows/ci.yml`). The checks live in `nix/checks.nix` and the

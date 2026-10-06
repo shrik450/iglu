@@ -1,0 +1,69 @@
+# Authelia for the local dev stack, adapted from the VM test's
+# (nix/tests/e2e.nix). Every value here is for local development only.
+# Rendered with Authelia's template filter: `secret` reads a mounted file.
+server:
+  address: tcp://0.0.0.0:9091/
+log:
+  level: info
+authentication_backend:
+  file:
+    path: /config/users.yml
+access_control:
+  default_policy: one_factor
+session:
+  secret: session-secret-for-dev-only-0123456789
+  cookies:
+    - domain: auth.localhost
+      authelia_url: https://auth.localhost
+storage:
+  encryption_key: storage-key-for-dev-only-0123456789
+  local:
+    path: /data/db.sqlite3
+notifier:
+  filesystem:
+    filename: /data/notifications.txt
+identity_validation:
+  reset_password:
+    jwt_secret: jwt-secret-for-dev-only-0123456789
+identity_providers:
+  oidc:
+    hmac_secret: hmac-secret-for-dev-only-0123456789
+    jwks:
+      # Generated per machine by `just dev-setup`.
+      - key: {{ secret "/keys/jwks.pem" | mindent 10 "|" | msquote }}
+    claims_policies:
+      iglu:
+        id_token: [email, email_verified, name, preferred_username]
+    clients:
+      - client_id: console
+        client_name: iglu console
+        client_secret: '$plaintext${{ secret "/clients/console.secret" }}'
+        authorization_policy: one_factor
+        consent_mode: implicit
+        claims_policy: iglu
+        redirect_uris:
+          - https://iglu.localhost/auth/callback
+        scopes: [openid, email, profile]
+        token_endpoint_auth_method: client_secret_basic
+      - client_id: preview
+        client_name: iglu previews
+        client_secret: '$plaintext${{ secret "/clients/preview.secret" }}'
+        authorization_policy: one_factor
+        consent_mode: implicit
+        claims_policy: iglu
+        redirect_uris:
+          - https://auth.preview.localhost/callback
+        scopes: [openid, email, profile]
+        token_endpoint_auth_method: client_secret_basic
+      - client_id: worker
+        client_name: iglu worker
+        client_secret: '$plaintext${{ secret "/clients/worker.secret" }}'
+        authorization_policy: one_factor
+        grant_types: [client_credentials]
+        response_types: []
+        scopes: []
+        audience: [iglu-hosts]
+        # iglud requests no audience, so grant the client's own.
+        requested_audience_mode: implicit
+        token_endpoint_auth_method: client_secret_basic
+        access_token_signed_response_alg: RS256

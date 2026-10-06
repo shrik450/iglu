@@ -89,6 +89,9 @@
             nixfmt
             actionlint
             shellcheck
+            # The dev stack's clients. The Docker daemon is yours to run.
+            docker-client
+            openssl
           ];
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
         };

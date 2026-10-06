@@ -1,0 +1,24 @@
+{
+	# Every certificate comes from the shared, name-constrained dev CA.
+	pki {
+		ca local {
+			root {
+				cert /ca/ca.crt
+				key /ca/ca.key
+			}
+		}
+	}
+	local_certs
+	# The CA is trusted on the Mac, not inside this container.
+	skip_install_trust
+}
+
+auth.localhost {
+	reverse_proxy authelia:9091
+}
+
+# The console is at iglu.localhost and previews are under preview.localhost,
+# both served by the iglud listening on port 7100.
+iglu.localhost, *.preview.localhost {
+	reverse_proxy host.docker.internal:7100
+}

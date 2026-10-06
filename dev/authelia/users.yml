@@ -1,0 +1,11 @@
+# Both passwords are "password". Two people, so access between owners can be
+# tried in the console.
+users:
+  alice:
+    displayname: Alice
+    password: "$argon2id$v=19$m=65536,t=3,p=4$2ohUAfh9yetl+utr4tLcCQ$AsXx0VlwjvNnCsa70u4HKZvFkC8Gwajr2pHGKcND/xs"
+    email: alice@example.org
+  bob:
+    displayname: Bob
+    password: "$argon2id$v=19$m=65536,t=3,p=4$2ohUAfh9yetl+utr4tLcCQ$AsXx0VlwjvNnCsa70u4HKZvFkC8Gwajr2pHGKcND/xs"
+    email: bob@example.org
