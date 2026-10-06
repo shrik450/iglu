@@ -212,3 +212,6 @@ short: `nix develop`, then `just lint test` while you work and `just check`
 for every check. CI runs all of them except the end-to-end VM test in
 `nix/tests/e2e.nix`, which uses a real identity provider, Incus, Git server,
 and browser; run it with `just e2e` on x86_64-linux with KVM.
+
+[DEVELOPMENT.md](DEVELOPMENT.md) covers working on iglu locally, including
+the dev stack that runs iglud and the console on your machine with `just dev`.

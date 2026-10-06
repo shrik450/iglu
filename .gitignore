@@ -4,3 +4,4 @@
 node_modules/
 /console/dist/
 .env
+/.dev/
