@@ -16,6 +16,9 @@ use crate::parse::text_type;
 pub struct SessionName(String);
 
 impl SessionName {
+    /// The longest a session name can be.
+    pub const MAX_LEN: usize = 32;
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -29,7 +32,7 @@ impl FromStr for SessionName {
         let valid_chars = s
             .bytes()
             .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'));
-        if s.is_empty() || s.len() > 32 || !valid_chars || s.starts_with('-') {
+        if s.is_empty() || s.len() > Self::MAX_LEN || !valid_chars || s.starts_with('-') {
             return Err(ParseError::new(
                 "session name",
                 "expected 1-32 of a-z, 0-9, '-'",

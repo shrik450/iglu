@@ -1,35 +1,16 @@
-//! hostd: the execution host's only privileged service.
-//!
-//! It exposes a fixed set of typed commands to iglud and performs them
-//! against the local Incus daemon. It keeps no state of its own: Incus is
-//! the record of what exists.
-
-mod auth;
-mod build;
-mod commands;
-mod config;
-mod exec;
-mod guestfs;
-mod incus;
-mod observe;
-mod policy;
-mod reclaim;
-mod server;
-mod terminal;
-mod tunnel;
+//! `iglu-hostd`: the execution host's only privileged service, running
+//! workspaces on Incus.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use iglu_domain::env::Arch;
+use iglu_hostd::auth::Verifier;
+use iglu_hostd::config::Config;
+use iglu_hostd::host::Host;
+use iglu_hostd::incus::IncusRuntime;
+use iglu_hostd::server::{self, App};
 use tracing_subscriber::EnvFilter;
-
-fn host_arch() -> anyhow::Result<Arch> {
-    std::env::consts::ARCH
-        .parse()
-        .map_err(|e| anyhow::anyhow!("unsupported host architecture: {e}"))
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -45,46 +26,28 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .context("usage: iglu-hostd --config <path>")?;
-    let config = config::Config::load(&config_path)?;
+    let config: Config = iglu_hostd::config::load(&config_path)?;
 
-    let incus = incus::Incus::new(config.incus.socket.clone(), config.incus.project.clone());
-    policy::ensure(
-        &incus,
-        &config.incus.network,
-        &config.incus.acl,
-        config.timeouts.operation(),
+    let runtime = IncusRuntime::new(
+        config.incus,
+        config.build,
+        &config.runtime_dir,
+        config.timeouts,
     )
     .await
     .context("applying the workspace egress policy")?;
-    tokio::fs::create_dir_all(config.runtime_dir.join("proxy")).await?;
-
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-    let verifier = auth::Verifier::new(
-        config.auth.issuer.clone(),
-        config.auth.audience.clone(),
-        config.auth.subjects.clone(),
-        http,
-    );
     let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(
         &config.tls.certificate,
         &config.tls.key,
     )
     .await
     .context("loading the TLS certificate")?;
-    let listen = config.listen;
-    let app = Arc::new(server::App {
-        config,
-        incus,
-        boots: observe::BootCache::default(),
-        verifier,
-        arch: host_arch()?,
+    let app = Arc::new(App {
+        host_id: config.host_id,
+        arch: iglu_hostd::host_arch().context("unsupported host architecture")?,
+        host: Host::new(runtime, config.timeouts),
+        verifier: Verifier::from_config(config.auth)?,
     });
-
-    tracing::info!(%listen, "hostd listening");
-    axum_server::bind_rustls(listen, tls)
-        .serve(server::router(app).into_make_service())
-        .await?;
+    server::serve_tls(app, config.listen, tls).await?;
     Ok(())
 }

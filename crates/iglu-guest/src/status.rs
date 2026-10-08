@@ -2,15 +2,16 @@
 //! doing, and hostd reads the file.
 
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs::{self, DirBuilder, File};
 use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 
 use iglu_domain::attention::{AttentionState, Summary};
 use iglu_domain::terminal::SessionName;
 use serde::{Deserialize, Serialize};
 
-use crate::paths;
+use crate::paths::Dirs;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
@@ -44,25 +45,29 @@ pub enum StatusError {
 }
 
 /// Applies `change` to the status file under an exclusive lock, replacing
-/// the file atomically so hostd never reads a partial write.
+/// the file atomically so hosts never read a partial write.
 ///
 /// # Errors
 ///
 /// When the lock or the file can't be read or written.
-pub fn modify(change: impl FnOnce(Statuses) -> Statuses) -> Result<(), StatusError> {
+pub fn modify(dirs: &Dirs, change: impl FnOnce(Statuses) -> Statuses) -> Result<(), StatusError> {
+    let file = dirs.status_file();
+    if let Some(dir) = file.parent() {
+        DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    }
     let lock = File::options()
         .create(true)
         .truncate(false)
         .write(true)
-        .open(paths::STATUS_LOCK)?;
+        .open(dirs.status_lock())?;
     lock.lock()?;
-    let current: Statuses = match fs::read(paths::STATUS_FILE) {
+    let current: Statuses = match fs::read(&file) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Statuses::new(),
         Err(error) => return Err(error.into()),
     };
     let next = change(current);
-    write_atomic(Path::new(paths::STATUS_FILE), &serde_json::to_vec(&next)?)?;
+    write_atomic(&file, &serde_json::to_vec(&next)?)?;
     lock.unlock()?;
     Ok(())
 }

@@ -49,6 +49,17 @@ struct Claims {
 }
 
 impl Verifier {
+    /// # Errors
+    ///
+    /// When the HTTP client for fetching the identity provider's keys can't be built.
+    pub fn from_config(auth: crate::config::Auth) -> Result<Arc<Self>, reqwest::Error> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        Ok(Self::new(auth.issuer, auth.audience, auth.subjects, http))
+    }
+
+    #[must_use]
     pub fn new(
         issuer: Issuer,
         audience: String,
@@ -125,6 +136,9 @@ impl Verifier {
         find(&keys.set).ok_or_else(|| AuthError::Invalid("unknown signing key".into()))
     }
 
+    /// # Errors
+    ///
+    /// When the header holds no valid token from an allowed service.
     pub async fn verify(&self, header: Option<&str>) -> Result<(), AuthError> {
         let token = header
             .and_then(|h| h.strip_prefix("Bearer "))

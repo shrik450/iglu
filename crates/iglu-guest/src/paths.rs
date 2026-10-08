@@ -1,22 +1,107 @@
-//! Paths shared with hostd and the platform NixOS module.
+//! Where the guest tools keep their state. Everything hangs off the user's
+//! home and runtime directories, so a runtime relocates a workspace by
+//! setting `HOME` and `XDG_RUNTIME_DIR`.
 
-/// The user-owned tmpfs directory secrets are delivered into.
-pub const SECRETS_DIR: &str = "/run/iglu/secrets";
-/// Where hostd drops a bundle for `install-secrets`. Its directory is root's,
-/// so the user can't plant a symlink there for hostd's root write to follow.
-pub const SECRETS_INCOMING: &str = "/run/iglu/incoming/secrets.json";
-pub const SECRETS_FILES: &str = "/run/iglu/secrets/files";
-pub const SECRETS_ENV: &str = "/run/iglu/secrets/env.json";
-pub const GIT_CREDENTIALS: &str = "/run/iglu/secrets/git-credentials.json";
-/// Written last by `install-secrets`; hostd reads it to know what the guest holds.
-pub const SECRETS_GENERATION: &str = "/run/iglu/secrets/generation";
+use std::path::{Path, PathBuf};
 
-/// The user-owned directory attention status lives in.
-pub const STATUS_DIR: &str = "/run/iglu/status";
-pub const STATUS_FILE: &str = "/run/iglu/status/sessions.json";
-pub const STATUS_LOCK: &str = "/run/iglu/status/.lock";
+use iglu_domain::guest;
 
-/// Under the user's home: what iglu recorded about this workspace.
-pub const STATE_DIR: &str = ".local/state/iglu";
-pub const WORKSPACE_FILE: &str = ".local/state/iglu/workspace.json";
-pub const SECRET_LINKS_FILE: &str = ".local/state/iglu/secret-links.json";
+#[derive(Debug, thiserror::Error)]
+pub enum DirsError {
+    #[error("{0} isn't set")]
+    Unset(&'static str),
+    #[error("{0} isn't an absolute path")]
+    Relative(&'static str),
+}
+
+/// The user's home and runtime directories, from the environment.
+#[derive(Clone, Debug)]
+pub struct Dirs {
+    home: PathBuf,
+    runtime: PathBuf,
+}
+
+fn absolute(name: &'static str) -> Result<PathBuf, DirsError> {
+    let path = PathBuf::from(std::env::var_os(name).ok_or(DirsError::Unset(name))?);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(DirsError::Relative(name))
+    }
+}
+
+impl Dirs {
+    /// # Errors
+    ///
+    /// When `HOME` or `XDG_RUNTIME_DIR` is unset or relative.
+    pub fn from_env() -> Result<Self, DirsError> {
+        Ok(Self {
+            home: absolute("HOME")?,
+            runtime: absolute("XDG_RUNTIME_DIR")?,
+        })
+    }
+
+    #[must_use]
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    #[must_use]
+    pub fn runtime(&self) -> &Path {
+        &self.runtime
+    }
+
+    /// The directory delivered secrets live in, on the per-boot runtime
+    /// directory.
+    #[must_use]
+    pub fn secrets(&self) -> PathBuf {
+        self.runtime.join("iglu/secrets")
+    }
+
+    #[must_use]
+    pub fn secrets_files(&self) -> PathBuf {
+        self.secrets().join("files")
+    }
+
+    #[must_use]
+    pub fn secrets_env(&self) -> PathBuf {
+        self.secrets().join("env.json")
+    }
+
+    #[must_use]
+    pub fn git_credentials(&self) -> PathBuf {
+        self.secrets().join("git-credentials.json")
+    }
+
+    /// Written last by `install-secrets`; hosts read it to know what the guest holds.
+    #[must_use]
+    pub fn secrets_generation(&self) -> PathBuf {
+        self.runtime.join(guest::SECRETS_GENERATION)
+    }
+
+    #[must_use]
+    pub fn status_file(&self) -> PathBuf {
+        self.runtime.join(guest::STATUS)
+    }
+
+    #[must_use]
+    pub fn status_lock(&self) -> PathBuf {
+        self.status_file().with_file_name(".lock")
+    }
+
+    /// Under the home directory: what iglu recorded about this workspace.
+    #[must_use]
+    pub fn state(&self) -> PathBuf {
+        self.home.join(".local/state/iglu")
+    }
+
+    #[must_use]
+    pub fn workspace_file(&self) -> PathBuf {
+        self.state().join("workspace.json")
+    }
+
+    #[must_use]
+    pub fn secret_links_file(&self) -> PathBuf {
+        self.state().join("secret-links.json")
+    }
+}

@@ -21,17 +21,26 @@ let
   uid = toString account.uid;
   guest = cfg.package;
 
-  manifest = pkgs.writeText "iglu.json" (
-    builtins.toJSON {
-      arch = pkgs.stdenv.hostPlatform.parsed.cpu.name;
-      user = {
-        name = cfg.user;
-        uid = account.uid;
-        gid = group.gid;
-        home = account.home;
-      };
-    }
-  );
+  # The interface comes from the installed guest tools themselves, so the
+  # image can't claim one its tools don't speak.
+  manifest =
+    pkgs.runCommand "iglu.json"
+      {
+        nativeBuildInputs = [ pkgs.jq ];
+        base = builtins.toJSON {
+          arch = pkgs.stdenv.hostPlatform.parsed.cpu.name;
+          user = {
+            name = cfg.user;
+            uid = account.uid;
+            gid = group.gid;
+            home = account.home;
+          };
+        };
+      }
+      ''
+        jq --argjson interface "$(${guest}/bin/iglu-guest interface)" \
+          '. + { guest_interface: $interface }' <<<"$base" > $out
+      '';
 
   claudeHook = {
     type = "command";
@@ -112,31 +121,20 @@ in
         pkgs.git
       ];
 
-      # Delivered secrets and attention status live on tmpfs, owned by the
-      # workspace user. hostd reads both through the container's root.
-      systemd.tmpfiles.rules = [
-        "d /run/iglu 0755 root root -"
-        # hostd writes bundles here as root: the user may read them, not replace them.
-        "d /run/iglu/incoming 0711 root root -"
-        "d /run/iglu/secrets 0700 ${cfg.user} ${account.group} -"
-        "d /run/iglu/status 0700 ${cfg.user} ${account.group} -"
-      ];
-
       # hostd treats the workspace as booted once this marker exists: the
-      # system is up and the user's manager is running.
+      # system is up and the user's manager is running, so the user's
+      # runtime directory, where the guest tools keep delivered secrets and
+      # attention status, exists too. The marker goes with the unit.
       systemd.services.iglu-ready = {
         description = "Tell iglu the workspace has booted";
         wantedBy = [ "multi-user.target" ];
         wants = [ "user@${uid}.service" ];
-        after = [
-          "user@${uid}.service"
-          "systemd-tmpfiles-setup.service"
-        ];
+        after = [ "user@${uid}.service" ];
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
+          RuntimeDirectory = "iglu";
           ExecStart = "${pkgs.coreutils}/bin/touch /run/iglu/ready";
-          ExecStop = "${pkgs.coreutils}/bin/rm -f /run/iglu/ready";
         };
       };
 

@@ -7,7 +7,7 @@ use std::process::Command;
 use iglu_domain::repo::{BranchName, RepoUrl};
 use serde::{Deserialize, Serialize};
 
-use crate::paths;
+use crate::paths::Dirs;
 use crate::status::write_atomic;
 
 /// What the guest records about its workspace, for tools that need the checkout.
@@ -63,8 +63,6 @@ pub enum ProvisionError {
     Git(String, String),
     #[error("{0}")]
     Io(#[from] std::io::Error),
-    #[error("HOME isn't set")]
-    NoHome,
 }
 
 fn git(dir: Option<&Path>, args: &[String]) -> Result<std::process::Output, ProvisionError> {
@@ -102,8 +100,8 @@ fn git_ok(dir: Option<&Path>, args: &[String]) -> Result<(), ProvisionError> {
 /// # Errors
 ///
 /// When Git fails or the checkout can't be recorded.
-pub fn run(spec: &Spec) -> Result<(), ProvisionError> {
-    let home = PathBuf::from(std::env::var_os("HOME").ok_or(ProvisionError::NoHome)?);
+pub fn run(dirs: &Dirs, spec: &Spec) -> Result<(), ProvisionError> {
+    let home = dirs.home();
     let dir = home.join(spec.repo.checkout_dir().as_str());
     if dir.join(".git").exists() {
         git_ok(
@@ -168,11 +166,11 @@ pub fn run(spec: &Spec) -> Result<(), ProvisionError> {
         git_ok(Some(&dir), &switch_args(&spec.branch, &plan))?;
     }
 
-    let state = home.join(paths::STATE_DIR);
+    let state = dirs.state();
     fs::create_dir_all(&state)?;
     let record =
         serde_json::to_vec(&WorkspaceRecord { checkout: dir }).map_err(std::io::Error::other)?;
-    write_atomic(&home.join(paths::WORKSPACE_FILE), &record)?;
+    write_atomic(&dirs.workspace_file(), &record)?;
     Ok(())
 }
 

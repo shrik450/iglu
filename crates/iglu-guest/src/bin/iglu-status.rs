@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use iglu_domain::attention::{AttentionState, Summary};
 use iglu_domain::terminal::SessionName;
 use iglu_guest::claude;
+use iglu_guest::paths::Dirs;
 use iglu_guest::status::{self, Entry};
 
 const USAGE: &str = "usage:
@@ -25,13 +26,17 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-fn record(session: SessionName, change: Option<(AttentionState, Summary)>) -> ExitCode {
+fn record(
+    dirs: &Dirs,
+    session: SessionName,
+    change: Option<(AttentionState, Summary)>,
+) -> ExitCode {
     let entry = change.map(|(state, summary)| Entry {
         state,
         summary,
         at: now_millis(),
     });
-    match status::modify(|current| status::update(current, session, entry)) {
+    match status::modify(dirs, |current| status::update(current, session, entry)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("iglu-status: {error}");
@@ -42,10 +47,12 @@ fn record(session: SessionName, change: Option<(AttentionState, Summary)>) -> Ex
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let Some(session) = std::env::var("ZMX_SESSION")
-        .ok()
-        .and_then(|s| s.parse::<SessionName>().ok())
-    else {
+    let (Some(session), Ok(dirs)) = (
+        std::env::var("ZMX_SESSION")
+            .ok()
+            .and_then(|s| s.parse::<SessionName>().ok()),
+        Dirs::from_env(),
+    ) else {
         return ExitCode::SUCCESS;
     };
     match args.first().map(String::as_str) {
@@ -55,14 +62,14 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             };
             let summary = Summary::sanitize(&args[2..].join(" "));
-            record(session, Some((state, summary)))
+            record(&dirs, session, Some((state, summary)))
         }
-        Some("clear") => record(session, None),
+        Some("clear") => record(&dirs, session, None),
         Some("claude-hook") => {
             let mut input = String::new();
             let _ = std::io::stdin().read_to_string(&mut input);
             match claude::parse(&input).as_ref().and_then(claude::attention) {
-                Some(change) => record(session, Some(change)),
+                Some(change) => record(&dirs, session, Some(change)),
                 None => ExitCode::SUCCESS,
             }
         }

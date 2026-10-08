@@ -1,10 +1,13 @@
 [package]
 name = "iglu-hostd"
-description = "iglu's execution-host daemon: the only process that talks to Incus"
+description = "iglu's execution-host daemon and the runtimes it drives"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "iglu-hostd"
@@ -40,3 +43,12 @@ rustix = { version = "1.1.5", features = ["fs"] }
 
 [lints]
 workspace = true
+
+[features]
+# The runtime conformance suite, and a binary that runs it against Incus.
+conformance = ["uuid/v4"]
+
+[[bin]]
+name = "iglu-hostd-conformance"
+path = "src/bin/conformance.rs"
+required-features = ["conformance"]

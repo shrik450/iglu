@@ -319,6 +319,7 @@ fn host_error(error: crate::hosts::HostError) -> ApiError {
         }
         iglu_proto::ErrorCode::Conflict
         | iglu_proto::ErrorCode::ImageMissing
+        | iglu_proto::ErrorCode::ImageIncompatible
         | iglu_proto::ErrorCode::GuestFailed
         | iglu_proto::ErrorCode::Timeout
         | iglu_proto::ErrorCode::Runtime => ApiError::Unavailable(error.message),

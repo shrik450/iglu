@@ -9,16 +9,17 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use hyper::Method;
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
+use iglu_domain::guest::{self, INTERFACE, Incompatible, Interface};
 use iglu_domain::secret::FetchTokens;
-use iglu_proto::BuildOutcome;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use crate::exec::tail;
-use crate::server::App;
+use super::client::Incus;
+use crate::config;
 
 /// `iglu.json` in the image output, written by the workspace module.
 #[derive(Deserialize)]
@@ -26,45 +27,44 @@ use crate::server::App;
 struct ImageManifest {
     arch: Arch,
     user: GuestUser,
+    /// The guest-tools interface the image's tools speak. Images from
+    /// before it was recorded don't say.
+    #[serde(default)]
+    guest_interface: Option<Interface>,
 }
 
 #[derive(Debug, thiserror::Error)]
-enum BuildError {
+pub enum BuildError {
     #[error("{0}")]
     Failed(String),
     #[error("the build produced an unusable image: {0}")]
     BadOutput(String),
+    #[error(transparent)]
+    Incompatible(#[from] Incompatible),
     #[error("importing the image failed: {0}")]
     Import(String),
 }
 
-pub async fn build(app: &App, source: &EnvSource, tokens: &FetchTokens) -> BuildOutcome {
-    match run(app, source, tokens).await {
-        Ok(image) => BuildOutcome::Built(image),
-        Err(error) => {
-            tracing::warn!(%source, %error, "environment build failed");
-            BuildOutcome::Failed {
-                log_tail: tail(&error.to_string(), 8000),
-            }
-        }
-    }
-}
-
-async fn run(
-    app: &App,
+pub async fn build(
+    incus: &Incus,
+    settings: &config::Incus,
+    build: &config::Build,
     source: &EnvSource,
     tokens: &FetchTokens,
+    timeout: Duration,
 ) -> Result<BuiltImage, BuildError> {
-    let store_path = nix_build(app, source, tokens).await?;
+    let store_path = nix_build(build, source, tokens).await?;
     let manifest_bytes = tokio::fs::read(store_path.join("iglu.json"))
         .await
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
     let manifest: ImageManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
+    guest::compatible(manifest.guest_interface)?;
     let metadata = store_path.join("metadata.tar.xz");
     let rootfs = store_path.join("rootfs.squashfs");
     let fingerprint = fingerprint(&metadata, &rootfs).await?;
-    import(app, &fingerprint, &metadata, &rootfs).await?;
+    import(incus, settings, &fingerprint, &metadata, &rootfs).await?;
+    record_interface(incus, &fingerprint, timeout).await?;
     Ok(BuiltImage {
         fingerprint,
         arch: manifest.arch,
@@ -74,11 +74,10 @@ async fn run(
 }
 
 async fn nix_build(
-    app: &App,
+    build: &config::Build,
     source: &EnvSource,
     tokens: &FetchTokens,
 ) -> Result<PathBuf, BuildError> {
-    let build = &app.config.build;
     let mut command = Command::new(&build.nix);
     command
         .args([
@@ -158,13 +157,13 @@ async fn fingerprint(metadata: &Path, rootfs: &Path) -> Result<ImageFingerprint,
 }
 
 async fn import(
-    app: &App,
+    incus: &Incus,
+    settings: &config::Incus,
     fingerprint: &ImageFingerprint,
     metadata: &Path,
     rootfs: &Path,
 ) -> Result<(), BuildError> {
-    match app
-        .incus
+    match incus
         .get::<serde_json::Value>(&format!("/1.0/images/{fingerprint}"))
         .await
     {
@@ -172,9 +171,9 @@ async fn import(
         Err(error) if error.is_not_found() => {}
         Err(error) => return Err(BuildError::Import(error.to_string())),
     }
-    let mut command = Command::new(&app.config.incus.binary);
+    let mut command = Command::new(&settings.binary);
     command.args(["image", "import"]).arg(metadata).arg(rootfs);
-    if let Some(project) = &app.config.incus.project {
+    if let Some(project) = &settings.project {
         command.args(["--project", project]);
     }
     let output = command
@@ -188,7 +187,7 @@ async fn import(
             String::from_utf8_lossy(&output.stderr).into_owned(),
         ));
     }
-    app.incus
+    incus
         .get::<serde_json::Value>(&format!("/1.0/images/{fingerprint}"))
         .await
         .map(|_| ())
@@ -197,4 +196,44 @@ async fn import(
                 "imported, but not under the expected fingerprint: {e}"
             ))
         })
+}
+
+/// The image property recording which guest-tools interface an image's
+/// tools speak, so creating from an image can check it.
+pub const INTERFACE_PROPERTY: &str = "iglu.guest-interface";
+
+/// The interface an imported image records, if it records one.
+pub fn recorded_interface(image: &serde_json::Value) -> Option<Interface> {
+    image["properties"][INTERFACE_PROPERTY]
+        .as_str()?
+        .parse()
+        .ok()
+        .map(Interface::new)
+}
+
+/// Records on the image that its tools speak this host's interface, which
+/// the build just checked.
+async fn record_interface(
+    incus: &Incus,
+    fingerprint: &ImageFingerprint,
+    timeout: Duration,
+) -> Result<(), BuildError> {
+    let path = format!("/1.0/images/{fingerprint}");
+    let mut image: serde_json::Value = incus
+        .get(&path)
+        .await
+        .map_err(|e| BuildError::Import(e.to_string()))?;
+    image["properties"][INTERFACE_PROPERTY] = serde_json::json!(INTERFACE.to_string());
+    let put = serde_json::json!({
+        "auto_update": image["auto_update"],
+        "expires_at": image["expires_at"],
+        "profiles": image["profiles"],
+        "properties": image["properties"],
+        "public": image["public"],
+    });
+    incus
+        .run(Method::PUT, &path, Some(&put), timeout)
+        .await
+        .map(|_| ())
+        .map_err(|e| BuildError::Import(format!("recording the image's interface: {e}")))
 }

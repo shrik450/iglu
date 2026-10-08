@@ -1,5 +1,6 @@
 # The e2e test's driver script. e2e.nix defines the constants it uses
-# (PKI, SELF, GIT_ADDRESS, HOST_IP, CONTROL_IP, PYTHON) before it.
+# (PKI, SELF, GIT_ADDRESS, HOST_IP, CONTROL_IP, IMAGE, HOSTD_CONFIG, PYTHON)
+# before it.
 
 import json
 import re
@@ -130,6 +131,16 @@ try:
             f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"example\") | .latest.status == \"ready\"'",
             timeout=900,
         )
+
+    with subtest("the image records the guest tools' interface, and hostd checks it"):
+        manifest = json.loads(host.succeed(f"cat {IMAGE}/iglu.json"))
+        images = json.loads(host.succeed("incus query '/1.0/images?recursion=1'"))
+        recorded = {i["properties"].get("iglu.guest-interface") for i in images}
+        assert recorded == {str(manifest["guest_interface"])}, (manifest, recorded)
+
+    with subtest("Incus passes the runtime conformance suite and its isolation checks"):
+        # Its own workspaces, beside iglud's; iglud leaves instances it never made alone.
+        print(host.succeed(f"iglu-hostd-conformance --config {HOSTD_CONFIG} --source 'path:{SELF}#example' 2>&1"))
 
     with subtest("a private environment can't be fetched without its owner's Git credential"):
         iglu(f"env add private 'github:alice/env?host={GIT_ADDRESS}#private'")
@@ -271,6 +282,16 @@ try:
         assert https["phase"] == "running", https
         https_instance = "iglu-" + https["id"].replace("-", "")
         assert "init" in guest_of(https_instance)("git -C ~/app log --oneline")
+
+    with subtest("workspaces can't reach each other"):
+        neighbour = guest_of(https_instance)
+        neighbour("setsid nc -lk 0.0.0.0 4444 >/dev/null 2>&1 < /dev/null &")
+        state = json.loads(host.succeed(f"incus query /1.0/instances/{https_instance}/state"))
+        address = next(a["address"] for a in state["network"]["eth0"]["addresses"] if a["family"] == "inet")
+        # The listener answers on that address from where it should, so the
+        # refusal below is the policy's, not a listener that isn't there.
+        host.wait_until_succeeds(f"nc -z -w 5 {address} 4444", timeout=30)
+        guest(f"! nc -z -w 5 {address} 4444")
 
     with subtest("freezing reclaims memory and thawing resumes"):
 

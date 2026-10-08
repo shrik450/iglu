@@ -2,13 +2,13 @@
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use iglu_domain::terminal::SessionName;
 use serde::Serialize;
 
-use crate::paths;
+use crate::paths::Dirs;
 use crate::provision::WorkspaceRecord;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -37,30 +37,30 @@ pub fn parse_list(output: &str) -> Vec<Info> {
 /// The environment for a session: the delivered secrets first, then the
 /// platform's own variables, which secrets can't override.
 #[must_use]
-pub fn session_env(
-    secrets: BTreeMap<String, String>,
-    runtime_dir: &str,
-) -> BTreeMap<String, String> {
+pub fn session_env(secrets: BTreeMap<String, String>, zmx_dir: &Path) -> BTreeMap<String, String> {
     let mut env = secrets;
-    env.insert("ZMX_DIR".into(), format!("{runtime_dir}/zmx"));
+    env.insert("ZMX_DIR".into(), zmx_dir.display().to_string());
     env.insert("ZMX_NO_DETACH_KEY".into(), "1".into());
     env.insert("TERM".into(), "xterm-256color".into());
     env.insert("COLORTERM".into(), "truecolor".into());
     env
 }
 
-fn zmx() -> Command {
-    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+fn zmx_dir(dirs: &Dirs) -> PathBuf {
+    dirs.runtime().join("zmx")
+}
+
+fn zmx(dirs: &Dirs) -> Command {
     let mut command = Command::new("zmx");
-    command.env("ZMX_DIR", format!("{runtime}/zmx"));
+    command.env("ZMX_DIR", zmx_dir(dirs));
     command
 }
 
 /// # Errors
 ///
 /// When zmx can't run or reports a failure.
-pub fn list() -> std::io::Result<Vec<Info>> {
-    let output = zmx().arg("list").output()?;
+pub fn list(dirs: &Dirs) -> std::io::Result<Vec<Info>> {
+    let output = zmx(dirs).arg("list").output()?;
     if !output.status.success() {
         return Err(std::io::Error::other(
             String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -72,8 +72,8 @@ pub fn list() -> std::io::Result<Vec<Info>> {
 /// # Errors
 ///
 /// When zmx can't run or reports a failure.
-pub fn close(name: &SessionName) -> std::io::Result<()> {
-    let status = zmx().arg("kill").arg(name.as_str()).status()?;
+pub fn close(dirs: &Dirs, name: &SessionName) -> std::io::Result<()> {
+    let status = zmx(dirs).arg("kill").arg(name.as_str()).status()?;
     if status.success() {
         Ok(())
     } else {
@@ -83,19 +83,17 @@ pub fn close(name: &SessionName) -> std::io::Result<()> {
 
 /// Replaces this process with `zmx attach`, creating the session in the
 /// repository checkout on first attach.
-pub fn attach(name: &SessionName) -> std::io::Error {
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-    let secrets: BTreeMap<String, String> = std::fs::read(paths::SECRETS_ENV)
+pub fn attach(dirs: &Dirs, name: &SessionName) -> std::io::Error {
+    let secrets: BTreeMap<String, String> = std::fs::read(dirs.secrets_env())
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default();
-    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    let checkout = std::fs::read(home.join(paths::WORKSPACE_FILE))
+    let checkout = std::fs::read(dirs.workspace_file())
         .ok()
         .and_then(|bytes| serde_json::from_slice::<WorkspaceRecord>(&bytes).ok())
         .map(|record| record.checkout)
         .filter(|dir| dir.is_dir())
-        .unwrap_or(home);
+        .unwrap_or_else(|| dirs.home().to_owned());
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -103,7 +101,7 @@ pub fn attach(name: &SessionName) -> std::io::Error {
     Command::new("zmx")
         .arg("attach")
         .arg(name.as_str())
-        .envs(session_env(secrets, &runtime))
+        .envs(session_env(secrets, &zmx_dir(dirs)))
         .env("SHELL", shell)
         .current_dir(checkout)
         .exec()
@@ -157,7 +155,7 @@ mod tests {
             ("TERM".to_owned(), "dumb".to_owned()),
             ("API_KEY".to_owned(), "k".to_owned()),
         ]);
-        let env = session_env(secrets, "/run/user/1000");
+        let env = session_env(secrets, Path::new("/run/user/1000/zmx"));
         assert_eq!(env["TERM"], "xterm-256color");
         assert_eq!(env["API_KEY"], "k");
         assert_eq!(env["ZMX_DIR"], "/run/user/1000/zmx");

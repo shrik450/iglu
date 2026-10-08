@@ -47,6 +47,27 @@ in
     mainProgram = "iglu-hostd";
   };
 
+  # The runtime conformance suite and Incus's isolation checks, which the
+  # VM test runs on its execution host.
+  hostd-conformance = rustPlatform.buildRustPackage {
+    pname = "iglu-hostd-conformance";
+    inherit version;
+    inherit (workspace) src cargoLock;
+    cargoBuildFlags = [
+      "--package"
+      "iglu-hostd"
+      "--bin"
+      "iglu-hostd-conformance"
+    ];
+    buildFeatures = [ "conformance" ];
+    doCheck = false;
+    meta = {
+      description = "Checks an iglu execution host's runtime against hostd's contract";
+      license = lib.licenses.mit;
+      mainProgram = "iglu-hostd-conformance";
+    };
+  };
+
   iglu = crate {
     pname = "iglu";
     crateName = "iglu-cli";

@@ -10,6 +10,7 @@ pub mod attention;
 pub mod auth;
 pub mod capacity;
 pub mod env;
+pub mod guest;
 pub mod id;
 pub mod label;
 pub mod lifecycle;
