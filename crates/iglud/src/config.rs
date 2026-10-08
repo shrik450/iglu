@@ -81,7 +81,7 @@ impl OidcClient {
 #[serde(deny_unknown_fields)]
 pub struct Host {
     pub id: HostId,
-    pub url: Url,
+    pub url: HostUrl,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,5 +168,64 @@ impl Config {
 
     pub fn preview_origin(&self, label: &str) -> String {
         format!("https://{label}.{}", self.preview_domain)
+    }
+}
+
+/// Where a host serves hostd. iglud sends it service tokens and secrets, so
+/// it's HTTPS, or plain HTTP only to this machine's loopback, where a dev
+/// host listens.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct HostUrl(Url);
+
+impl HostUrl {
+    pub fn as_url(&self) -> &Url {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for HostUrl {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let url = Url::parse(&value).map_err(|e| format!("{value}: {e}"))?;
+        let loopback = match url.host() {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            Some(url::Host::Domain(_)) | None => false,
+        };
+        match url.scheme() {
+            "https" => Ok(Self(url)),
+            "http" if loopback => Ok(Self(url)),
+            _ => Err(format!(
+                "{value}: a host must be https://, or http:// to a loopback address such as 127.0.0.1"
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosts_are_https_or_plain_http_on_loopback_only() {
+        for good in [
+            "https://host-1.lan:7443",
+            "https://10.0.0.5:7443",
+            "http://127.0.0.1:7200",
+            "http://[::1]:7200",
+        ] {
+            assert!(HostUrl::try_from(good.to_owned()).is_ok(), "{good}");
+        }
+        for bad in [
+            "http://10.0.0.5:7200",
+            "http://host-1.lan:7200",
+            "http://localhost:7200",
+            "ftp://127.0.0.1",
+            "not a url",
+        ] {
+            assert!(HostUrl::try_from(bad.to_owned()).is_err(), "{bad}");
+        }
     }
 }
