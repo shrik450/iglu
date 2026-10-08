@@ -1,0 +1,34 @@
+[package]
+name = "iglu-devhost"
+description = "A development execution host that runs iglu workspaces as local processes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+iglu-domain.workspace = true
+iglu-proto.workspace = true
+iglu-hostd = { path = "../iglu-hostd" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+bytes = "1.12.1"
+hex = "0.4.3"
+nix = { version = "0.31.3", default-features = false, features = ["user"] }
+pty-process = { version = "0.5.3", features = ["async"] }
+rustix = { version = "1.1.5", features = ["fs", "process"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+sha2 = "0.11.0"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+
+[dev-dependencies]
+iglu-hostd = { path = "../iglu-hostd", features = ["conformance"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[lints]
+workspace = true

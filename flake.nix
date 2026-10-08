@@ -68,6 +68,9 @@
             nixfmt
             actionlint
             shellcheck
+            zmx
+            git
+            netcat
             ;
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
@@ -89,6 +92,10 @@
             nixfmt
             actionlint
             shellcheck
+            # The local runtime runs workspaces with these.
+            zmx
+            git
+            netcat
             # The dev stack's clients. The Docker daemon is yours to run.
             docker-client
             openssl

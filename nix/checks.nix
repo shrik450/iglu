@@ -10,6 +10,9 @@
   nixfmt,
   actionlint,
   shellcheck,
+  zmx,
+  git,
+  netcat,
 }:
 
 let
@@ -42,7 +45,18 @@ in
     clippy
   ] "cargo clippy --workspace --all-targets --offline -- -D warnings";
 
-  cargo-test = cargoCheck "cargo-test" [ ] "cargo test --workspace --offline";
+  # The local runtime's conformance suite runs the real guest tools and zmx.
+  cargo-test =
+    cargoCheck "cargo-test"
+      [
+        zmx
+        git
+        netcat
+      ]
+      ''
+        cargo build -p iglu-guest --offline
+        IGLU_GUEST_TOOLS=$PWD/target/debug cargo test --workspace --offline
+      '';
 
   # The console's API types must match what the Rust types generate.
   api-types = cargoCheck "api-types" [ ] ''

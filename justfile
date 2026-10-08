@@ -18,9 +18,10 @@ lint:
     git ls-files -z '*.nix' | xargs -0 nixfmt --check
     actionlint
 
-# Run the unit tests.
+# Run the unit tests, and the local runtime's conformance suite.
 test:
-    cargo test --workspace
+    cargo build -p iglu-guest
+    IGLU_GUEST_TOOLS={{ justfile_directory() }}/target/debug cargo test --workspace
 
 # Type-check and bundle the console.
 console:
@@ -47,6 +48,10 @@ api-types:
 dev_git_dir := `git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true`
 dev_shared := (if dev_git_dir == "" { justfile_directory() } else { parent_directory(dev_git_dir) }) / ".dev/shared"
 dev_state := justfile_directory() / ".dev/state"
+# Local workspaces' runtime directories, which hold terminal sockets. Their
+# paths must fit a Unix socket's, which the worktree's path is too long for,
+# and /tmp's cleaner would empty them under idle workspaces.
+dev_runtime := env_var("HOME") / ".cache/iglu" / replace_regex(sha256(justfile_directory()), "^(.{8}).*", "$1")
 dev_ca_name := "iglu dev CA (localhost only)"
 dev_keychain := "~/Library/Keychains/login.keychain-db"
 dev_compose := "IGLU_DEV_SHARED='" + dev_shared + "' docker compose -f dev/compose.yaml"
@@ -108,7 +113,7 @@ dev-services-down:
 dev-logs *service:
     {{ dev_compose }} logs -f {{ service }}
 
-# Run iglud at https://iglu.localhost, rebuilding the console on save.
+# Run iglud and a local execution host at https://iglu.localhost, rebuilding the console on save.
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -118,8 +123,6 @@ dev:
     if [ ! -f "$state/secret-key" ]; then
         (umask 077 && head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$state/secret-key")
     fi
-    # Port 7200 is where the local host will listen; until it exists, iglud
-    # logs that the host is unreachable.
     cat > "$state/iglud.json" <<JSON
     {
       "listen": "127.0.0.1:7100",
@@ -141,18 +144,43 @@ dev:
       "hosts": [ { "id": "local", "url": "http://127.0.0.1:7200" } ]
     }
     JSON
+    # The local runtime doesn't meter memory; it reports this much as free.
+    cat > "$state/devhost.json" <<JSON
+    {
+      "host_id": "local",
+      "listen": "127.0.0.1:7200",
+      "auth": { "issuer": "https://auth.localhost", "audience": "iglu-hosts", "subjects": ["worker"] },
+      "runtime": {
+        "state_dir": "$state/devhost",
+        "runtime_dir": "{{ dev_runtime }}",
+        "guest_tools": "{{ justfile_directory() }}/target/debug",
+        "memory_available": 68719476736
+      }
+    }
+    JSON
+    cargo build -p iglud -p iglu-devhost -p iglu-guest
     # npm records the lock file it installed from; reinstall when the lock file has changed since.
     [ console/node_modules/.package-lock.json -nt console/package-lock.json ] || (cd console && npm ci)
     (cd console && exec node build.mjs --watch) &
-    trap 'kill $! 2>/dev/null' EXIT
+    watcher=$!
+    target/debug/iglu-devhost --config "$state/devhost.json" &
+    devhost=$!
+    trap 'kill $watcher $devhost 2>/dev/null' EXIT
     echo "iglu: https://iglu.localhost (alice or bob, password \"password\")"
-    cargo run -p iglud -- --config "$state/iglud.json"
+    target/debug/iglud --config "$state/iglud.json"
 
 # Run the CLI against the dev stack, signed in separately from your real iglu: just dev-cli login https://iglu.localhost
 [positional-arguments]
 dev-cli *args:
     XDG_CONFIG_HOME='{{ dev_state }}/config' cargo run -q -p iglu-cli -- "$@"
 
-# Delete the dev stack's database and settings, so the next run starts fresh.
+# Delete the dev stack's database, settings and workspaces, ending their terminal sessions, so the next run starts fresh.
 dev-reset:
-    rm -rf '{{ dev_state }}'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for sessions in '{{ dev_runtime }}'/*/zmx; do
+        [ -d "$sessions" ] || continue
+        ZMX_DIR="$sessions" zmx list 2>/dev/null | cut -f1 | sed 's/^session_name=//' |
+            while read -r session; do ZMX_DIR="$sessions" zmx kill "$session" || true; done
+    done
+    rm -rf '{{ dev_state }}' '{{ dev_runtime }}'

@@ -23,7 +23,7 @@ You need:
 | -------------- | ---------------------------------------------------------------- |
 | `just fmt`     | Formats Rust and Nix.                                            |
 | `just lint`    | rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint. |
-| `just test`    | The unit tests. Fast, and they run anywhere.                     |
+| `just test`    | The unit tests, and the local runtime's conformance suite. Fast. |
 | `just console` | Type-checks and bundles the console.                             |
 | `just e2e`     | The VM test. Needs x86_64-linux with KVM, locally or as a remote builder. |
 | `just check`   | Every flake check, including the VM test where it can run.       |
@@ -34,11 +34,14 @@ console, or the NixOS modules.
 
 ## The local dev stack
 
-The dev stack is for working on the console and iglud's API without a real
-execution host. It runs:
+The dev stack runs all of iglu on your machine, so you can work on the
+console and iglud's API, and use workspaces, without a real execution host.
+It runs:
 
 - **iglud**, natively, built from your checkout. It serves the console from
   `console/dist`, which rebuilds whenever you save.
+- **iglu-devhost**, natively: hostd with workspaces as local processes
+  instead of Incus containers. See [The local host](#the-local-host).
 - **Authelia**, in Docker, as the identity provider. Its configuration follows
   the VM test's.
 - **Caddy**, in Docker, in front of everything. It terminates TLS the way it
@@ -48,18 +51,47 @@ execution host. It runs:
 browser ──► Caddy (443, TLS from the dev CA)
               ├─ auth.localhost                      ──► Authelia
               └─ iglu.localhost, *.preview.localhost ──► iglud (port 7100)
+                                                           └─► iglu-devhost (port 7200)
 ```
 
 Every hostname is under `localhost`, which browsers and macOS resolve to your
 own machine, so there's no DNS to set up.
 
-### What it doesn't have yet
+### The local host
 
-There's no execution host. iglud points at `http://127.0.0.1:7200`, where a
-local host will listen, and until then it logs `host unreachable` every few
-seconds. Signing in, the console and the API calls that only touch
-iglud's database work, such as managing secrets. Anything that needs a host,
-such as starting a workspace or building an environment, waits for it.
+iglu-devhost runs hostd's own code, with its rules, commands and protocol,
+over a local runtime instead of Incus. A workspace is a directory, and its
+processes run as you. Each workspace gets its own `HOME`, with the repository
+cloned into it, and its own `XDG_RUNTIME_DIR`, which holds its delivered
+secrets, attention status and terminal sessions. Terminals are real zmx
+sessions running your login shell, so they survive restarts of `just dev`.
+
+Workspaces use your machine's own tools. Your Nix profile is linked into
+each workspace's home, so a login shell finds your tools there, and the
+guest tools are on its `PATH`. Claude Code's hooks are set up in each home
+and report attention to the console as they do in a real workspace.
+
+Environments aren't built. Your Mac can't build a NixOS image for Linux, and
+local workspaces don't use one, so adding or rebuilding an environment just
+records it, and it's ready at once. Any flake reference works.
+
+What's different from a real host:
+
+- **No isolation.** Workspaces can read your files, reach your network and
+  share your loopback ports, so two workspaces can't both serve port 3000.
+  The devhost serves only on loopback, and hostd refuses to serve a runtime
+  that doesn't isolate anywhere else.
+- **No memory metering.** The host always reports 64 GiB available. Lower
+  `memory_available` in `.dev/state/devhost.json` and restart to see
+  workspaces wait for room.
+- **Freezing** pauses a workspace's processes with `SIGSTOP`. A process that
+  leaves the workspace's process tree and clears its environment escapes it.
+- **Restarting your Mac** stops every workspace, like a host restart. A
+  workspace whose runtime directory is deleted while it runs reads as failed
+  until you start it again, which ends what was left of it first.
+
+The runtime conformance suite checks that the local runtime behaves like
+Incus wherever hostd relies on it; `just test` runs it.
 
 ### Setting it up
 
@@ -83,25 +115,36 @@ Then open `https://iglu.localhost` and sign in as `alice` or `bob`, both with
 the password `password`. Two people let you try the console as different
 owners.
 
-`just dev` builds iglud, starts the console's watcher and runs iglud in the
-foreground. Stop it with Ctrl-C. Edit anything under `console/src` or
-`console/public` and refresh the page; the bundle is unminified and has a source
-map. A change to iglud needs a restart.
+`just dev` builds iglud, the devhost and the guest tools, starts the
+console's watcher and the devhost, and runs iglud in the foreground. Stop
+them all with Ctrl-C. Edit anything under `console/src` or `console/public`
+and refresh the page; the bundle is unminified and has a source map. A change
+to iglud or hostd needs a restart.
 
 ### Where things are
 
-| What              | Value                                  |
-| ----------------- | -------------------------------------- |
-| Console           | `https://iglu.localhost`               |
-| Previews          | `https://<route>.preview.localhost`    |
-| iglud             | `127.0.0.1:7100`                       |
-| Local host, later | `127.0.0.1:7200`                       |
-| State             | `.dev/state/` in the current worktree  |
+| What        | Value                                                      |
+| ----------- | ---------------------------------------------------------- |
+| Console     | `https://iglu.localhost`                                   |
+| Previews    | `https://<route>.preview.localhost`                        |
+| iglud       | `127.0.0.1:7100`                                           |
+| Local host  | `127.0.0.1:7200`                                           |
+| State       | `.dev/state/` in the current worktree                      |
+| Workspaces  | `.dev/state/devhost/instances/<instance>/home`             |
+| Sessions    | `~/.cache/iglu/<worktree hash>/<slot>/`                    |
 
-iglud's state is its database, its secret-sealing key and the dev CLI's login.
-It lives in the worktree you run `just dev` from, because each branch can have
-its own schema. Delete it with `just dev-reset`. Only one worktree can run the
-stack at a time, since they all use the same port and hostnames.
+iglud's state is its database, its secret-sealing key and the dev CLI's login,
+and the devhost's is your workspaces. It lives in the worktree you run
+`just dev` from, because each branch can have its own schema. Delete it, and
+end every workspace's sessions, with `just dev-reset`. Only one worktree can
+run the stack at a time, since they all use the same port and hostnames.
+
+Each workspace's runtime directory, which holds its terminal sessions and
+delivered secrets, is under `~/.cache/iglu/`, named by a short number
+rather than the workspace. Terminal sessions are Unix sockets, whose paths
+are limited to about 100 bytes, which a path inside the worktree is too long
+for. The devhost refuses to start if your home directory is too long for the
+longest session name.
 
 Every worktree shares one Caddy, one Authelia and one dev CA. The CA and
 Authelia's key and data live in `.dev/shared/` of the main checkout, so every
