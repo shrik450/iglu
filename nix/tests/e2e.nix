@@ -340,7 +340,6 @@ in
         ];
         environment.systemPackages = [
           packages.hostd-conformance
-          pkgs.netcat
         ];
 
         # Test VMs force swapDevices to [ ]; freezing needs swap.

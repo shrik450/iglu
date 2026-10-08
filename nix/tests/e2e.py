@@ -288,9 +288,11 @@ try:
         neighbour("setsid nc -lk 0.0.0.0 4444 >/dev/null 2>&1 < /dev/null &")
         state = json.loads(host.succeed(f"incus query /1.0/instances/{https_instance}/state"))
         address = next(a["address"] for a in state["network"]["eth0"]["addresses"] if a["family"] == "inet")
-        # The listener answers on that address from where it should, so the
-        # refusal below is the policy's, not a listener that isn't there.
-        host.wait_until_succeeds(f"nc -z -w 5 {address} 4444", timeout=30)
+        # The listener answers on that address, so the refusal below is the
+        # policy's, not a listener that isn't there. Only the neighbour
+        # itself can show it: the egress policy keeps guests from answering
+        # the host's private bridge address too.
+        neighbour(f"for i in $(seq 30); do nc -z -w 5 {address} 4444 && exit 0; sleep 1; done; exit 1")
         guest(f"! nc -z -w 5 {address} 4444")
 
     with subtest("freezing reclaims memory and thawing resumes"):
