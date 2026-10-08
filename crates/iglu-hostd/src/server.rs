@@ -237,7 +237,10 @@ async fn tunnel<R: Runtime>(
     }
     let mut guest = match app.host.connect(workspace, port).await {
         Ok(stream) => stream,
-        Err(error) => return Failure(error).into_response(),
+        Err(error) => {
+            tracing::warn!(%workspace, %port, %error, "tunnel failed");
+            return Failure(error).into_response();
+        }
     };
     let on_upgrade = hyper::upgrade::on(&mut request);
     tokio::spawn(async move {
