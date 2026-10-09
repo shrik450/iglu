@@ -773,9 +773,8 @@ impl<'a, R: Runtime> Suite<'a, R> {
     }
 
     /// Waits for the port to show as a reachable listener, in the `server`
-    /// column where the system can tell (Linux; elsewhere `lsof` can't).
+    /// column it runs in.
     async fn listening(&self, workspace: WorkspaceId, port: GuestPort) -> Checked {
-        let column_known = cfg!(target_os = "linux");
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let listeners = self
@@ -786,8 +785,7 @@ impl<'a, R: Runtime> Suite<'a, R> {
             let found = listeners.iter().find(|l| l.port == port);
             if let Some(listener) = found
                 && listener.reachable
-                && (!column_known
-                    || listener.column.as_ref().map(SessionName::as_str) == Some("server"))
+                && listener.column.as_ref().map(SessionName::as_str) == Some("server")
             {
                 return Ok(());
             }

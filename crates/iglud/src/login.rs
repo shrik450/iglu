@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use iglu_api::{CliToken, CliTokenRequest};
@@ -140,6 +140,41 @@ async fn console_login(
             .to_string(),
     )
     .await?)
+}
+
+/// The console's page, for every path the console routes itself. Someone
+/// without a session is sent to sign in first, coming back to the same path,
+/// so the console never loads only to learn it can't show anything.
+pub async fn console_page(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) -> Response {
+    let signed_in = match cookie(&headers, CONSOLE_COOKIE) {
+        Some(token) => matches!(
+            session_principal(&app, token, SessionKind::Console).await,
+            Ok(Some(_))
+        ),
+        None => false,
+    };
+    if !signed_in {
+        let here = uri.path_and_query().map_or("/", |p| p.as_str());
+        return Redirect::to(&sign_in_url(here)).into_response();
+    }
+    let page = app.config.console_assets.join("index.html");
+    match tokio::fs::read_to_string(&page).await {
+        Ok(html) => ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response(),
+        Err(error) => {
+            tracing::error!(%error, path = %page.display(), "couldn't read the console's page");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Where to sign in to come back to `here`, or to the console's front page
+/// when `here` isn't a path on it.
+fn sign_in_url(here: &str) -> String {
+    let back = here
+        .parse::<ReturnPath>()
+        .unwrap_or_else(|_| ReturnPath::root());
+    let encoded: String = url::form_urlencoded::byte_serialize(back.as_str().as_bytes()).collect();
+    format!("/auth/login?return={encoded}")
 }
 
 #[derive(Deserialize)]
@@ -482,4 +517,19 @@ pub async fn preview_auth(
         _ => Err(ApiError::NotFound),
     };
     result.unwrap_or_else(|error| error_page(&error, &app.config.console_origin_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sign_in_url;
+
+    #[test]
+    fn signing_in_comes_back_to_the_same_page() {
+        assert_eq!(
+            sign_in_url("/w/fix-login?x=1"),
+            "/auth/login?return=%2Fw%2Ffix-login%3Fx%3D1"
+        );
+        // Anything that isn't a path on the console comes back to its front page.
+        assert_eq!(sign_in_url("//evil.example/"), "/auth/login?return=%2F");
+    }
 }

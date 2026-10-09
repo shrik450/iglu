@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type KeyInput, resolve } from "./keys.ts";
+import { type KeyInput, onKeyboard, resolve, SHEET } from "./keys.ts";
 
 const key = (code: string, extra: Partial<KeyInput> = {}): KeyInput => ({
   key: code.startsWith("Key") ? code.slice(3).toLowerCase() : code,
@@ -38,4 +38,22 @@ test("Cmd-K opens search anywhere; other Cmd chords are left to the browser", ()
     assert.deepEqual(resolve(key("KeyK", { meta: true, focus })), { kind: "palette" });
   }
   assert.equal(resolve(key("KeyC", { meta: true })), null);
+});
+
+test("the shortcut sheet says what each key does", () => {
+  for (const { shortcuts } of SHEET) {
+    for (const s of shortcuts) {
+      const alt = s.keys.startsWith("⌥");
+      const meta = s.keys.startsWith("⌘");
+      const got = resolve({ ...s.press, alt, meta, ctrl: false, focus: "page" });
+      assert.equal(got?.kind, s.action, s.keys);
+    }
+  }
+});
+
+test("keys are written the way this keyboard labels them", () => {
+  assert.equal(onKeyboard("⌘ K", true), "⌘ K");
+  assert.equal(onKeyboard("⌘ K", false), "Ctrl+K");
+  assert.equal(onKeyboard("⌥ N", false), "Alt+N");
+  assert.equal(onKeyboard("⇧H ⇧L", false), "Shift+H Shift+L");
 });

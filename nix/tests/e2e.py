@@ -114,6 +114,9 @@ try:
         signed_in = browser("sign-in")
         assert signed_in["url"].startswith(CONSOLE), signed_in
 
+    with subtest("a console page opened without a session goes straight to sign in, and back"):
+        browser("signed-out", "/settings")
+
     with subtest("cross-origin mutations are refused"):
         cookie = next(
             c for c in json.loads(client.succeed("cat /root/browser-state.json"))["cookies"] if c["name"] == "__Host-iglu"
@@ -237,6 +240,10 @@ try:
         instance = "iglu-" + ws["id"].replace("-", "")
         guest = guest_of(instance)
 
+    with subtest("a project's agent shows in its settings, survives other changes, and is what new workspaces offer"):
+        assert browser("project-agent", "app", "echo") == {"agent": "echo"}
+        assert {p["name"]: p for p in iglu("project ls")}["app"]["agent"] == "echo"
+
     with subtest("the checkout and secrets are in place"):
         assert "init" in guest("git -C ~/app log --oneline")
         assert guest("git -C ~/app branch --show-current").strip() == "demo"
@@ -252,6 +259,7 @@ try:
     with subtest("the browser's terminal runs in the workspace with secrets in its environment"):
         browser("terminal", "demo", "echo token=$TEST_TOKEN", "token=hunter2")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
+        browser("palette-from-terminal", "demo")
         assert second["columns"] == ["shell", "shell-2"], second
 
     token = json.loads(client.succeed("cat /root/.config/iglu/credentials.json"))["token"]
@@ -328,6 +336,7 @@ try:
         )
         waiting = browser("card", "demo", "Claude needs your permission to use Bash")
         assert "needs" in (waiting["class"] or ""), waiting
+        browser("lands-on-waiting", "demo", "shell", second["added"])
 
     with subtest("a port published in the browser is served behind preview sign-in"):
         host.succeed(
@@ -450,7 +459,7 @@ try:
         client.wait_until_succeeds(
             f"{IGLU} --json show waits | jq -e '.condition.kind == \"capacity\"'", timeout=120
         )
-        browser("card", "waits", "waiting for the host to have room")
+        browser("card", "waits", "Waiting for room")
         host.succeed("systemctl stop hog")
         phase_is("waits", "running")
         # Its branch was never pushed, so deleting it would lose it.

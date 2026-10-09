@@ -16,7 +16,7 @@ use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 use sysinfo::{ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 
 /// The environment variable that marks a workspace's processes.
-pub const MARKER: &str = "IGLU_DEVHOST_WORKSPACE";
+pub const MARKER: &str = iglu_domain::guest::LOCAL_WORKSPACE;
 
 /// Which workspace a process's environment says it belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

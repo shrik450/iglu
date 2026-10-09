@@ -2,6 +2,9 @@
 
 import { nextWaiting } from "./actions.ts";
 import { Glyph, Igloo } from "./components/bits.tsx";
+import { Keys } from "./components/Keys.tsx";
+import { mac } from "./keyboard.ts";
+import { onKeyboard } from "./state/keys.ts";
 import { NewProject } from "./components/NewProject.tsx";
 import { NewWorkspace } from "./components/NewWorkspace.tsx";
 import { Palette } from "./components/Palette.tsx";
@@ -31,9 +34,12 @@ function Topbar() {
           iglu
         </a>
         {count ? (
-          <button type="button" class="needs-badge" title="Next waiting (⌥N)" onClick={nextWaiting}>
+          <button type="button" class="needs-badge" title="Next waiting (⌥N)" aria-label={`${count} waiting; go to the next`} onClick={nextWaiting}>
             <span aria-hidden="true">●</span>
-            {count} waiting
+            <span>
+              {count}
+              <span class="wide"> waiting</span>
+            </span>
           </button>
         ) : null}
         {outdated.value ? (
@@ -57,8 +63,12 @@ function Topbar() {
           </button>
         </div>
         <button type="button" class="search" aria-label="Search and commands" onClick={() => (overlay.value = "palette")}>
-          <span>Search…</span>
-          <kbd>⌘&nbsp;K</kbd>
+          <svg class="narrow" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="m10.4 10.4 3.4 3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+          <span class="wide">Search…</span>
+          <kbd>{onKeyboard("⌘ K", mac)}</kbd>
         </button>
         <button type="button" class="btn icon primary" aria-label="New workspace" title="New workspace (n)" onClick={() => (overlay.value = "new")}>
           +
@@ -157,6 +167,7 @@ export function App() {
       {overlay.value === "palette" ? <Palette /> : null}
       {overlay.value === "new" ? <NewWorkspace /> : null}
       {overlay.value === "project" ? <NewProject /> : null}
+      {overlay.value === "keys" ? <Keys /> : null}
       <Toasts />
       <Flash />
     </>

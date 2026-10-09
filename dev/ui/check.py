@@ -64,19 +64,31 @@ def main() -> None:
                     time.sleep(1)
                 api.send("DELETE", f"/v1/projects/{project['id']}")
 
+            step("signed-out", browser.signed_out, page, "/settings")
             step("refused-environment", browser.refused_environment, page)
             step("create", browser.create, page, "default", repo, NAME)
+            step("project-agent", browser.project_agent, page, PROJECT, "scripted")
             step("terminal", browser.terminal, page, NAME, "printf 'one-%s\\n' 42", "one-42")
-            step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")
+            added = step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")["added"]
             step("attention", browser.terminal, page, NAME, "iglu-status set waiting Check needs you; printf 'set-%s\\n' 42", "set-42")
+            step("palette-from-terminal", browser.palette_from_terminal, page, NAME)
             step("card", browser.card, page, NAME, "Check needs you")
+            step("lands-on-waiting", browser.lands_on_waiting, page, NAME, "shell", added)
             step("server", browser.terminal, page, NAME, f"python3 -m http.server {PORT} --bind 127.0.0.1 &", f"port {PORT}")
             published = step("publish", browser.publish, page, NAME, str(PORT))
             ws = api.workspace(NAME)
             result = step("attack", browser.attack, page, published["url"], ws["id"])
             assert result == {"read": "blocked", "socket": "refused"}, result
             step("visit", browser.visit, page, published["url"])
+            # Leave nothing behind for a tour to show.
             api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted", "expected_revision": api.workspace(NAME)["revision"]})
+            project = next(p for p in api.get("/v1/projects") if p["name"] == PROJECT)
+            deadline = time.monotonic() + 120
+            while any(w["project"] == project["id"] for w in api.get("/v1/workspaces")):
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"{NAME} wasn't deleted")
+                time.sleep(1)
+            api.send("DELETE", f"/v1/projects/{project['id']}")
         except Exception:
             shots = ROOT / ".dev/check"
             shots.mkdir(parents=True, exist_ok=True)

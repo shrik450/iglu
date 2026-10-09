@@ -67,7 +67,7 @@ export const inside = signal<Record<WorkspaceId, LiveView>>({});
 /** The focused column per workspace, for this visit. */
 export const activeColumn = signal<Record<WorkspaceId, string>>({});
 
-export const overlay = signal<null | "palette" | "new" | "project">(null);
+export const overlay = signal<null | "palette" | "new" | "project" | "keys">(null);
 /** The project the new-workspace form starts on. */
 export const newIn = signal<ProjectId | null>(null);
 export const details = signal(false);

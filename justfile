@@ -140,7 +140,8 @@ dev:
       },
       "sign_in": [
         { "verified_email": "alice@example.org" },
-        { "verified_email": "bob@example.org" }
+        { "verified_email": "bob@example.org" },
+        { "verified_email": "carol@example.org" }
       ],
       "hosts": [ { "id": "local", "url": "http://127.0.0.1:7200" } ]
     }
@@ -173,7 +174,7 @@ dev:
     target/debug/iglu-devhost --config "$state/devhost.json" &
     devhost=$!
     trap 'kill $watcher $devhost 2>/dev/null' EXIT
-    echo "iglu: https://iglu.localhost (alice or bob, password \"password\")"
+    echo "iglu: https://iglu.localhost (alice, bob or carol, password \"password\")"
     target/debug/iglud --config "$state/iglud.json"
 
 # Fill the running dev stack with workspaces in every state worth seeing; run it after dev-reset.

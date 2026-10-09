@@ -92,6 +92,7 @@ function Settings({ project }: { project: ProjectView }) {
   const [opening, setOpening] = useState<ColumnTemplate[]>(project.opening);
   const [idle, setIdle] = useState<IdleRule["kind"]>(idleChoice(project.idle));
   const [envName, setEnvName] = useState(project.environment);
+  const [agent, setAgent] = useState(project.agent ?? "");
   const latest = environments.value.find((env) => env.name === envName)?.latest;
   const agents = latest?.status === "ready" ? latest.image.agents.map((a) => a.name) : [];
   const move = (index: number, step: -1 | 1) => {
@@ -163,7 +164,7 @@ function Settings({ project }: { project: ProjectView }) {
       </label>
       <label>
         Starts
-        <select name="agent" defaultValue={project.agent ?? ""} {...invalid(save, "agent")}>
+        <select name="agent" value={agent} onChange={(e) => setAgent(e.currentTarget.value)} {...invalid(save, "agent")}>
           <option value="">No agent</option>
           {agents.map((a) => (
             <option key={a} value={a}>

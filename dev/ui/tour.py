@@ -1,6 +1,6 @@
 """Visits every view of the console and keeps what a reviewer needs.
 
-    python3 dev/ui/tour.py [--label NAME] [--quick] [--only TEXT]
+    python3 dev/ui/tour.py [--label NAME] [--quick] [--only TEXT] [--variants A,B]
 
 For each stop, in each variant (desktop and phone, dark and light, Chromium
 and WebKit), it saves a screenshot. For the main variant it also saves the
@@ -40,6 +40,10 @@ class Variant:
     main: bool = False
     audit: bool = False
 
+    @property
+    def phone(self) -> bool:
+        return self.width < 600
+
 
 VARIANTS = [
     Variant("desktop-dark", "chromium", 1440, 900, "dark", main=True, audit=True),
@@ -59,6 +63,8 @@ class Stop:
     # Brings the page to the state worth seeing, after it loads.
     act: Callable[[Page], None] = lambda page: None
     notes: str = ""
+    # A stop that's refused on purpose logs the refusal; that's not a finding.
+    refused: bool = False
 
 
 def press_palette(page: Page) -> None:
@@ -102,17 +108,19 @@ def stops() -> list[Stop]:
         Stop("overview", "/"),
         Stop("previews", "/previews"),
         Stop("settings", "/settings"),
-        Stop("settings-refused", "/settings", act=refused_environment, notes="a refused environment"),
+        Stop("settings-refused", "/settings", act=refused_environment, notes="a refused environment", refused=True),
         Stop("project-app", "/p/app"),
         Stop("project-general", "/p/general"),
         Stop("palette", "/", act=press_palette),
         Stop("new-workspace", "/", act=click("button", "New workspace")),
         Stop("new-project", "/", act=click("button", "New project")),
+        Stop("keys", "/", act=lambda page: (page.keyboard.press("?"), page.get_by_role("dialog").wait_for())[-1]),
         *[Stop(f"w-{name}", f"/w/{name}", notes=notes) for name, notes in workspaces],
         Stop("add-column", "/w/scratchpad", act=click("button", "Add a column")),
         Stop("details", "/w/unsaved-work", act=click("button", "Details")),
         Stop("delete-unsaved", "/w/unsaved-work", act=delete_confirmation, notes="what deleting would lose"),
         Stop("bob-overview", "/", user="bob", notes="another person's view"),
+        Stop("first-run", "/", user="carol", notes="someone who has never used iglu"),
     ]
 
 
@@ -207,11 +215,18 @@ def main() -> None:
     parser.add_argument("--label", default=time.strftime("%Y%m%d-%H%M%S"))
     parser.add_argument("--quick", action="store_true", help="only the main variant")
     parser.add_argument("--only", help="only stops whose name contains this")
+    parser.add_argument("--variants", help="only these variants, comma-separated: " + ", ".join(v.name for v in VARIANTS))
     args = parser.parse_args()
     out = ROOT / ".dev/tour" / args.label
     out.mkdir(parents=True, exist_ok=True)
     chosen = [s for s in stops() if not args.only or args.only in s.name]
     variants = [v for v in VARIANTS if v.main] if args.quick else VARIANTS
+    if args.variants:
+        named = set(args.variants.split(","))
+        unknown = named - {v.name for v in VARIANTS}
+        if unknown:
+            parser.error(f"no variants called {', '.join(sorted(unknown))}")
+        variants = [v for v in VARIANTS if v.name in named]
     shots: list[Shot] = []
     with sync_playwright() as playwright:
         for variant in variants:
@@ -220,6 +235,8 @@ def main() -> None:
                     playwright, variant.engine,
                     viewport={"width": variant.width, "height": variant.height},
                     color_scheme=variant.scheme, reduced_motion="reduce",
+                    # A phone is touched, not hovered or typed at.
+                    is_mobile=variant.phone, has_touch=variant.phone,
                 )
                 context.add_init_script(NOTIFICATIONS)
                 page = context.new_page()
@@ -235,7 +252,7 @@ def main() -> None:
                     except Exception as error:  # a stop that fails is a finding, not the end of the tour
                         shot.failed = re.sub(r"\s+", " ", str(error))[:300]
                         page.screenshot(path=out / shot.image, full_page=True)
-                    shot.errors = list(errors)
+                    shot.errors = [e for e in errors if not (stop.refused and "status of 400" in e)]
                     shots.append(shot)
                     print(f"{variant.name:22} {stop.name:30} {'FAILED' if shot.failed else 'ok'}", flush=True)
                 context.browser.close()

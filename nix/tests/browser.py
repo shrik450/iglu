@@ -75,6 +75,27 @@ def sign_in(page: Page) -> Any:
     return {"url": page.url}
 
 
+def signed_out(page: Page, path: str) -> Any:
+    """Someone without a session who opens a console page goes straight to
+    sign in, without the console loading only to find out, and comes back to
+    that page."""
+    browser = page.context.browser
+    assert browser is not None
+    fresh = browser.new_context()
+    other = fresh.new_page()
+    asked: list[str] = []
+    other.on("request", lambda r: asked.append(r.url) if r.url.startswith(f"{CONSOLE}/v1/") else None)
+    other.goto(f"{CONSOLE}{path}")
+    other.locator("#username-textfield").wait_for()
+    assert not asked, asked
+    other.locator("#username-textfield").fill("alice")
+    other.locator("#password-textfield").fill("password")
+    other.locator("#sign-in-button").click()
+    other.wait_for_url(f"{CONSOLE}{path}")
+    fresh.close()
+    return {"returned": path}
+
+
 def approve_cli(page: Page, url: str) -> Any:
     page.goto(url)
     page.get_by_role("button", name="Sign in the CLI").click()
@@ -118,6 +139,35 @@ def refused_environment(page: Page) -> Any:
     return {"error": form.locator(".field-err").inner_text()}
 
 
+def project_agent(page: Page, project: str, agent: str) -> Any:
+    """Sets the agent a project's workspaces start, and checks that it shows,
+    survives saving other settings, and is what a new workspace offers."""
+    page.goto(f"{CONSOLE}/p/{project}")
+    settings = page.get_by_role("form", name=f"Settings for {project}")
+    starts = settings.get_by_label("Starts")
+
+    def save() -> None:
+        with page.expect_response(lambda r: r.request.method == "PUT" and "/v1/projects/" in r.url) as saved:
+            settings.get_by_role("button", name="Save").click()
+        assert saved.value.ok, saved.value.text()
+        page.reload()
+
+    starts.select_option(agent)
+    save()
+    expect(starts).to_have_value(agent)
+    # Saving something else keeps it.
+    settings.get_by_label("Previews").fill("8000")
+    save()
+    expect(starts).to_have_value(agent)
+    settings.get_by_label("Previews").fill("")
+    save()
+    page.get_by_role("button", name="New workspace").first.click()
+    form = page.get_by_role("form", name="New workspace")
+    expect(form.get_by_label("Prompt")).to_have_attribute("placeholder", f"What should {agent} do? Optional…")
+    form.get_by_role("button", name="Cancel").click()
+    return {"agent": starts.input_value()}
+
+
 def terminal(page: Page, name: str, command: str, expected: str) -> Any:
     """Runs a command in the workspace's first column."""
     open_workspace(page, name)
@@ -136,6 +186,45 @@ def new_column(page: Page, name: str, command: str, expected: str) -> Any:
     expect(page.locator("[data-column]")).to_have_count(len(before) + 1)
     added = next(c for c in columns(page) if c not in before)
     return {"columns": columns(page), "added": added, "screen": run_in_column(page, added, command, expected)}
+
+
+def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
+    """Coming back to a workspace where an agent waits lands on that agent's
+    column, whichever column you were in when you left."""
+    open_workspace(page, name)
+    column(page, other).locator(".term-host").click()
+    expect(column(page, other)).to_have_class(re.compile(r"\bon\b"))
+    page.get_by_role("button", name="Overview").click()
+    page.get_by_role("link", name=name, exact=True).click()
+    # Until the columns' sessions load, the first column stands in as active;
+    # judge once they have.
+    for name_ in (waiting, other):
+        expect(column(page, name_).locator(".term-host")).to_be_visible()
+    time.sleep(1.5)
+    active = [c for c in columns(page) if re.search(r"\bon\b", column(page, c).get_attribute("class") or "")]
+    assert active == [waiting], {
+        "active": active,
+        "focus": page.evaluate("document.activeElement?.closest('[data-column]')?.dataset.column ?? document.activeElement?.tagName"),
+        "headers": [column(page, c).locator(".col-h").inner_text() for c in columns(page)],
+    }
+    return {"active": waiting}
+
+
+def palette_from_terminal(page: Page, name: str) -> Any:
+    """The palette opened from inside a terminal takes what you type, rather
+    than the terminal behind it."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    column(page, first).locator(".term-host").click()
+    before = screen(page).count("previews")
+    page.keyboard.press("ControlOrMeta+k")
+    page.keyboard.type("previews")
+    page.keyboard.press("Enter")
+    page.wait_for_url(f"{CONSOLE}/previews")
+    open_workspace(page, name)
+    column(page, first).locator(".term-host").click()
+    assert screen(page).count("previews") == before, screen(page)
+    return {"went": "/previews"}
 
 
 def card(page: Page, name: str, expected: str) -> Any:
@@ -206,12 +295,16 @@ def attack(page: Page, preview: str, workspace: str) -> Any:
 
 STEPS: dict[str, Callable[..., Any]] = {
     "sign-in": sign_in,
+    "signed-out": signed_out,
     "approve-cli": approve_cli,
     "create": create,
     "refused-environment": refused_environment,
+    "project-agent": project_agent,
     "terminal": terminal,
     "new-column": new_column,
+    "palette-from-terminal": palette_from_terminal,
     "card": card,
+    "lands-on-waiting": lands_on_waiting,
     "publish": publish,
     "visit": visit,
     "attack": attack,

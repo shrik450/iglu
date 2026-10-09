@@ -111,9 +111,10 @@ Read [Local HTTPS and the dev CA](#local-https-and-the-dev-ca) before you run
 just dev
 ```
 
-Then open `https://iglu.localhost` and sign in as `alice` or `bob`, both with
-the password `password`. Two people let you try the console as different
-owners.
+Then open `https://iglu.localhost` and sign in as `alice`, `bob` or `carol`,
+all with the password `password`. Several people let you try the console as
+different owners; the dev tools never touch carol, so she sees iglu as someone
+new does.
 
 `just dev` builds iglud, the devhost and the guest tools, starts the
 console's watcher and the devhost, and runs iglud in the foreground. Stop

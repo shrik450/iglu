@@ -28,7 +28,7 @@ use axum::http::{HeaderValue, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use rustls_platform_verifier::ConfigVerifierExt;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 use crate::app::App;
@@ -61,6 +61,20 @@ async fn dispatch(State(app): State<Arc<App>>, request: Request, next: Next) -> 
         set(headers, "strict-transport-security", "max-age=31536000");
         response
     }
+}
+
+/// Every route iglud serves. The console's files are public; its page, for
+/// every path the console routes, asks for a session first.
+fn router(app: Arc<App>, assets: &std::path::Path) -> Router {
+    let console_app = ServeDir::new(assets)
+        .append_index_html_on_directories(false)
+        .fallback(axum::routing::get(login::console_page).with_state(app.clone()));
+    Router::new()
+        .merge(api::router())
+        .merge(login::console_router())
+        .fallback_service(console_app)
+        .layer(middleware::from_fn_with_state(app.clone(), dispatch))
+        .with_state(app)
 }
 
 #[tokio::main]
@@ -162,13 +176,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(backup::run(app.config.database.clone(), policy));
     }
 
-    let console_app = ServeDir::new(&assets).fallback(ServeFile::new(assets.join("index.html")));
-    let router = Router::new()
-        .merge(api::router())
-        .merge(login::console_router())
-        .fallback_service(console_app)
-        .layer(middleware::from_fn_with_state(app.clone(), dispatch))
-        .with_state(app);
+    let router = router(app, &assets);
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(%listen, "iglud listening");

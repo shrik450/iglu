@@ -3,9 +3,9 @@
 
 import { effect } from "@preact/signals";
 
-import { conditionText } from "./components/bits.tsx";
 import type { Need } from "./generated/Need.ts";
 import type { WorkspaceView } from "./generated/WorkspaceView.ts";
+import { situation } from "./state/situation.ts";
 import { unreachable } from "./state/unsaved.ts";
 import { current, toast, waiting } from "./state/store.ts";
 
@@ -25,8 +25,10 @@ function notice(ws: WorkspaceView, need: Need): { title: string; body: string } 
       return { title: `${ws.name} needs you`, body: ws.attention?.summary ?? "" };
     case "done":
       return { title: `${ws.name} is done`, body: ws.attention?.summary ?? "" };
-    case "trouble":
-      return { title: `${ws.name} is in trouble`, body: ws.condition ? conditionText(ws.condition) : "" };
+    case "trouble": {
+      const now = situation(ws);
+      return { title: `${ws.name} is in trouble`, body: "detail" in now ? `${now.title}. ${now.detail}` : "" };
+    }
     default:
       return unreachable(need);
   }
