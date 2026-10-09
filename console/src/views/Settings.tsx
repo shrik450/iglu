@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { attempt } from "../actions.ts";
 import { api } from "../api/client.ts";
+import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
 import { enableNotifications } from "../notify.ts";
 import type { EnvironmentView } from "../generated/EnvironmentView.ts";
@@ -42,15 +43,6 @@ function buildText(env: EnvironmentView): string {
 }
 
 function Environments() {
-  const add = useForm(async (data, form) => {
-    const text = textOf(data);
-    const name = text("name");
-    const source = text("source");
-    if (!name || !source) return;
-    await api.createEnvironment({ name, source });
-    form.reset();
-    say(`Building ${name}.`);
-  });
   return (
     <section class="set" aria-labelledby="envs-h">
       <h2 id="envs-h">Environments</h2>
@@ -74,22 +66,7 @@ function Environments() {
           </li>
         ))}
       </ul>
-      <form class="set-form" aria-label="Add an environment" onSubmit={add.onSubmit}>
-        <label>
-          Name
-          <input name="name" required placeholder="default…" autocomplete="off" spellcheck={false} {...invalid(add, "name")} />
-          <FieldError form={add} input="name" />
-        </label>
-        <label class="grow">
-          Flake
-          <input name="source" required placeholder="github:you/iglu-env#default…" autocomplete="off" spellcheck={false} {...invalid(add, "source")} />
-          <FieldError form={add} input="source" />
-        </label>
-        <button type="submit" class="btn" disabled={add.busy}>
-          {add.busy ? "Adding…" : "Add"}
-        </button>
-        <FormError form={add} />
-      </form>
+      <AddEnvironment />
     </section>
   );
 }

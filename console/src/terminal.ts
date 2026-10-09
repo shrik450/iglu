@@ -13,12 +13,23 @@ export function loadGhostty(): Promise<Ghostty> {
   return ghostty;
 }
 
-const theme = {
-  background: "#070c18",
-  foreground: "#d4e0f4",
-  cursor: "#8fd8ff",
-  selectionBackground: "#22315a",
-};
+/** A terminal's colours, read from the page's look where it sits, so the
+ * canvas matches its column in either look. */
+function themeOf(where: Element) {
+  const css = getComputedStyle(where);
+  const color = (name: string, otherwise: string) => css.getPropertyValue(name).trim() || otherwise;
+  return {
+    background: color("--term-bg", "#070c18"),
+    foreground: color("--term-ink", "#d4e0f4"),
+    cursor: color("--accent", "#8fd8ff"),
+    selectionBackground: "#22315a",
+  };
+}
+
+/** Recolours every terminal after the look changes. */
+export function restyleTerminals(): void {
+  for (const pane of panes.values()) pane.restyle();
+}
 
 /** Mounted panes by `workspace/session`, so keyboard actions can focus one. */
 export const panes = new Map<string, TerminalPane>();
@@ -36,6 +47,8 @@ export class TerminalPane {
   private readonly encoder = new TextEncoder();
   private socket: WebSocket | null = null;
   private focused = false;
+  /** While ghostty-web opens the terminal, during which it focuses it unasked. */
+  private opening = true;
   private closed = false;
   private retries = 0;
   private retryTimer = 0;
@@ -54,6 +67,8 @@ export class TerminalPane {
     workspace: string;
     session: string;
     shortcuts: (event: KeyboardEvent) => boolean;
+    /** Asked once the terminal has opened: whether it should take focus. */
+    wantsFocus: () => boolean;
     onFocus: () => void;
     onStatus: (status: string) => void;
     onDrop: () => void;
@@ -66,10 +81,25 @@ export class TerminalPane {
     this.onFocus = options.onFocus;
     this.onStatus = options.onStatus;
     this.onDrop = options.onDrop;
-    this.term = new Terminal({ ghostty, fontSize: 13, scrollback: 10000, theme, cursorBlink: true });
+    this.term = new Terminal({ ghostty, fontSize: 13, scrollback: 10000, theme: themeOf(container), cursorBlink: true });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
+    // ghostty-web focuses a terminal as it opens, and again a moment later,
+    // so the last column to open would take focus from the one meant to have
+    // it. Opening takes nothing: once it's done, the pane takes focus if it
+    // should, and otherwise hands it back.
+    const before = document.activeElement;
     this.term.open(container);
+    window.setTimeout(() => {
+      this.opening = false;
+      const holds = container.contains(document.activeElement);
+      // Focus it already has fires no focus event, so it counts it now.
+      if (options.wantsFocus()) holds ? this.focusIn() : this.focus();
+      else if (holds) {
+        if (before instanceof HTMLElement && before !== document.body) before.focus();
+        else (document.activeElement as HTMLElement | null)?.blur();
+      }
+    });
     this.fit.fit();
     this.fit.observeResize();
     // Unlike xterm.js, ghostty-web drops the key when the handler returns true.
@@ -86,7 +116,12 @@ export class TerminalPane {
     this.connect();
   }
 
+  restyle(): void {
+    this.term.options.theme = themeOf(this.container);
+  }
+
   private readonly focusIn = () => {
+    if (this.opening) return;
     this.focused = true;
     lastFocused = this;
     this.sendResize(this.term.cols, this.term.rows);

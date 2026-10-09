@@ -12,6 +12,11 @@ use crate::attention::{AttentionState, Summary};
 /// guest holds, as a decimal number.
 pub const SECRETS_GENERATION: &str = "iglu/secrets/generation";
 
+/// The environment variable that marks a process as one of a local
+/// workspace's, on the dev stack's local runtime, where every workspace's
+/// processes are the same user's. Its value is the instance's name.
+pub const LOCAL_WORKSPACE: &str = "IGLU_DEVHOST_WORKSPACE";
+
 /// Per-session attention status, maintained by `iglu-status`: sessions,
 /// each with its threads, each a [`StatusEntry`].
 pub const STATUS: &str = "iglu/status/sessions.json";

@@ -1,5 +1,5 @@
-# Both passwords are "password". Two people, so access between owners can be
-# tried in the console.
+# Every password is "password". Several people, so access between owners can be
+# tried in the console, and carol stays new.
 users:
   alice:
     displayname: Alice
@@ -9,3 +9,8 @@ users:
     displayname: Bob
     password: "$argon2id$v=19$m=65536,t=3,p=4$2ohUAfh9yetl+utr4tLcCQ$AsXx0VlwjvNnCsa70u4HKZvFkC8Gwajr2pHGKcND/xs"
     email: bob@example.org
+  # Never used by the dev tools, so she always sees iglu as a new person does.
+  carol:
+    displayname: Carol
+    password: "$argon2id$v=19$m=65536,t=3,p=4$2ohUAfh9yetl+utr4tLcCQ$AsXx0VlwjvNnCsa70u4HKZvFkC8Gwajr2pHGKcND/xs"
+    email: carol@example.org

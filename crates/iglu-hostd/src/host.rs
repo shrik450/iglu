@@ -141,7 +141,7 @@ impl<R: Runtime> Host<R> {
         } else {
             Err(CommandError::new(
                 ErrorCode::GuestFailed,
-                format!("{failing}: {}", output.stderr_tail()),
+                format!("{failing}: {}", guest_message(&output.stderr_tail())),
             ))
         }
     }
@@ -483,5 +483,28 @@ impl BootCache {
             .lock()
             .expect("the boot cache lock is never held across a panic")
             .remove(&name);
+    }
+}
+
+/// A guest tool's error without the name it prefixes its messages with,
+/// which says nothing to the person reading `cloning the repository failed`.
+fn guest_message(stderr: &str) -> &str {
+    stderr
+        .strip_prefix("iglu-guest: ")
+        .or_else(|| stderr.strip_prefix("iglu-status: "))
+        .unwrap_or(stderr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::guest_message;
+
+    #[test]
+    fn a_guest_tools_name_is_left_out() {
+        assert_eq!(
+            guest_message("iglu-guest: git clone failed: x"),
+            "git clone failed: x"
+        );
+        assert_eq!(guest_message("bash: oops"), "bash: oops");
     }
 }

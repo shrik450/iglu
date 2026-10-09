@@ -1,7 +1,7 @@
 // Everything the person can do, in one place, so keys, the palette and
 // buttons share it.
 
-import { batch } from "@preact/signals";
+import { batch, effect, untracked } from "@preact/signals";
 
 import { api, failure } from "./api/client.ts";
 import type { ColumnKind } from "./generated/ColumnKind.ts";
@@ -163,6 +163,20 @@ export function activeOf(ws: WorkspaceView): string | null {
   const active = activeColumn.value[ws.id];
   return columns.some((c) => c.name === active) ? (active ?? null) : (columns[0]?.name ?? null);
 }
+
+/** Arriving at a workspace where an agent waits lands on that agent's
+ * column. It's decided here, as the route changes and before the columns
+ * render, because a terminal that had focus last time takes it back as soon
+ * as it opens. Only on arrival: a thread that starts waiting while you're
+ * there mustn't pull focus from what you're doing. */
+let arrived: WorkspaceView["id"] | null = null;
+effect(() => {
+  const ws = current.value;
+  if (ws?.id === arrived) return;
+  arrived = ws?.id ?? null;
+  const waits = ws?.attention?.state === "waiting" ? ws.attention.session : null;
+  if (ws && waits && ws.columns.some((c) => c.name === waits)) untracked(() => markActive(ws, waits));
+});
 
 /** Records which column has focus, without moving focus. */
 export function markActive(ws: WorkspaceView, name: string): void {

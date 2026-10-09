@@ -1,11 +1,12 @@
-//! What the workspace user has listening: from `/proc` on Linux, which also
-//! tells which terminal session started it, and from `lsof` elsewhere, which
-//! doesn't.
+//! What the workspace user has listening: from `/proc` on Linux, and from
+//! `lsof` and `ps` on a Mac, for the dev stack's local runtime. Both tell
+//! which terminal session started each listener.
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
-use iglu_domain::guest::ListenerReport;
+use iglu_domain::guest::{LOCAL_WORKSPACE, ListenerReport};
 
 /// A listening socket as `/proc/net/tcp` describes it.
 #[derive(Debug, PartialEq, Eq)]
@@ -111,8 +112,123 @@ pub fn scan(proc: &Path) -> Vec<ListenerReport> {
         .collect()
 }
 
-/// The same from `lsof`, for systems without `/proc`.
+/// The same from `lsof`, for systems without `/proc`: the local runtime on
+/// a Mac. Every process there is this user's, so a listener counts only when
+/// it, or a process it descends from, carries this workspace's marker.
+/// Ancestry matters because macOS hides system programs' environments, such
+/// as `/usr/bin/nc`'s, while the terminal session that started one shows.
 fn lsof() -> Vec<ListenerReport> {
+    let sockets = lsof_sockets();
+    let Ok(workspace) = std::env::var(LOCAL_WORKSPACE) else {
+        return sockets.into_iter().map(|(_, report)| report).collect();
+    };
+    if sockets.is_empty() {
+        return Vec::new();
+    }
+    let table = std::process::Command::new("ps")
+        .args(["-wwEA", "-o", "pid=,ppid=,command="])
+        .output()
+        .map(|output| parse_ps(&String::from_utf8_lossy(&output.stdout)))
+        .unwrap_or_default();
+    sockets
+        .into_iter()
+        .filter_map(|(pid, report)| {
+            let found = placement(&table, pid);
+            (found.workspace.as_deref() == Some(workspace.as_str())).then_some(ListenerReport {
+                session: found.session,
+                ..report
+            })
+        })
+        .collect()
+}
+
+/// A process as `ps` shows it: its parent, and what its environment says
+/// about where it runs, when the environment shows.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Process {
+    pub parent: u32,
+    pub placement: Placement,
+}
+
+/// Where a process runs: its workspace and terminal session.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Placement {
+    pub workspace: Option<String>,
+    pub session: Option<String>,
+}
+
+/// Reads `ps -wwEA -o pid=,ppid=,command=`: each line a process ID, its
+/// parent's, then its command line and environment, space-separated. The
+/// values of the variables read here never contain spaces. A session's own
+/// `zmx attach <name>` process names it in its arguments, since `ZMX_SESSION`
+/// is only in its children's environments.
+#[must_use]
+pub fn parse_ps(output: &str) -> ProcessTable {
+    ProcessTable(
+        output
+            .lines()
+            .filter_map(|line| {
+                let mut words = line.split_whitespace().peekable();
+                let pid = words.next()?.parse().ok()?;
+                let parent = words.next()?.parse().ok()?;
+                let mut placement = Placement::default();
+                let program = words.next().unwrap_or_default();
+                if Path::new(program)
+                    .file_name()
+                    .is_some_and(|name| name == "zmx")
+                    && words.next_if(|w| *w == "attach" || *w == "a").is_some()
+                {
+                    if words.next_if_eq(&"--labels").is_some() {
+                        words.next();
+                    }
+                    placement.session = words.next().map(str::to_owned);
+                }
+                for word in words {
+                    if let Some(value) = word
+                        .strip_prefix(LOCAL_WORKSPACE)
+                        .and_then(|rest| rest.strip_prefix('='))
+                    {
+                        placement.workspace = Some(value.to_owned());
+                    } else if let Some(value) = word.strip_prefix("ZMX_SESSION=") {
+                        placement.session = Some(value.to_owned());
+                    }
+                }
+                Some((pid, Process { parent, placement }))
+            })
+            .collect(),
+    )
+}
+
+/// Every process `ps` showed, by ID.
+#[derive(Debug, Default)]
+pub struct ProcessTable(HashMap<u32, Process>);
+
+/// Where `pid` runs: each of its workspace and session from the nearest of
+/// it and its ancestors that shows one.
+#[must_use]
+pub fn placement(ProcessTable(table): &ProcessTable, pid: u32) -> Placement {
+    let mut found = Placement::default();
+    let mut current = pid;
+    // A process table can't be deeper than it is long; this also ends a loop.
+    for _ in 0..=table.len() {
+        let Some(process) = table.get(&current) else {
+            break;
+        };
+        if found.workspace.is_none() {
+            found.workspace.clone_from(&process.placement.workspace);
+        }
+        if found.session.is_none() {
+            found.session.clone_from(&process.placement.session);
+        }
+        if (found.workspace.is_some() && found.session.is_some()) || process.parent == current {
+            break;
+        }
+        current = process.parent;
+    }
+    found
+}
+
+fn lsof_sockets() -> Vec<(u32, ListenerReport)> {
     let uid = rustix::process::getuid().as_raw().to_string();
     std::process::Command::new("lsof")
         .args([
@@ -132,15 +248,20 @@ fn lsof() -> Vec<ListenerReport> {
 
 /// Reads `lsof -F pctn`: a `p` line starts each process, `c` names it,
 /// and each socket has a `t` (IPv4 or IPv6) and an `n` (address:port).
+/// Each listener comes with its process's ID.
 #[must_use]
-pub fn parse_lsof(output: &str) -> Vec<ListenerReport> {
+pub fn parse_lsof(output: &str) -> Vec<(u32, ListenerReport)> {
     let mut reports = Vec::new();
+    let mut pid = 0;
     let mut process = String::new();
     let mut six = false;
     for line in output.lines() {
         let (field, value) = line.split_at(line.len().min(1));
         match field {
-            "p" => process.clear(),
+            "p" => {
+                process.clear();
+                pid = value.parse().unwrap_or(0);
+            }
             "c" => value.clone_into(&mut process),
             "t" => six = value == "IPv6",
             "n" => {
@@ -154,12 +275,15 @@ pub fn parse_lsof(output: &str) -> Vec<ListenerReport> {
                     (host, _) => host.parse().ok(),
                 };
                 if let (Some(address), Ok(port)) = (address, port.parse()) {
-                    reports.push(ListenerReport {
-                        port,
-                        address,
-                        process: process.clone(),
-                        session: None,
-                    });
+                    reports.push((
+                        pid,
+                        ListenerReport {
+                            port,
+                            address,
+                            process: process.clone(),
+                            session: None,
+                        },
+                    ));
                 }
             }
             _ => {}
@@ -239,18 +363,36 @@ mod tests {
     #[test]
     fn lsof_listing_parses() {
         let output = "p501\ncnode\nf23\ntIPv4\nn127.0.0.1:3000\nf24\ntIPv6\nn*:5173\np777\ncpostgres\nf5\ntIPv6\nn[::1]:5432\n";
-        let seen: Vec<(String, u16, String)> = parse_lsof(output)
+        let seen: Vec<(u32, String, u16, String)> = parse_lsof(output)
             .into_iter()
-            .map(|r| (r.address.to_string(), r.port, r.process))
+            .map(|(pid, r)| (pid, r.address.to_string(), r.port, r.process))
             .collect();
         assert_eq!(
             seen,
             [
-                ("127.0.0.1".into(), 3000, "node".into()),
-                ("::".into(), 5173, "node".into()),
-                ("::1".into(), 5432, "postgres".into()),
+                (501, "127.0.0.1".into(), 3000, "node".into()),
+                (501, "::".into(), 5173, "node".into()),
+                (777, "::1".into(), 5432, "postgres".into()),
             ]
         );
+    }
+
+    #[test]
+    fn a_listener_is_placed_by_the_nearest_ancestor_that_shows_where_it_runs() {
+        // zmx's session (10) shows its workspace in its environment and its
+        // session in its arguments; the shell (11) and nc (12) under it don't
+        // show their environments.
+        let output = "    1     0 launchd\n   10     1 /nix/store/x-zmx/bin/zmx attach --labels k=v server sh -c nc IGLU_DEVHOST_WORKSPACE=iglu-a\n   11    10 /bin/sh -c nc\n   12    11 /usr/bin/nc -l 3000\n   20     1 postgres HOME=/u\n";
+        let table = parse_ps(output);
+        assert_eq!(
+            placement(&table, 12),
+            Placement {
+                workspace: Some("iglu-a".into()),
+                session: Some("server".into())
+            }
+        );
+        assert_eq!(placement(&table, 20), Placement::default());
+        assert_eq!(placement(&table, 99), Placement::default());
     }
 
     #[test]

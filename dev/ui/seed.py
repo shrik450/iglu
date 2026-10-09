@@ -154,7 +154,7 @@ def main() -> None:
             bob.create(project=general["id"], name="bobs-secret-work")
         context.browser.close()
 
-    print("seeded https://iglu.localhost: sign in as alice or bob, password 'password'")
+    print("seeded https://iglu.localhost: sign in as alice, bob or carol, password 'password'")
 
 
 if __name__ == "__main__":

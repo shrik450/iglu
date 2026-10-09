@@ -31,11 +31,9 @@ import {
   attentionGlyph,
   attentionText,
   buildRows,
-  conditionText,
   Frost,
   Glyph,
   Igloo,
-  inTrouble,
   phaseText,
   workspaceGlyph,
 } from "../components/bits.tsx";
@@ -48,6 +46,7 @@ import { terminalShortcut } from "../keyboard.ts";
 import { FRACTION, LABEL, type Shown } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
+import { situation } from "../state/situation.ts";
 import { addingColumn, addingPort, closing, inside, projects, collapsed, confirming, details, filter, groups, navigate, renaming, route } from "../state/store.ts";
 import { loadGhostty, TerminalPane } from "../terminal.ts";
 
@@ -127,6 +126,10 @@ function Tree({ current }: { current: WorkspaceView | null }) {
                       href={`/w/${ws.name}`}
                       class={`t-ws${ws.needs_you ? " needs" : ""}${ws.phase === "stopped" || ws.phase === "frozen" ? " asleep" : ""}`}
                       aria-current={ws.id === current?.id ? "page" : undefined}
+                      // In the one-row list on a phone, the current workspace may be off to the side.
+                      ref={(el) => {
+                        if (ws.id === current?.id) el?.scrollIntoView({ inline: "nearest", block: "nearest" });
+                      }}
                       onClick={(e) => {
                         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
                         e.preventDefault();
@@ -266,9 +269,33 @@ function Header({ ws }: { ws: WorkspaceView }) {
           </button>
         </div>
       </header>
-      {ws.condition ? <p class={`condition${inTrouble(ws.condition) ? "" : " calm"}`}>{conditionText(ws.condition)}</p> : null}
+      <Trouble ws={ws} />
     </>
   );
+}
+
+/** Trouble in a running workspace, above its columns; any other shows it in their place. */
+function Trouble({ ws }: { ws: WorkspaceView }) {
+  if (ws.phase !== "running") return null;
+  const now = situation(ws);
+  switch (now.kind) {
+    case "stuck":
+    case "broken":
+    case "held":
+      return (
+        <p class={`condition${now.kind === "held" ? " calm" : ""}`} translate={false}>
+          <b>{now.title}.</b> {now.detail}
+        </p>
+      );
+    case "building":
+    case "frozen":
+    case "stopped":
+    case "leaving":
+    case "running":
+      return null;
+    default:
+      return unreachable(now);
+  }
 }
 
 /** The branch as Git sees it now, with what's ahead, behind or changed. */
@@ -283,9 +310,12 @@ function Branch({ ws }: { ws: WorkspaceView }) {
         git.conflicted ? `${git.conflicted} conflicted` : "",
       ].filter(Boolean)
     : [];
+  // A branch named after the workspace goes without saying.
+  const named = branch && branch !== ws.name;
+  if (!named && !marks.length) return null;
   return (
-    <span class="sub">
-      <span translate={false}>⎇ {branch}</span>
+    <span class="sub" title={branch ? `On ${branch}` : undefined}>
+      <span translate={false}>⎇{named ? ` ${branch}` : ""}</span>
       {marks.length ? <span class="git"> {marks.join(" · ")}</span> : null}
     </span>
   );
@@ -435,7 +465,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
   const [status, setStatus] = useState("");
   return (
     <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[column.width]) }} data-column={name} aria-label={`Column ${name}`}>
-      <header class="col-h">
+      <header class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}>
         <Glyph kind={attentionGlyph(attention)} />
         <b translate={false}>{name}</b>
         {attention?.summary ? <span class="ct">{attention.summary}</span> : null}
@@ -459,7 +489,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
           <span class="col-ctl">
             {arranged ? (
               <>
-                <button type="button" title="Width (w)" aria-label={`Width of ${name}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
+                <button type="button" class="wbtn" title="Width (w)" aria-label={`Width of ${name}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
                   {LABEL[column.width]}
                 </button>
                 <button type="button" aria-label={`Move ${name} left`} onClick={() => (markActive(ws, name), void moveColumn(ws, -1))}>
@@ -548,11 +578,11 @@ function Pane(props: { ws: WorkspaceView; name: string; on: boolean; onStatus: (
         workspace: ws.id,
         session: name,
         shortcuts: terminalShortcut,
+        wantsFocus: () => on.current,
         onFocus: () => markActive(ws, name),
         onStatus,
         onDrop: () => void loadColumns(ws),
       });
-      if (on.current) pane.focus();
     });
     return () => {
       cancelled = true;
@@ -563,43 +593,71 @@ function Pane(props: { ws: WorkspaceView; name: string; on: boolean; onStatus: (
 }
 
 function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
-  switch (ws.phase) {
-    case "creating":
-    case "starting":
+  const now = situation(ws);
+  switch (now.kind) {
+    case "building":
       return (
         <div class="cols-note">
           <div class="building">
             <Igloo rows={buildRows(ws.phase)} />
-            <span class="what">{ws.phase === "creating" ? "Creating…" : "Starting…"}</span>
+            <span class="what">{now.label}</span>
           </div>
         </div>
       );
-    case "freezing":
+    case "stuck":
+    case "broken":
+    case "held": {
+      const project = projects.value.find((p) => p.id === ws.project);
+      return (
+        <div class={`cols-note problem ${now.kind === "held" ? "calm" : "trouble"}`} role="status">
+          <b>{now.title}</b>
+          <p translate={false}>{now.detail}</p>
+          <div class="acts">
+            {now.kind === "stuck" && ws.phase === "creating" && project?.repo ? (
+              <a class="btn" href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
+                Check {project.name}'s repository
+              </a>
+            ) : null}
+            {now.kind === "broken" ? (
+              <button type="button" class="btn" onClick={() => void setState(ws, "stopped")}>
+                Stop
+              </button>
+            ) : null}
+            <button
+              type="button"
+              class="btn danger"
+              onClick={() => {
+                details.value = true;
+                confirming.value = "delete";
+              }}
+            >
+              Delete…
+            </button>
+          </div>
+        </div>
+      );
+    }
     case "frozen":
       return (
         <div class="cols-note is-frozen">
-          <Frost label={ws.phase === "freezing" ? "Freezing…" : "Frozen"} hint="f to thaw" />
+          <Frost label={now.label} hint="f to thaw" />
         </div>
       );
-    case "stopping":
     case "stopped":
       return (
         <div class="cols-note">
-          <span>{ws.phase === "stopping" ? "Stopping…" : "Stopped. Files are kept."}</span>
-          {ws.phase === "stopped" ? (
-            <button type="button" class="btn primary" onClick={() => void setState(ws, "running")}>
-              Start
-            </button>
-          ) : null}
+          <span>{now.label}</span>
+          <button type="button" class="btn primary" onClick={() => void setState(ws, "running")}>
+            Start
+          </button>
         </div>
       );
-    case "deleting":
-    case "deleted":
-      return <div class="cols-note">Deleting…</div>;
+    case "leaving":
+      return <div class="cols-note">{now.label}</div>;
     case "running":
       return null;
     default:
-      return unreachable(ws.phase);
+      return unreachable(now);
   }
 }
 

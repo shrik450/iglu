@@ -1,5 +1,6 @@
 // Starts the console: who's signed in, the snapshot stream, keys, and the frame.
 
+import { effect } from "@preact/signals";
 import { render } from "preact";
 
 import { api, failure } from "./api/client.ts";
@@ -8,13 +9,20 @@ import { App } from "./app.tsx";
 import { paintFrost } from "./components/bits.tsx";
 import { onPageKey } from "./keyboard.ts";
 import "./notify.ts";
-import { me, say } from "./state/store.ts";
-import { activeScreen, loadGhostty } from "./terminal.ts";
+import { look, me, say } from "./state/store.ts";
+import { activeScreen, loadGhostty, restyleTerminals } from "./terminal.ts";
 
 // Read-only access to the focused terminal's text, for the browser test.
 Object.assign(globalThis, { iglu: { screen: activeScreen } });
 
 paintFrost();
+// Terminals paint their own colours, so they follow a change of look: the
+// one chosen in Settings, once it's applied, or the system's.
+effect(() => {
+  void look.value;
+  queueMicrotask(restyleTerminals);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", restyleTerminals);
 document.addEventListener("keydown", onPageKey);
 const root = document.getElementById("app");
 if (root) render(<App />, root);

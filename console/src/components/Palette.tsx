@@ -1,6 +1,6 @@
 // Search and commands: everything in one list.
 
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { api } from "../api/client.ts";
 import { addColumn, nextWaiting, open, toggleFreeze } from "../actions.ts";
@@ -22,6 +22,8 @@ function items(): Item[] {
     { label: "Next waiting", hint: "⌥N", run: nextWaiting },
     { label: "Overview", run: () => navigate({ view: "overview" }) },
     { label: "Previews", hint: "p", run: () => navigate({ view: "previews" }) },
+    // Keys are no help on a touch screen.
+    ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: "?", run: () => (overlay.value = "keys") }]),
   ];
   if (ws) {
     list.push({ label: `Rename ${ws.name}`, hint: "e", run: () => (renaming.value = true) });
@@ -65,17 +67,32 @@ export function Palette() {
     overlay.value = null;
     item?.run();
   };
+  const list = useId();
+  // Opened from a terminal, the next keys must reach the palette, not the
+  // shell: take focus as soon as it renders, before the next key arrives, and
+  // again once the terminal has finished taking it back.
+  const input = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    input.current?.focus();
+    const again = window.setTimeout(() => input.current?.focus());
+    return () => window.clearTimeout(again);
+  }, []);
   return (
     <div class="overlay" onClick={(e) => e.target === e.currentTarget && (overlay.value = null)}>
       <div class="pbox" role="dialog" aria-label="Search and commands">
         <input
+          ref={input}
           type="text"
           name="q"
           aria-label="Search"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls={list}
+          aria-autocomplete="list"
+          aria-activedescendant={shown[index] ? `${list}-${index}` : undefined}
           placeholder="Workspaces, previews, commands…"
           autocomplete="off"
           spellcheck={false}
-          autoFocus
           value={query}
           onInput={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={(e) => {
@@ -87,11 +104,12 @@ export function Palette() {
             e.preventDefault();
           }}
         />
-        <ul class="plist" role="listbox" aria-label="Results">
+        <ul class="plist" id={list} role="listbox" aria-label="Results">
           {shown.length === 0 ? <li class="pempty">No matches.</li> : null}
           {shown.map((item, i) => (
             <li
               key={`${item.label}/${item.sub ?? ""}`}
+              id={`${list}-${i}`}
               class="pitem"
               role="option"
               aria-selected={i === index}

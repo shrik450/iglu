@@ -89,8 +89,27 @@ fn git_ok(dir: Option<&Path>, args: &[String]) -> Result<(), ProvisionError> {
         let what = args.first().cloned().unwrap_or_default();
         Err(ProvisionError::Git(
             what,
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            diagnosis(&String::from_utf8_lossy(&output.stderr)),
         ))
+    }
+}
+
+/// What went wrong, from Git's stderr: its `fatal:` and `error:` lines,
+/// without the labels or the progress around them, such as "Cloning into
+/// '/home/dev/app'...". All of it when Git didn't label any line.
+fn diagnosis(stderr: &str) -> String {
+    let labelled: Vec<&str> = stderr
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("fatal: ")
+                .or_else(|| line.trim().strip_prefix("error: "))
+        })
+        .collect();
+    if labelled.is_empty() {
+        stderr.trim().to_owned()
+    } else {
+        labelled.join("; ")
     }
 }
 
@@ -193,6 +212,20 @@ pub fn without_repository(dirs: &Dirs) -> Result<(), ProvisionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_failures_say_what_went_wrong_without_the_progress() {
+        let stderr = "Cloning into '/home/dev/app'...\nremote: Not Found\nfatal: repository 'https://git.example/app.git/' not found\n";
+        assert_eq!(
+            diagnosis(stderr),
+            "repository 'https://git.example/app.git/' not found"
+        );
+        assert_eq!(
+            diagnosis("error: pathspec 'x' did not match\nerror: and another\n"),
+            "pathspec 'x' did not match; and another"
+        );
+        assert_eq!(diagnosis("something unlabelled\n"), "something unlabelled");
+    }
 
     fn branch(name: &str) -> BranchName {
         name.parse().expect("valid branch")

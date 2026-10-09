@@ -4,6 +4,7 @@ import { useState } from "preact/hooks";
 
 import { create } from "../actions.ts";
 import type { CreateWorkspace } from "../generated/CreateWorkspace.ts";
+import { startingAgent } from "../state/project.ts";
 import { environments, newIn, overlay, projects } from "../state/store.ts";
 import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
 
@@ -12,6 +13,10 @@ export function NewWorkspace() {
   const project = projects.value.find((p) => p.id === chosen) ?? null;
   const latest = environments.value.find((env) => env.name === project?.environment)?.latest;
   const agents = latest?.status === "ready" ? latest.image.agents.map((a) => a.name) : [];
+  const preferred = project ? startingAgent(project, agents) : null;
+  // What the person picked, while it's still one this project's environment has.
+  const [picked, setPicked] = useState<string | null>(null);
+  const agent = picked && agents.includes(picked) ? picked : preferred;
   const close = () => {
     overlay.value = null;
     newIn.value = null;
@@ -21,9 +26,9 @@ export function NewWorkspace() {
     const text = textOf(data);
     const body: CreateWorkspace = { project: project.id };
     const prompt = text("prompt");
-    const agent = text("agent");
     if (prompt) body.prompt = prompt;
-    if (prompt && agent) body.agent = agent;
+    // Left out unless picked, so iglu chooses as the project says.
+    if (prompt && picked && agent) body.agent = agent;
     const name = text("name");
     const branch = text("branch");
     const base = text("base");
@@ -47,7 +52,7 @@ export function NewWorkspace() {
           <textarea
             name="prompt"
             rows={3}
-            placeholder={agents.length ? `What should ${agents[0]} do? Optional…` : "No agents in this environment…"}
+            placeholder={agent ? `What should ${agent} do? Optional…` : "No agents in this environment…"}
             disabled={agents.length === 0}
             autoFocus
             {...invalid(start, "prompt")}
@@ -61,7 +66,7 @@ export function NewWorkspace() {
         {agents.length > 1 ? (
           <label>
             Agent
-            <select name="agent" {...invalid(start, "agent")}>
+            <select name="agent" value={agent ?? ""} onChange={(e) => setPicked(e.currentTarget.value)} {...invalid(start, "agent")}>
               {agents.map((a) => (
                 <option key={a} value={a}>
                   {a}

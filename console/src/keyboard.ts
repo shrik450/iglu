@@ -5,6 +5,9 @@ import { type Action, type Focus, resolve } from "./state/keys.ts";
 import { unreachable } from "./state/unsaved.ts";
 import { addingColumn, closing, current, cursor, details, listed, navigate, overlay, renaming, route } from "./state/store.ts";
 
+/** Whether this keyboard has ⌘ and ⌥, or Ctrl and Alt. */
+export const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+
 export function perform(action: Action): void {
   const ws = current.value;
   switch (action.kind) {
@@ -30,6 +33,9 @@ export function perform(action: Action): void {
     }
     case "back":
       back();
+      return;
+    case "keys":
+      overlay.value = overlay.value === "keys" ? null : "keys";
       return;
     // The rest act on the open workspace, if there is one.
     case "column":
