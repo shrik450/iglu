@@ -261,6 +261,10 @@ try:
         browser("answers-queries", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
         browser("palette-from-terminal", "demo")
+        browser("keys-stay", "demo")
+        browser("prefix-moves", "demo")
+        browser("focus-returns", "demo")
+        browser("questions-end", "demo")
         assert second["columns"] == ["shell", "shell-2"], second
 
     token = json.loads(client.succeed("cat /root/.config/iglu/credentials.json"))["token"]

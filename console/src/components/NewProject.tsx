@@ -3,10 +3,11 @@
 import { api } from "../api/client.ts";
 import type { CreateProject } from "../generated/CreateProject.ts";
 import { environments, newIn, overlay } from "../state/store.ts";
-import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
+import { FieldError, FormError, invalid, textOf, useForm, useGrab } from "./forms.tsx";
 
 export function NewProject() {
   const close = () => (overlay.value = null);
+  const repo = useGrab<HTMLInputElement>();
   const add = useForm(async (data) => {
     const text = textOf(data);
     const environment = text("environment");
@@ -32,7 +33,7 @@ export function NewProject() {
         {environments.value.length === 0 ? <p class="field-err">Add an environment first, in <a href="/settings">Settings</a>.</p> : null}
         <label>
           Repository
-          <input name="repo" inputMode="url" placeholder="https://github.com/you/app.git…" autocomplete="off" spellcheck={false} autoFocus {...invalid(add, "repo")} />
+          <input name="repo" inputMode="url" placeholder="https://github.com/you/app.git…" autocomplete="off" spellcheck={false} ref={repo} {...invalid(add, "repo")} />
           <FieldError form={add} input="repo" />
         </label>
         <div class="two">

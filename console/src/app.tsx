@@ -2,8 +2,8 @@
 
 import { nextWaiting } from "./actions.ts";
 import { Glyph, Igloo } from "./components/bits.tsx";
-import { Keys } from "./components/Keys.tsx";
-import { mac } from "./keyboard.ts";
+import { Keys, PrefixHint } from "./components/Keys.tsx";
+import { keysFor, mac } from "./keyboard.ts";
 import { onKeyboard } from "./state/keys.ts";
 import { NewProject } from "./components/NewProject.tsx";
 import { NewWorkspace } from "./components/NewWorkspace.tsx";
@@ -34,7 +34,7 @@ function Topbar() {
           iglu
         </a>
         {count ? (
-          <button type="button" class="needs-badge" title="Next waiting (⌥N)" aria-label={`${count} waiting; go to the next`} onClick={nextWaiting}>
+          <button type="button" class="needs-badge" title={`Next workspace that needs you (${keysFor("next-waiting")})`} aria-label={`${count} waiting; go to the next`} onClick={nextWaiting}>
             <span aria-hidden="true">●</span>
             <span>
               {count}
@@ -168,6 +168,7 @@ export function App() {
       {overlay.value === "new" ? <NewWorkspace /> : null}
       {overlay.value === "project" ? <NewProject /> : null}
       {overlay.value === "keys" ? <Keys /> : null}
+      <PrefixHint />
       <Toasts />
       <Flash />
     </>

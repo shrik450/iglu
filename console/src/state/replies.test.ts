@@ -9,7 +9,7 @@ const none = new Uint8Array();
 
 test("device attributes are answered where the query ends", () => {
   const chunk = bytes("prompt> \x1b[cmore");
-  assert.deepEqual(scan(none, chunk, palette), { replies: [{ end: 11, text: "\x1b[?62;22c" }], carry: none });
+  assert.deepEqual(scan(none, chunk, palette), { replies: [{ end: 11, text: "\x1b[?62;22c" }], copies: [], carry: none });
   assert.deepEqual(scan(none, bytes("\x1b[0c"), palette).replies, [{ end: 4, text: "\x1b[?62;22c" }]);
   assert.deepEqual(scan(none, bytes("\x1b[>c"), palette).replies, [{ end: 4, text: "\x1b[>1;10;0c" }]);
 });
@@ -45,11 +45,20 @@ test("a query split across chunks is answered once it completes", () => {
 
 test("everything else passes unanswered", () => {
   for (const other of ["\x1b[6n", "\x1b[1;31m", "\x1b[?u", "\x1b]0;title\x07", "\x1b]11;#000000\x07", "\x1b[>0q", "\x1b[1 c"]) {
-    assert.deepEqual(scan(none, bytes(other), palette), { replies: [], carry: none }, JSON.stringify(other));
+    assert.deepEqual(scan(none, bytes(other), palette), { replies: [], copies: [], carry: none }, JSON.stringify(other));
   }
 });
 
 test("a long unfinished sequence isn't a query, so it isn't carried", () => {
   const long = bytes(`\x1b]7;file://host/${"x".repeat(64)}`);
   assert.deepEqual(scan(none, long, palette).carry, none);
+});
+
+test("a program's copy reaches the clipboard, even split across chunks", () => {
+  const encoded = btoa(String.fromCharCode(...new TextEncoder().encode("héllo\nworld")));
+  const first = scan(none, bytes(`x\x1b]52;c;${encoded.slice(0, 5)}`), palette);
+  assert.deepEqual(first.copies, []);
+  const second = scan(first.carry, bytes(`${encoded.slice(5)}\x07y`), palette);
+  assert.deepEqual(second.copies, ["héllo\nworld"]);
+  assert.deepEqual(scan(none, bytes("\x1b]52;c;?\x07"), palette).copies, []);
 });

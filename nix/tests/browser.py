@@ -46,24 +46,72 @@ def screen(page: Page) -> str:
     return str(page.evaluate("globalThis.iglu.screen()"))
 
 
-def run_in_column(page: Page, name: str, command: str, expected: str) -> str:
-    """Types into a column's terminal, as a person would, and waits for output."""
+def at_prompt(page: Page, name: str) -> None:
+    """Clicks into a column's terminal and waits for its shell's prompt,
+    whichever shell it is: text that has stopped changing."""
     page.wait_for_selector("[data-column]")
     column(page, name).locator(".term-host").click()
     deadline = time.monotonic() + 60
-    # The shell's prompt, whichever shell it is: text that has stopped changing.
     shown = ""
     while not shown.strip() or shown != screen(page):
         assert time.monotonic() < deadline, f"no prompt: {screen(page)!r}"
         shown = screen(page)
         time.sleep(1)
-    page.keyboard.type(command)
-    page.keyboard.press("Enter")
-    # Output wraps at the column's width; a narrow column breaks it across rows.
-    while expected not in screen(page).replace("\n", ""):
+
+
+def shows(page: Page, expected: str, times: int = 1) -> str:
+    """Waits for the focused terminal to show `expected`, `times` times.
+    Output wraps at the column's width; a narrow column breaks it across rows."""
+    deadline = time.monotonic() + 60
+    while screen(page).replace("\n", "").count(expected) < times:
         assert time.monotonic() < deadline, f"{expected!r} never appeared: {screen(page)!r}"
         time.sleep(0.5)
     return screen(page)
+
+
+def run_in_column(page: Page, name: str, command: str, expected: str) -> str:
+    """Types into a column's terminal, as a person would, and waits for output."""
+    at_prompt(page, name)
+    page.keyboard.type(command)
+    page.keyboard.press("Enter")
+    return shows(page, expected)
+
+
+def focused_column(page: Page) -> str | None:
+    """The column whose terminal has the keyboard, if one does."""
+    return page.evaluate("document.activeElement?.closest('.term-host')?.closest('[data-column]')?.dataset.column ?? null")
+
+
+def reaches(page: Page, name: str) -> None:
+    """What's typed now lands in `name`'s shell. Focus comes back once what
+    had it is gone, a task after it closes, so this waits a moment for it."""
+    deadline = time.monotonic() + 2
+    while focused_column(page) != name:
+        assert time.monotonic() < deadline, {"focused": focused_column(page), "active": page.evaluate("document.activeElement?.outerHTML.slice(0, 120)")}
+        time.sleep(0.05)
+    mark = str(time.time_ns())
+    page.keyboard.type(f"echo here{mark}")
+    page.keyboard.press("Enter")
+    # Once in the command, once printed.
+    shows(page, f"here{mark}", 2)
+
+
+def wholly_shown(page: Page, name: str) -> bool:
+    """Whether a column is all within the strip, not cut at either edge."""
+    return bool(
+        column(page, name).evaluate(
+            """(col) => {
+              const c = col.getBoundingClientRect(), s = col.closest('.w-cols').getBoundingClientRect();
+              return c.left >= s.left - 1 && c.right <= s.right + 1;
+            }"""
+        )
+    )
+
+
+def prefix(page: Page, key: str) -> None:
+    """The prefix, then a key for iglu."""
+    page.keyboard.press("Control+Space")
+    page.keyboard.press(key)
 
 
 def sign_in(page: Page) -> Any:
@@ -239,7 +287,7 @@ def palette_from_terminal(page: Page, name: str) -> Any:
     first = columns(page)[0]
     column(page, first).locator(".term-host").click()
     before = screen(page).count("previews")
-    page.keyboard.press("ControlOrMeta+k")
+    prefix(page, "Slash")
     page.keyboard.type("previews")
     page.keyboard.press("Enter")
     page.wait_for_url(f"{CONSOLE}/previews")
@@ -247,6 +295,104 @@ def palette_from_terminal(page: Page, name: str) -> Any:
     column(page, first).locator(".term-host").click()
     assert screen(page).count("previews") == before, screen(page)
     return {"went": "/previews"}
+
+
+def keys_stay(page: Page, name: str) -> Any:
+    """A terminal keeps the chords shells use: Alt+B moves back a word and
+    Ctrl+K kills the rest of the line, where iglu once took both."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    mark = str(time.time_ns())
+    page.keyboard.type(f"echo kept{mark} gone{mark}")
+    page.keyboard.press("Alt+b")
+    page.keyboard.press("Control+k")
+    page.keyboard.press("Enter")
+    shown = shows(page, f"kept{mark}", 2)
+    assert f"gone{mark}" not in shown.replace("\n", ""), shown
+    assert page.url == f"{CONSOLE}/w/{name}", page.url
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    return {"column": first}
+
+
+def prefix_moves(page: Page, name: str) -> Any:
+    """From a terminal, the prefix and a key reach iglu: the next column
+    comes wholly into view and takes the keyboard."""
+    open_workspace(page, name)
+    names = columns(page)
+    assert len(names) >= 2, names
+    at_prompt(page, names[0])
+    waiting = page.get_by_role("status", name="iglu is waiting for a key")
+    page.keyboard.press("Control+Space")
+    expect(waiting).to_be_visible()
+    page.keyboard.press("l")
+    expect(waiting).to_be_hidden()
+    expect(column(page, names[1])).to_have_class(re.compile(r"\bon\b"))
+    assert wholly_shown(page, names[1]), page.evaluate("document.querySelector('.w-cols').scrollLeft")
+    reaches(page, names[1])
+    prefix(page, "h")
+    expect(column(page, names[0])).to_have_class(re.compile(r"\bon\b"))
+    reaches(page, names[0])
+    return {"moved": [names[1], names[0]]}
+
+
+def focus_returns(page: Page, name: str) -> Any:
+    """Whatever opens over a workspace takes the keyboard while it's open,
+    and gives it back to the column you were in once it closes; before,
+    typing went to the page, where letters were shortcuts."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    here = column(page, first)
+    width = here.locator(".wbtn")
+    opened = width.inner_text()
+
+    def asks(key: str, takes: Locator) -> None:
+        prefix(page, key)
+        expect(takes).to_be_focused()
+        page.keyboard.press("Escape")
+
+    cases: dict[str, Callable[[], None]] = {
+        "palette": lambda: asks("Slash", page.get_by_role("combobox", name="Search")),
+        "shortcuts": lambda: asks("Shift+Slash", page.get_by_role("dialog", name="Keyboard shortcuts").get_by_role("button", name="Close")),
+        "rename": lambda: asks("r", page.get_by_role("textbox", name="Workspace name")),
+        "add a column": lambda: asks("c", page.get_by_role("group", name="Add a column").get_by_role("button", name="Shell")),
+        "end the column": lambda: asks("x", page.get_by_role("button", name=f"End {first}", exact=True)),
+        "width button": width.click,
+        "column header": lambda: here.locator(".col-h b").click(),
+    }
+    for case, run in cases.items():
+        run()
+        try:
+            reaches(page, first)
+        except AssertionError as error:
+            raise AssertionError(f"after {case}: {error}") from error
+    # Leave the column as wide as it was.
+    while width.inner_text() != opened:
+        width.click()
+    return {"cases": list(cases)}
+
+
+def questions_end(page: Page, name: str) -> Any:
+    """A question ends with the visit that asked it: a Delete armed and left
+    unanswered is gone on coming back, so no later click can answer it."""
+    open_workspace(page, name)
+    details = page.get_by_role("button", name="Details", exact=True)
+    panel = page.get_by_role("complementary", name="Details")
+    details.click()
+    panel.get_by_role("button", name="Delete", exact=True).click()
+    expect(panel.get_by_text(f"Delete {name}?")).to_be_visible()
+    page.get_by_role("group", name="View").get_by_role("button", name="Overview").click()
+    page.wait_for_url(f"{CONSOLE}/")
+    page.go_back()
+    page.wait_for_url(f"{CONSOLE}/w/{name}")
+    expect(page.locator('.wsv[data-phase="running"]')).to_be_visible()
+    expect(panel).to_have_count(0)
+    details.click()
+    expect(panel.get_by_role("button", name="Delete", exact=True)).to_be_visible()
+    expect(panel.get_by_text(f"Delete {name}?")).to_have_count(0)
+    details.click()
+    return {"asked": False}
 
 
 def card(page: Page, name: str, expected: str) -> Any:
@@ -326,6 +472,10 @@ STEPS: dict[str, Callable[..., Any]] = {
     "new-column": new_column,
     "answers-queries": answers_queries,
     "palette-from-terminal": palette_from_terminal,
+    "keys-stay": keys_stay,
+    "prefix-moves": prefix_moves,
+    "focus-returns": focus_returns,
+    "questions-end": questions_end,
     "card": card,
     "lands-on-waiting": lands_on_waiting,
     "publish": publish,

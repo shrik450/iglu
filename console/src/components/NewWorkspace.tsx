@@ -6,9 +6,10 @@ import { create } from "../actions.ts";
 import type { CreateWorkspace } from "../generated/CreateWorkspace.ts";
 import { startingAgent } from "../state/project.ts";
 import { environments, newIn, overlay, projects } from "../state/store.ts";
-import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
+import { FieldError, FormError, invalid, textOf, useForm, useGrab } from "./forms.tsx";
 
 export function NewWorkspace() {
+  const prompt = useGrab<HTMLTextAreaElement>();
   const [chosen, setChosen] = useState(newIn.value ?? projects.value[0]?.id ?? "");
   const project = projects.value.find((p) => p.id === chosen) ?? null;
   const latest = environments.value.find((env) => env.name === project?.environment)?.latest;
@@ -54,7 +55,7 @@ export function NewWorkspace() {
             rows={3}
             placeholder={agent ? `What should ${agent} do? Optional…` : "No agents in this environment…"}
             disabled={agents.length === 0}
-            autoFocus
+            ref={prompt}
             {...invalid(start, "prompt")}
             onKeyDown={(e) => {
               // ⌘↩ submits from the prompt, which takes plain returns.

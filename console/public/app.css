@@ -261,7 +261,7 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 form.add-menu { display: flex; gap: 6px; min-width: 280px; }
 form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; font: 13px/1.2 var(--mono); }
 .w-body { position: relative; min-height: 0; display: grid; }
-.w-cols { position: relative; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; min-height: 0; scroll-snap-type: x proximity; overscroll-behavior-x: contain; padding-bottom: 6px; }
+.w-cols { position: relative; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; min-height: 0; overscroll-behavior-x: contain; padding-bottom: 6px; }
 /* Terminals are dark in both looks, so what's said on them uses Polar night's hues. */
 .col { --waiting: #ffc46b; --done: #7eedbd; --working: #8fd8ff; --error: #ff8f8f; --accent: #8fd8ff; --muted: var(--term-dim); --ink: var(--term-ink); --cw: .5; flex: 0 0 calc((100% + 10px) * var(--cw) - 10px); min-width: 0; display: flex; flex-direction: column; background: var(--term-bg); border: 1px solid var(--term-line); border-radius: 8px; overflow: hidden; scroll-snap-align: start; transition: border-color .15s; }
 .col.on { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
@@ -360,7 +360,14 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .kgroups dl > div { display: grid; grid-template-columns: 74px 1fr; gap: 10px; align-items: baseline; font-size: 13.5px; }
 .kgroups dt { display: flex; gap: 3px; flex-wrap: wrap; }
 .kgroups dd { margin: 0; }
-.kbox > p { margin: 0; font-size: 12.5px; }
+.kbox > p { margin: 0; font-size: 13px; line-height: 1.7; }
+.chord { display: inline-flex; gap: 3px; }
+.kgroups dt { gap: 6px; }
+.prefix-hint { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 40; width: min(760px, calc(100% - 32px)); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px; display: grid; gap: 10px; font-size: 13px; }
+.prefix-hint { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 24px; }
+.prefix-hint h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.prefix-hint ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.prefix-hint li { display: flex; gap: 8px; align-items: baseline; }
 .plist { list-style: none; margin: 0; padding: 6px; max-height: 360px; overflow: auto; overscroll-behavior: contain; }
 .pitem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .pitem .sub { grid-column: 1; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

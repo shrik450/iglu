@@ -2,10 +2,11 @@
 
 import { api } from "../api/client.ts";
 import { say } from "../state/store.ts";
-import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
+import { FieldError, FormError, invalid, textOf, useForm, useGrab } from "./forms.tsx";
 
 /** `first` suggests a name, since a first environment needs no other. */
 export function AddEnvironment({ first = false }: { first?: boolean }) {
+  const source = useGrab<HTMLInputElement>(false, first);
   const add = useForm(async (data, form) => {
     const text = textOf(data);
     const name = text("name");
@@ -24,7 +25,7 @@ export function AddEnvironment({ first = false }: { first?: boolean }) {
       </label>
       <label class="grow">
         Flake
-        <input name="source" required placeholder="github:you/iglu-env#default…" autocomplete="off" spellcheck={false} autoFocus={first} {...invalid(add, "source")} />
+        <input name="source" required placeholder="github:you/iglu-env#default…" autocomplete="off" spellcheck={false} ref={source} {...invalid(add, "source")} />
         <FieldError form={add} input="source" />
       </label>
       <button type="submit" class={`btn${first ? " primary" : ""}`} disabled={add.busy}>

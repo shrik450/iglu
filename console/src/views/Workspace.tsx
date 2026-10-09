@@ -1,5 +1,6 @@
 // One workspace: the tree beside it, its header, and its strip of columns.
 
+import { signal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -17,6 +18,7 @@ import {
   moveColumn,
   openColumn,
   publish,
+  remove,
   rename,
   restartColumn,
   saveOpening,
@@ -25,7 +27,7 @@ import {
   unpublish,
 } from "../actions.ts";
 import { api } from "../api/client.ts";
-import { FieldError, FormError, InputError, invalid, useForm } from "../components/forms.tsx";
+import { FieldError, type Form, FormError, InputError, invalid, useForm, useGrab } from "../components/forms.tsx";
 import { Previews } from "../components/Previews.tsx";
 import {
   attentionGlyph,
@@ -42,12 +44,12 @@ import type { AttentionView } from "../generated/AttentionView.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
-import { terminalShortcut } from "../keyboard.ts";
-import { FRACTION, LABEL, type Shown } from "../state/layout.ts";
+import { keysFor, terminalKey } from "../keyboard.ts";
+import { FRACTION, inView, LABEL, scrollTarget, type Shown } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
-import { addingColumn, addingPort, closing, inside, projects, collapsed, confirming, details, filter, groups, navigate, renaming, route } from "../state/store.ts";
+import { ask, collapsed, details, filter, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
 import { loadGhostty, TerminalPane } from "../terminal.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
@@ -185,7 +187,7 @@ function Header({ ws }: { ws: WorkspaceView }) {
   const naming = useForm(async (data) => {
     const name = data.get("name");
     if (typeof name !== "string" || name.trim() === ws.name) {
-      renaming.value = false;
+      settle(ws, "rename");
       return;
     }
     await rename(ws, name.trim());
@@ -199,22 +201,13 @@ function Header({ ws }: { ws: WorkspaceView }) {
   return (
     <>
       <header class="w-head">
-        {renaming.value ? (
-          <form class="rename" onSubmit={naming.onSubmit}>
-            <input
-              name="name"
-              aria-label="Workspace name"
-              defaultValue={ws.name}
-              autocomplete="off"
-              spellcheck={false}
-              autoFocus
-              onFocus={(e) => e.currentTarget.select()}
-              {...invalid(naming, "name")}
-            />
+        {isAsking("rename") ? (
+          <form class="rename" onSubmit={naming.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+            <RenameInput ws={ws} form={naming} />
             <button type="submit" class="btn">
               Rename
             </button>
-            <button type="button" class="btn" onClick={() => (renaming.value = false)}>
+            <button type="button" class="btn" onClick={() => settle(ws)}>
               Cancel
             </button>
             <FieldError form={naming} input="name" />
@@ -223,7 +216,7 @@ function Header({ ws }: { ws: WorkspaceView }) {
         ) : (
           <div class="w-title">
             <Glyph kind={workspaceGlyph(ws)} />
-            <button type="button" class="nm" title="Rename (e)" translate={false} onClick={() => (renaming.value = true)}>
+            <button type="button" class="nm" title={`Rename (${keysFor("rename")})`} translate={false} onClick={() => ask(ws, { kind: "rename" })}>
               <h1>{ws.name}</h1>
             </button>
             {ws.checkout ? <Branch ws={ws} /> : null}
@@ -234,9 +227,9 @@ function Header({ ws }: { ws: WorkspaceView }) {
           <Previews ws={ws} />
           {ws.phase === "running" ? <Listening ws={ws} /> : null}
           {ws.phase === "running" ? (
-            addingPort.value ? (
-              <form class="addport" onSubmit={publishing.onSubmit}>
-                <input name="port" inputMode="numeric" placeholder="3000…" aria-label="Port to publish" autocomplete="off" autoFocus {...invalid(publishing, "port")} />
+            isAsking("port") ? (
+              <form class="addport" onSubmit={publishing.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+                <PortInput form={publishing} />
                 <button type="submit" class="btn" disabled={publishing.busy}>
                   Publish
                 </button>
@@ -244,7 +237,7 @@ function Header({ ws }: { ws: WorkspaceView }) {
                 <FormError form={publishing} />
               </form>
             ) : (
-              <button type="button" class="chip" aria-label="Publish a port" onClick={() => (addingPort.value = true)}>
+              <button type="button" class="chip" aria-label="Publish a port" onClick={() => ask(ws, { kind: "port" })}>
                 + port
               </button>
             )
@@ -252,11 +245,11 @@ function Header({ ws }: { ws: WorkspaceView }) {
         </div>
         <div class="w-actions">
           {ws.phase === "running" ? (
-            <button type="button" class="btn icon" aria-label="Freeze" title="Freeze (f)" onClick={() => void toggleFreeze(ws)}>
+            <button type="button" class="btn icon" aria-label="Freeze" title={`Freeze (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
               ❄
             </button>
           ) : ws.phase === "frozen" ? (
-            <button type="button" class="btn" title="Thaw (f)" onClick={() => void toggleFreeze(ws)}>
+            <button type="button" class="btn" title={`Thaw (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
               Thaw
             </button>
           ) : ws.phase === "stopped" ? (
@@ -264,7 +257,7 @@ function Header({ ws }: { ws: WorkspaceView }) {
               Start
             </button>
           ) : null}
-          <button type="button" class="btn icon" aria-label="Details" title="Details (i)" aria-pressed={details.value} onClick={() => (details.value = !details.value)}>
+          <button type="button" class="btn icon" aria-label="Details" title={`Details (${keysFor("details")})`} aria-pressed={details.value} onClick={() => (details.value = !details.value)}>
             ⋯
           </button>
         </div>
@@ -360,7 +353,7 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             type="button"
             aria-current={c.name === active ? "true" : undefined}
             key={c.name}
-            class={`sc${c.state === "ended" ? " ended" : ""}`}
+            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}`}
             onClick={() => focusColumn(ws, c.name)}
           >
             <Glyph kind={attentionGlyph(threads.get(c.name)?.[0] ?? null)} />
@@ -373,13 +366,13 @@ function Strip({ ws }: { ws: WorkspaceView }) {
           type="button"
           class="sc-add"
           aria-label="Add a column"
-          aria-expanded={addingColumn.value}
-          title="Add a column (a)"
-          onClick={() => (addingColumn.value = !addingColumn.value)}
+          aria-expanded={isAsking("add-column")}
+          title={`Add a column (${keysFor("add-column")})`}
+          onClick={() => (isAsking("add-column") ? settle(ws) : ask(ws, { kind: "add-column" }))}
         >
           +
         </button>
-        {addingColumn.value ? <AddMenu ws={ws} /> : null}
+        {isAsking("add-column") ? <AddMenu ws={ws} /> : null}
       </div>
     </div>
   );
@@ -387,9 +380,10 @@ function Strip({ ws }: { ws: WorkspaceView }) {
 
 function AddMenu({ ws }: { ws: WorkspaceView }) {
   const [command, setCommand] = useState(false);
+  const first = useGrab<HTMLButtonElement>();
   useEffect(() => {
     const away = (e: PointerEvent) => {
-      if (!(e.target instanceof Element && e.target.closest(".sc-adder"))) addingColumn.value = false;
+      if (!(e.target instanceof Element && e.target.closest(".sc-adder"))) settle(ws, "add-column");
     };
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
@@ -401,8 +395,8 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
   });
   if (command) {
     return (
-      <form class="add-menu" onSubmit={run.onSubmit}>
-        <input name="command" aria-label="Command to run" placeholder="npm run dev…" autocomplete="off" spellcheck={false} autoFocus {...invalid(run, "command")} />
+      <form class="add-menu" onSubmit={run.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+        <CommandInput form={run} />
         <button type="submit" class="btn" disabled={run.busy}>
           Run
         </button>
@@ -412,8 +406,8 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
     );
   }
   return (
-    <div class="add-menu" role="group" aria-label="Add a column">
-      <button type="button" autoFocus onClick={() => void addColumn(ws, { kind: "shell" })}>
+    <div class="add-menu" role="group" aria-label="Add a column" onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+      <button type="button" ref={first} onClick={() => void addColumn(ws, { kind: "shell" })}>
         Shell
       </button>
       {ws.agents.map((agent) => (
@@ -428,14 +422,85 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
   );
 }
 
+function RenameInput({ ws, form }: { ws: WorkspaceView; form: Form }) {
+  const ref = useGrab<HTMLInputElement>(true);
+  return <input ref={ref} name="name" aria-label="Workspace name" defaultValue={ws.name} autocomplete="off" spellcheck={false} {...invalid(form, "name")} />;
+}
+
+function PortInput({ form }: { form: Form }) {
+  const ref = useGrab<HTMLInputElement>();
+  return <input ref={ref} name="port" inputMode="numeric" placeholder="3000…" aria-label="Port to publish" autocomplete="off" {...invalid(form, "port")} />;
+}
+
+function CommandInput({ form }: { form: Form }) {
+  const ref = useGrab<HTMLInputElement>();
+  return <input ref={ref} name="command" aria-label="Command to run" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
+}
+
+/** Ending a column asks first; the question takes the keyboard, and Escape keeps the column. */
+function Ending({ ws, name }: { ws: WorkspaceView; name: string }) {
+  const end = useGrab<HTMLButtonElement>();
+  return (
+    <span class="col-ctl" style={{ opacity: 1 }} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+      <button type="button" class="end" ref={end} onClick={() => void closeColumn(ws, name)}>
+        End {name}
+      </button>
+      <button type="button" onClick={() => settle(ws)}>
+        Keep
+      </button>
+    </span>
+  );
+}
+
+/** Which columns are wholly on screen, for the strip's chips. */
+const onScreen = signal<ReadonlySet<string>>(new Set());
+
+/** How much of the next column stays in view beside the active one. */
+const PEEK = 48;
+
 function Columns({ ws }: { ws: WorkspaceView }) {
   const columns = columnsOf(ws);
   const active = activeOf(ws);
   const strip = useRef<HTMLDivElement>(null);
+  const activeNow = useRef(active);
+  activeNow.current = active;
+  const arrangement = columns.map((c) => `${c.name}:${c.width}`).join(" ");
+  // The strip scrolls so the active column is wholly in view, whenever it,
+  // the order, the widths or the window change.
+  const settle = (smooth: boolean) => {
+    const el = strip.current;
+    if (!el) return;
+    const cols = [...el.querySelectorAll<HTMLElement>("[data-column]")];
+    const spans = cols.map((c) => ({ left: c.offsetLeft, width: c.offsetWidth }));
+    const index = cols.findIndex((c) => c.dataset.column === activeNow.current);
+    const left = scrollTarget(spans, index, el.clientWidth, el.scrollLeft, PEEK);
+    if (Math.abs(left - el.scrollLeft) > 1) {
+      el.scrollTo({ left, behavior: smooth && !matchMedia("(prefers-reduced-motion: reduce)").matches ? "smooth" : "auto" });
+    }
+  };
   useEffect(() => {
-    const el = strip.current?.querySelector<HTMLElement>(`[data-column="${CSS.escape(active ?? "")}"]`);
-    el?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  }, [active, columns.length]);
+    const frame = requestAnimationFrame(() => settle(true));
+    return () => cancelAnimationFrame(frame);
+  }, [active, arrangement]);
+  useEffect(() => {
+    const el = strip.current;
+    if (!el) return;
+    const look = () => {
+      const cols = [...el.querySelectorAll<HTMLElement>("[data-column]")];
+      const shown = inView(cols.map((c) => ({ left: c.offsetLeft, width: c.offsetWidth })), el.clientWidth, el.scrollLeft);
+      onScreen.value = new Set(cols.filter((_, i) => shown.has(i)).map((c) => c.dataset.column ?? ""));
+    };
+    const resized = new ResizeObserver(() => {
+      settle(false);
+      look();
+    });
+    resized.observe(el);
+    el.addEventListener("scroll", look, { passive: true });
+    return () => {
+      resized.disconnect();
+      el.removeEventListener("scroll", look);
+    };
+  }, [ws.id]);
   if (columns.length === 0) {
     return (
       <div class="cols-note">
@@ -463,9 +528,18 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
   const state = attention ? attentionText(attention) : null;
   const arranged = arrangeable(column.state);
   const [status, setStatus] = useState("");
+  const asked = question.value;
+  const ending = asked?.kind === "end" && asked.column === name;
   return (
     <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[column.width]) }} data-column={name} aria-label={`Column ${name}`}>
-      <header class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}>
+      <header
+        class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}
+        onMouseDown={(e) => {
+          if (e.target instanceof Element && e.target.closest("input")) return;
+          e.preventDefault();
+          if (!(e.target instanceof Element && e.target.closest("button"))) focusColumn(ws, name);
+        }}
+      >
         <Glyph kind={attentionGlyph(attention)} />
         <b translate={false}>{name}</b>
         {attention?.summary ? <span class="ct">{attention.summary}</span> : null}
@@ -476,20 +550,13 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
           </button>
         ) : null}
         {status && column.state !== "ended" ? <span class="status">{status}</span> : null}
-        {closing.value === name ? (
-          <span class="col-ctl" style={{ opacity: 1 }}>
-            <button type="button" class="end" onClick={() => void closeColumn(ws, name)}>
-              End {name}
-            </button>
-            <button type="button" onClick={() => (closing.value = null)}>
-              Keep
-            </button>
-          </span>
+        {ending ? (
+          <Ending ws={ws} name={name} />
         ) : (
           <span class="col-ctl">
             {arranged ? (
               <>
-                <button type="button" class="wbtn" title="Width (w)" aria-label={`Width of ${name}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
+                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${name}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
                   {LABEL[column.width]}
                 </button>
                 <button type="button" aria-label={`Move ${name} left`} onClick={() => (markActive(ws, name), void moveColumn(ws, -1))}>
@@ -500,7 +567,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
                 </button>
               </>
             ) : null}
-            <button type="button" aria-label={`End ${name}`} title="End this column (x)" onClick={() => (closing.value = name)}>
+            <button type="button" aria-label={`End ${name}`} title={`End this column (${keysFor("close-column")})`} onClick={() => ask(ws, { kind: "end", column: name })}>
               ×
             </button>
           </span>
@@ -577,7 +644,7 @@ function Pane(props: { ws: WorkspaceView; name: string; on: boolean; onStatus: (
         ghostty,
         workspace: ws.id,
         session: name,
-        shortcuts: terminalShortcut,
+        shortcuts: terminalKey,
         wantsFocus: () => on.current,
         onFocus: () => markActive(ws, name),
         onStatus,
@@ -628,7 +695,7 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
               class="btn danger"
               onClick={() => {
                 details.value = true;
-                confirming.value = "delete";
+                ask(ws, { kind: "delete" });
               }}
             >
               Delete…
@@ -640,7 +707,7 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
     case "frozen":
       return (
         <div class="cols-note is-frozen">
-          <Frost label={now.label} hint="f to thaw" />
+          <Frost label={now.label} hint={`${keysFor("freeze")} to thaw`} />
         </div>
       );
     case "stopped":
@@ -709,15 +776,15 @@ function Details({ ws }: { ws: WorkspaceView }) {
         </div>
       ) : null}
       <div class="w-actions">
-        {confirming.value === "delete" ? (
+        {isAsking("delete") ? (
           <div class="confirm">
             <span>
               Delete {ws.name}? {lossText(ws)}
             </span>
-            <button type="button" class="btn danger" onClick={() => void setState(ws, "deleted").then(() => navigate({ view: "overview" }))}>
+            <button type="button" class="btn danger" onClick={() => void remove(ws)}>
               Delete
             </button>
-            <button type="button" class="btn" onClick={() => (confirming.value = null)}>
+            <button type="button" class="btn" onClick={() => settle(ws)}>
               Keep it
             </button>
           </div>
@@ -728,7 +795,7 @@ function Details({ ws }: { ws: WorkspaceView }) {
                 Stop
               </button>
             ) : null}
-            <button type="button" class="btn danger" onClick={() => (confirming.value = "delete")}>
+            <button type="button" class="btn danger" onClick={() => ask(ws, { kind: "delete" })}>
               Delete
             </button>
           </>

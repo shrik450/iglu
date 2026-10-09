@@ -6,7 +6,8 @@
 // form's FormError. The server is the one parser of what inputs mean, so
 // forms only turn text into the request's shape.
 
-import { useId, useState } from "preact/hooks";
+import { type RefObject } from "preact";
+import { useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 
 import { ApiError, failure } from "../api/client.ts";
 import { inputOf } from "../state/fields.ts";
@@ -95,4 +96,22 @@ export function FormError({ form }: { form: Form }) {
       {form.problem.message}
     </p>
   ) : null;
+}
+
+/** Takes focus as it opens, and again a moment later: opened from a
+ * terminal, the terminal takes focus back once in Chromium, and autoFocus
+ * loses to it. */
+export function useGrab<T extends HTMLElement>(select = false, when = true): RefObject<T | null> {
+  const ref = useRef<T>(null);
+  useLayoutEffect(() => {
+    if (!when) return;
+    const take = () => {
+      ref.current?.focus();
+      if (select && ref.current instanceof HTMLInputElement) ref.current.select();
+    };
+    take();
+    const again = window.setTimeout(take);
+    return () => window.clearTimeout(again);
+  }, []);
+  return ref;
 }

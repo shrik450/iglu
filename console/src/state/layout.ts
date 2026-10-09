@@ -74,3 +74,38 @@ export function stepIndex(length: number, index: number, step: -1 | 1): number {
   if (length === 0) return -1;
   return Math.max(0, Math.min(length - 1, index + step));
 }
+
+/** A column's place in the strip, in pixels from the strip's start. */
+export interface Span {
+  left: number;
+  width: number;
+}
+
+/**
+ * Where the strip should scroll so the focused column is wholly in view,
+ * moving as little as it can and leaving `peek` pixels of the neighbour on
+ * the side it came into view from, so it's plain there's more that way. A
+ * column too wide for that starts at the view's left edge.
+ */
+export function scrollTarget(spans: readonly Span[], focused: number, view: number, scroll: number, peek: number): number {
+  const span = spans[focused];
+  const end = spans.at(-1);
+  if (!span || !end) return scroll;
+  const max = Math.max(0, end.left + end.width - view);
+  const clamp = (x: number) => Math.min(max, Math.max(0, Math.round(x)));
+  if (span.width + 2 * peek > view) return clamp(span.left);
+  const before = focused > 0 ? peek : 0;
+  const after = focused < spans.length - 1 ? peek : 0;
+  if (span.left - before < scroll) return clamp(span.left - before);
+  if (span.left + span.width + after > scroll + view) return clamp(span.left + span.width + after - view);
+  return clamp(scroll);
+}
+
+/** The columns wholly in view. */
+export function inView(spans: readonly Span[], view: number, scroll: number): Set<number> {
+  const shown = new Set<number>();
+  spans.forEach((span, i) => {
+    if (span.left >= scroll - 1 && span.left + span.width <= scroll + view + 1) shown.add(i);
+  });
+  return shown;
+}
