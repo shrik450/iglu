@@ -5,6 +5,11 @@ session cookies, carry over between runs in a state file, so steps build on
 each other like one long browser session. A failing step leaves a screenshot.
 
     browser <step> [args...]
+
+The VM test runs it against its control box. `just dev-check` runs the same
+steps against the local dev stack by setting IGLU_CONSOLE, BROWSER_STATE and
+BROWSER_SHOTS. BROWSER_RESOLVER_RULES is only for where DNS doesn't resolve
+the console.
 """
 
 import json
@@ -17,9 +22,9 @@ from typing import Any, Callable
 
 from playwright.sync_api import Locator, Page, expect, sync_playwright
 
-CONSOLE = "https://iglu.example.test"
-STATE = Path("/root/browser-state.json")
-SHOTS = Path("/tmp/browser")
+CONSOLE = os.environ.get("IGLU_CONSOLE", "https://iglu.example.test")
+STATE = Path(os.environ.get("BROWSER_STATE", "/root/browser-state.json"))
+SHOTS = Path(os.environ.get("BROWSER_SHOTS", "/tmp/browser"))
 
 
 def open_workspace(page: Page, name: str) -> None:
@@ -46,9 +51,12 @@ def run_in_column(page: Page, name: str, command: str, expected: str) -> str:
     page.wait_for_selector("[data-column]")
     column(page, name).locator(".term-host").click()
     deadline = time.monotonic() + 60
-    while "$" not in screen(page):  # the shell's prompt
+    # The shell's prompt, whichever shell it is: text that has stopped changing.
+    shown = ""
+    while not shown.strip() or shown != screen(page):
         assert time.monotonic() < deadline, f"no prompt: {screen(page)!r}"
-        time.sleep(0.5)
+        shown = screen(page)
+        time.sleep(1)
     page.keyboard.type(command)
     page.keyboard.press("Enter")
     while expected not in screen(page):
@@ -84,7 +92,9 @@ def create(page: Page, environment: str, repo: str, name: str) -> Any:
     project.get_by_label("Environment").select_option(environment)
     project.get_by_role("button", name="Add").click()
     form = page.get_by_role("form", name="New workspace")
-    expect(form.get_by_label("Project").locator("option:checked")).to_have_text("app")
+    # A project added for a repository is named after it.
+    named = repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+    expect(form.get_by_label("Project").locator("option:checked")).to_have_text(named)
     form.get_by_label("Name").fill(name)
     form.get_by_role("button", name="Create").click()
     page.wait_for_url(f"{CONSOLE}/w/{name}")
@@ -211,16 +221,15 @@ STEPS: dict[str, Callable[..., Any]] = {
 def main() -> None:
     step, args = sys.argv[1], sys.argv[2:]
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            args=[f"--host-resolver-rules={os.environ['BROWSER_RESOLVER_RULES']}"]
-        )
+        rules = os.environ.get("BROWSER_RESOLVER_RULES")
+        browser = playwright.chromium.launch(args=[f"--host-resolver-rules={rules}"] if rules else [])
         context = browser.new_context(storage_state=STATE if STATE.exists() else None)
         context.set_default_timeout(30_000)
         page = context.new_page()
         try:
             result = STEPS[step](page, *args)
         except Exception:
-            SHOTS.mkdir(exist_ok=True)
+            SHOTS.mkdir(parents=True, exist_ok=True)
             for index, open_page in enumerate(context.pages):
                 open_page.screenshot(path=SHOTS / f"{step}-{index}.png")
             raise

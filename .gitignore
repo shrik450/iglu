@@ -5,3 +5,4 @@ node_modules/
 /console/dist/
 .env
 /.dev/
+__pycache__/

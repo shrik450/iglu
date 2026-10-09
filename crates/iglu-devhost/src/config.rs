@@ -44,6 +44,12 @@ pub struct Settings {
     /// machine's tools, so agents are this machine's, not the flake's.
     #[serde(default)]
     pub agents: Vec<iglu_domain::agent::AgentSpec>,
+    /// A CA certificate that workspaces' Git trusts for `https://*.localhost`
+    /// only, such as the dev CA, so workspaces can clone the dev stack's
+    /// fixture repositories at `git.localhost`. Other hosts keep Git's own
+    /// trust.
+    #[serde(default)]
+    pub localhost_ca: Option<AbsolutePath>,
 }
 
 /// An absolute path in UTF-8, so it can become a guest path.

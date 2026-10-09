@@ -44,6 +44,13 @@ just dev       # run iglud and the console locally; see DEVELOPMENT.md
 `DEVELOPMENT.md` explains the local dev stack, its `dev-*` recipes, and the
 dev CA it uses for HTTPS.
 
+Look at console changes before calling them done. With the dev stack running
+and seeded (`just dev-seed`), `just dev-tour` screenshots every view in Chromium
+and WebKit, on desktop and phone, in both themes, with accessibility audits;
+`just dev-compare` shows what a change touched; and `just dev-check` runs the
+VM test's browser steps locally. A console bug fix gets a step in
+`nix/tests/browser.py`, which both run.
+
 CI runs every flake check except the VM test on pull requests and on `main`
 (`.github/workflows/ci.yml`). The checks live in `nix/checks.nix` and the
 flake, so adding one there adds it to CI. Run `just lint test` before pushing.

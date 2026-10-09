@@ -132,6 +132,8 @@ to iglud or hostd needs a restart.
 | State       | `.dev/state/` in the current worktree                      |
 | Workspaces  | `.dev/state/devhost/instances/<instance>/home`             |
 | Sessions    | `~/.cache/iglu/<worktree hash>/<slot>/`                    |
+| Fixtures    | `https://git.localhost`, from `.dev/shared/git/`           |
+| Tours       | `.dev/tour/<label>/index.html`                             |
 
 iglud's state is its database, its secret-sealing key and the dev CLI's login,
 and the devhost's is your workspaces. It lives in the worktree you run
@@ -162,6 +164,46 @@ state instead of your real `~/.config/iglu`:
 just dev-cli login https://iglu.localhost
 just dev-cli ls
 ```
+
+### Seeing and checking the console
+
+The console is checked in real browsers, Chromium and WebKit, which the dev
+shell provides through Playwright. Four recipes drive the running stack the
+way a person would:
+
+```sh
+just dev-reset && just dev   # a fresh stack, in one terminal
+just dev-seed                # then, in another, fill it
+just dev-tour --quick        # screenshot every view; .dev/tour/<label>/index.html
+just dev-check               # the VM test's browser steps, against this stack
+```
+
+- **`just dev-seed`** makes fixture repositories and signs in as alice and
+  bob to build workspaces in every state worth looking at: an agent waiting,
+  working, done and crashed; uncommitted and unpushed work; a published
+  preview; frozen, stopped, and a clone that fails. Caddy serves the fixture
+  repositories at `https://git.localhost` from `.dev/shared/git/`, and the
+  devhost has workspaces' Git trust the dev CA for `*.localhost` only.
+- **`just dev-tour`** visits every view, dialog and seeded workspace on
+  desktop and phone, in dark and light, in Chromium and WebKit. For each it
+  keeps a screenshot, console errors and horizontal overflow; for the
+  desktop views it also keeps the accessibility tree and an axe audit. Add
+  `--quick` for desktop and dark only, `--only <text>` for some stops, and
+  `--label <name>` to name the run.
+- **`just dev-compare <before> <after>`** marks what changed between two
+  tours, most changed first, so a change shows everything it touched.
+- **`just dev-check`** runs `nix/tests/browser.py`'s steps against the local
+  stack in about two minutes. A console fix gets a step there, which this
+  and the VM test both run.
+
+Three agents are declared here:
+
+- **`claude`** is Claude Code as you've set it up.
+- **`haiku`** is the same on Haiku, which is cheap for trying things.
+- **`scripted`** is a stand-in that does no work. It reports whichever
+  attention state you type, such as `wait Approve the migration` or `done
+  Fixed it`, so agent states can be shown and tested without a real agent.
+  `dev/agents/scripted` lists what it understands.
 
 ### Shared services
 
