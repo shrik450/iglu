@@ -73,6 +73,10 @@ def main() -> None:
             added = step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")["added"]
             step("attention", browser.terminal, page, NAME, "iglu-status set waiting Check needs you; printf 'set-%s\\n' 42", "set-42")
             step("palette-from-terminal", browser.palette_from_terminal, page, NAME)
+            step("keys-stay", browser.keys_stay, page, NAME)
+            step("prefix-moves", browser.prefix_moves, page, NAME)
+            step("focus-returns", browser.focus_returns, page, NAME)
+            step("questions-end", browser.questions_end, page, NAME)
             step("card", browser.card, page, NAME, "Check needs you")
             step("lands-on-waiting", browser.lands_on_waiting, page, NAME, "shell", added)
             step("server", browser.terminal, page, NAME, f"python3 -m http.server {PORT} --bind 127.0.0.1 &", f"port {PORT}")

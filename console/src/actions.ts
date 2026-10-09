@@ -1,7 +1,7 @@
 // Everything the person can do, in one place, so keys, the palette and
 // buttons share it.
 
-import { batch, effect, untracked } from "@preact/signals";
+import { effect, untracked } from "@preact/signals";
 
 import { api, failure } from "./api/client.ts";
 import type { ColumnKind } from "./generated/ColumnKind.ts";
@@ -13,11 +13,7 @@ import type { WorkspaceView } from "./generated/WorkspaceView.ts";
 import { layoutOf, moved, type Shown, shown, stepIndex, widened } from "./state/layout.ts";
 import {
   activeColumn,
-  addingColumn,
-  addingPort,
-  closing,
   columnStates,
-  confirming,
   current,
   cursor,
   details,
@@ -26,9 +22,10 @@ import {
   navigate,
   overlay,
   projects,
-  renaming,
+  question,
   route,
   say,
+  settle,
   waiting,
   workspaces,
 } from "./state/store.ts";
@@ -45,25 +42,15 @@ export async function attempt<T>(request: () => Promise<T>): Promise<T | undefin
 }
 
 export function open(ws: WorkspaceView): void {
-  batch(() => {
-    cursor.value = ws.id;
-    details.value = false;
-    renaming.value = false;
-    confirming.value = null;
-    addingPort.value = false;
-    addingColumn.value = false;
-  });
+  cursor.value = ws.id;
   navigate({ view: "workspace", name: ws.name });
 }
 
 export function back(): void {
+  const ws = current.value;
   if (overlay.value) overlay.value = null;
-  else if (addingColumn.value) addingColumn.value = false;
-  else if (closing.value) closing.value = null;
-  else if (confirming.value) confirming.value = null;
-  else if (renaming.value) renaming.value = false;
+  else if (ws && question.value) settle(ws);
   else if (details.value) details.value = false;
-  else if (addingPort.value) addingPort.value = false;
   else if (route.value.view !== "overview") navigate({ view: "overview" });
 }
 
@@ -90,6 +77,14 @@ export async function setState(ws: WorkspaceView, state: DesiredState): Promise<
   await attempt(() => api.setState(ws, state));
 }
 
+/** Deletes a workspace once the person confirmed, leaving it for the
+ * overview only if iglu agreed; otherwise they stay, with the reason shown. */
+export async function remove(ws: WorkspaceView): Promise<void> {
+  const deleted = await attempt(() => api.setState(ws, "deleted"));
+  settle(ws, "delete");
+  if (deleted && current.value?.id === ws.id) navigate({ view: "overview" });
+}
+
 export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
   if (ws.phase === "running") await setState(ws, "frozen");
   else if (ws.phase === "frozen") await setState(ws, "running");
@@ -98,7 +93,7 @@ export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
 /** Renames a workspace; throws what iglu refused, for the form to show. */
 export async function rename(ws: WorkspaceView, name: string): Promise<void> {
   const renamed = await api.rename(ws.id, name);
-  renaming.value = false;
+  settle(ws, "rename");
   if (current.value?.id === ws.id) navigate({ view: "workspace", name: renamed.name }, "replace");
 }
 
@@ -113,7 +108,7 @@ export async function create(body: CreateWorkspace): Promise<void> {
 export async function publish(ws: WorkspaceView, port: number): Promise<void> {
   const route = await api.publish(ws.id, port);
   say(`Published :${route.port} at ${route.url}`);
-  addingPort.value = false;
+  settle(ws, "port");
 }
 
 export async function unpublish(ws: WorkspaceView, route: RouteView): Promise<void> {
@@ -164,18 +159,40 @@ export function activeOf(ws: WorkspaceView): string | null {
   return columns.some((c) => c.name === active) ? (active ?? null) : (columns[0]?.name ?? null);
 }
 
-/** Arriving at a workspace where an agent waits lands on that agent's
- * column. It's decided here, as the route changes and before the columns
- * render, because a terminal that had focus last time takes it back as soon
- * as it opens. Only on arrival: a thread that starts waiting while you're
- * there mustn't pull focus from what you're doing. */
+/** Arriving at a workspace lands on the column of an agent that waits, or
+ * else on the first column, scrolled to the start. It's decided here, as the
+ * route changes and before the columns render. Only on arrival: a thread that
+ * starts waiting while you're there mustn't pull focus from what you're doing. */
 let arrived: WorkspaceView["id"] | null = null;
 effect(() => {
   const ws = current.value;
   if (ws?.id === arrived) return;
   arrived = ws?.id ?? null;
-  const waits = ws?.attention?.state === "waiting" ? ws.attention.session : null;
-  if (ws && waits && ws.columns.some((c) => c.name === waits)) untracked(() => markActive(ws, waits));
+  if (!ws) return;
+  const waits = ws.attention?.state === "waiting" ? ws.attention.session : null;
+  const landing = waits && ws.columns.some((c) => c.name === waits) ? waits : ws.columns[0]?.name;
+  if (landing) untracked(() => markActive(ws, landing));
+});
+
+/** In a workspace, the keyboard belongs to the active column whenever
+ * nothing else asked for it. So when a dialog, menu, form or confirmation
+ * closes, the terminal gets it back, rather than the page, where typing
+ * would go nowhere. */
+let asking = false;
+effect(() => {
+  const now = Boolean(overlay.value) || question.value !== null;
+  const closed = asking && !now;
+  asking = now;
+  if (!closed) return;
+  window.setTimeout(() => {
+    const ws = current.peek();
+    const focus = document.activeElement;
+    const free = !focus || focus === document.body || (Boolean(focus.closest(".main")) && !focus.closest("input, textarea, select, .info"));
+    if (ws && free) {
+      const name = activeOf(ws);
+      if (name) panes.get(`${ws.id}/${name}`)?.focus();
+    }
+  });
 });
 
 /** Records which column has focus, without moving focus. */
@@ -225,14 +242,14 @@ export async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<v
   if (ws.phase !== "running") return;
   const after = activeOf(ws);
   const created = await api.addColumn(ws.id, after ? { kind, after } : { kind });
-  addingColumn.value = false;
+  settle(ws, "add-column");
   markActive(ws, created.name);
   await loadColumns(ws);
 }
 
 /** openColumn for buttons and keys. */
 export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
-  addingColumn.value = false;
+  settle(ws, "add-column");
   await attempt(() => openColumn(ws, kind));
 }
 
@@ -243,7 +260,7 @@ export async function restartColumn(ws: WorkspaceView, name: string): Promise<vo
 
 /** Ends a column's session and its processes, and drops the column. Callers confirm first. */
 export async function closeColumn(ws: WorkspaceView, name: string): Promise<void> {
-  closing.value = null;
+  settle(ws, "end");
   await attempt(() => api.closeColumn(ws.id, name));
   await loadColumns(ws);
 }

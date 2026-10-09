@@ -2,6 +2,7 @@
 // Both read the keymap's own table, so they can't disagree with it.
 
 import { armed, keyboard, mac } from "../keyboard.ts";
+import { useGrab } from "./forms.tsx";
 import { type Binding, BINDINGS, chordLabel, onKeyboard } from "../state/keys.ts";
 import { overlay } from "../state/store.ts";
 
@@ -27,13 +28,14 @@ function ways(binding: Binding, prefix: string): string[] {
 
 export function Keys() {
   const close = () => (overlay.value = null);
+  const closer = useGrab<HTMLButtonElement>();
   const prefix = chordLabel(keyboard.value.prefix, mac);
   return (
     <div class="overlay" onClick={(e) => e.target === e.currentTarget && close()}>
       <div class="kbox" role="dialog" aria-labelledby="keys-h" onKeyDown={(e) => e.key === "Escape" && close()}>
         <div class="khead">
           <h2 id="keys-h">Keyboard shortcuts</h2>
-          <button type="button" class="btn icon" aria-label="Close" autoFocus onClick={close}>
+          <button type="button" class="btn icon" aria-label="Close" ref={closer} onClick={close}>
             ×
           </button>
         </div>

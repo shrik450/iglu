@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ColumnSpec } from "../generated/ColumnSpec.ts";
-import { moved, nextWidth, shown, stepIndex, widened } from "./layout.ts";
+import { inView, moved, nextWidth, scrollTarget, shown, stepIndex, widened } from "./layout.ts";
 
 const columns: ColumnSpec[] = [
   { name: "shell", kind: { kind: "shell" }, width: "half" },
@@ -54,4 +54,34 @@ test("moving stops at the edges", () => {
 test("widening changes only that column", () => {
   assert.deepEqual(widened(columns, "claude")?.map((c) => c.width), ["half", "full", "third"]);
   assert.equal(widened(columns, "adhoc"), null);
+});
+
+test("the focused column scrolls wholly into view, with a sliver of the next one", () => {
+  // Three 600px columns with 10px gaps in a 1000px view.
+  const spans = [0, 610, 1220].map((left) => ({ left, width: 600 }));
+  assert.equal(scrollTarget(spans, 0, 1000, 0, 48), 0);
+  // Moving right: the second column's right edge, plus a peek of the third.
+  assert.equal(scrollTarget(spans, 1, 1000, 0, 48), 258);
+  // The last has nothing after it, so it sits against the end.
+  assert.equal(scrollTarget(spans, 2, 1000, 258, 48), 820);
+  // Moving left again: the first column's left edge, which is the start.
+  assert.equal(scrollTarget(spans, 0, 1000, 820, 48), 0);
+  // Already in view: nothing moves.
+  assert.equal(scrollTarget(spans, 1, 1000, 300, 48), 300);
+});
+
+test("a column too wide to show with a peek starts at the view's edge", () => {
+  const spans = [
+    { left: 0, width: 500 },
+    { left: 510, width: 980 },
+    { left: 1500, width: 500 },
+  ];
+  assert.equal(scrollTarget(spans, 1, 1000, 0, 48), 510);
+});
+
+test("a column is in view only when all of it is", () => {
+  const spans = [0, 610, 1220].map((left) => ({ left, width: 600 }));
+  assert.deepEqual([...inView(spans, 1000, 0)], [0]);
+  assert.deepEqual([...inView(spans, 1000, 258)], [1]);
+  assert.deepEqual([...inView(spans, 1300, 0)], [0, 1]);
 });

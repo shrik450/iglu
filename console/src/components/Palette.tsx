@@ -6,7 +6,7 @@ import { api } from "../api/client.ts";
 import { addColumn, nextWaiting, open, toggleFreeze } from "../actions.ts";
 import { keysFor } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
-import { current, details, listed, look, navigate, overlay, renaming, say } from "../state/store.ts";
+import { ask, current, details, listed, look, navigate, overlay, say } from "../state/store.ts";
 
 interface Item {
   label: string;
@@ -27,7 +27,7 @@ function items(): Item[] {
     ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: keysFor("keys"), run: () => (overlay.value = "keys") }]),
   ];
   if (ws) {
-    list.push({ label: `Rename ${ws.name}`, hint: keysFor("rename"), run: () => (renaming.value = true) });
+    list.push({ label: `Rename ${ws.name}`, hint: keysFor("rename"), run: () => ask(ws, { kind: "rename" }) });
     list.push({ label: `Details of ${ws.name}`, hint: keysFor("details"), run: () => (details.value = true) });
     if (ws.phase === "running") {
       list.push({ label: `Shell in ${ws.name}`, run: () => void addColumn(ws, { kind: "shell" }) });

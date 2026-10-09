@@ -1,6 +1,6 @@
 // The console's state, as signals. Views read them; actions in actions.ts write them.
 
-import { computed, effect, signal } from "@preact/signals";
+import { computed, effect, signal, untracked } from "@preact/signals";
 
 import type { ColumnStatus } from "../generated/ColumnStatus.ts";
 import type { LiveView } from "../generated/LiveView.ts";
@@ -71,13 +71,46 @@ export const overlay = signal<null | "palette" | "new" | "project" | "keys">(nul
 /** The project the new-workspace form starts on. */
 export const newIn = signal<ProjectId | null>(null);
 export const details = signal(false);
-export const renaming = signal(false);
-export const confirming = signal<null | "delete">(null);
-/** The column whose session is about to be ended, awaiting confirmation. */
-export const closing = signal<string | null>(null);
-export const addingPort = signal(false);
-/** The add-column menu. */
-export const addingColumn = signal(false);
+
+/** Something a workspace is asking the person: its new name, whether to
+ * delete it or end a column, a port to publish, or a column to add. */
+export type Question = { kind: "rename" } | { kind: "delete" } | { kind: "end"; column: string } | { kind: "port" } | { kind: "add-column" };
+
+/** One question at a time, held with the workspace that asked it, so it never
+ * carries over to another: an armed delete stays with its own workspace. */
+const asked = signal<{ ws: WorkspaceId; question: Question } | null>(null);
+
+/** The open workspace's question, if it has one. */
+export const question = computed(() => {
+  const a = asked.value;
+  return a && a.ws === current.value?.id ? a.question : null;
+});
+
+export function ask(ws: WorkspaceView, next: Question): void {
+  asked.value = { ws: ws.id, question: next };
+}
+
+/** Puts a workspace's question away: any of them, or only one kind, so a
+ * request that finishes late can't close a question asked since. */
+export function settle(ws: WorkspaceView, kind?: Question["kind"]): void {
+  const a = asked.value;
+  if (a?.ws === ws.id && (kind === undefined || a.question.kind === kind)) asked.value = null;
+}
+
+export const isAsking = (kind: Question["kind"]) => question.value?.kind === kind;
+
+// A visit starts fresh: what the last one asked or showed stays with it.
+let visiting: WorkspaceId | null = null;
+effect(() => {
+  const id = current.value?.id ?? null;
+  if (id === visiting) return;
+  visiting = id;
+  untracked(() => {
+    asked.value = null;
+    details.value = false;
+  });
+});
+
 export const filter = signal("");
 
 export interface Flash {

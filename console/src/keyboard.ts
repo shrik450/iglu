@@ -6,7 +6,7 @@ import { activeOf, back, columnsOf, cycleWidth, focusColumn, moveColumn, nextWai
 import { type Action, BINDINGS, chordLabel, type Focus, type KeyInput, metaBytes, onKeyboard, prefixBytes, resolve } from "./state/keys.ts";
 import { type KeyboardPrefs, loadKeyboard, saveKeyboard } from "./state/prefs.ts";
 import { unreachable } from "./state/unsaved.ts";
-import { addingColumn, closing, current, cursor, details, listed, navigate, overlay, renaming, route } from "./state/store.ts";
+import { ask, current, cursor, details, listed, navigate, overlay, route } from "./state/store.ts";
 
 /** Whether this keyboard has ⌘ and ⌥, or Ctrl and Alt. */
 export const mac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -73,14 +73,16 @@ export function perform(action: Action): void {
     case "width":
       if (ws) void cycleWidth(ws);
       return;
-    case "close-column":
-      if (ws) closing.value = activeOf(ws);
+    case "close-column": {
+      const column = ws && activeOf(ws);
+      if (ws && column) ask(ws, { kind: "end", column });
       return;
+    }
     case "add-column":
-      if (ws?.phase === "running") addingColumn.value = true;
+      if (ws?.phase === "running") ask(ws, { kind: "add-column" });
       return;
     case "rename":
-      if (ws) renaming.value = true;
+      if (ws) ask(ws, { kind: "rename" });
       return;
     case "freeze":
       if (ws) void toggleFreeze(ws);
