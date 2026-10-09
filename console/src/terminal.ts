@@ -47,8 +47,6 @@ export class TerminalPane {
   private readonly encoder = new TextEncoder();
   private socket: WebSocket | null = null;
   private focused = false;
-  /** While ghostty-web opens the terminal, during which it focuses it unasked. */
-  private opening = true;
   private closed = false;
   private retries = 0;
   private retryTimer = 0;
@@ -86,19 +84,13 @@ export class TerminalPane {
     this.term.loadAddon(this.fit);
     // ghostty-web focuses a terminal as it opens, and again a moment later,
     // so the last column to open would take focus from the one meant to have
-    // it. Opening takes nothing: once it's done, the pane takes focus if it
-    // should, and otherwise hands it back.
-    const before = document.activeElement;
+    // it. Its focus is switched off while it opens; then the pane focuses if
+    // it's the one that should.
+    this.term.focus = () => {};
     this.term.open(container);
+    Reflect.deleteProperty(this.term, "focus");
     window.setTimeout(() => {
-      this.opening = false;
-      const holds = container.contains(document.activeElement);
-      // Focus it already has fires no focus event, so it counts it now.
-      if (options.wantsFocus()) holds ? this.focusIn() : this.focus();
-      else if (holds) {
-        if (before instanceof HTMLElement && before !== document.body) before.focus();
-        else (document.activeElement as HTMLElement | null)?.blur();
-      }
+      if (options.wantsFocus()) this.focus();
     });
     this.fit.fit();
     this.fit.observeResize();
@@ -121,7 +113,6 @@ export class TerminalPane {
   }
 
   private readonly focusIn = () => {
-    if (this.opening) return;
     this.focused = true;
     lastFocused = this;
     this.sendResize(this.term.cols, this.term.rows);

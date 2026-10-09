@@ -202,7 +202,11 @@ def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
         expect(column(page, name_).locator(".term-host")).to_be_visible()
     time.sleep(1.5)
     active = [c for c in columns(page) if re.search(r"\bon\b", column(page, c).get_attribute("class") or "")]
-    assert active == [waiting], active
+    assert active == [waiting], {
+        "active": active,
+        "focus": page.evaluate("document.activeElement?.closest('[data-column]')?.dataset.column ?? document.activeElement?.tagName"),
+        "headers": [column(page, c).locator(".col-h").inner_text() for c in columns(page)],
+    }
     return {"active": waiting}
 
 
