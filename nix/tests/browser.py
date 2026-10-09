@@ -59,7 +59,8 @@ def run_in_column(page: Page, name: str, command: str, expected: str) -> str:
         time.sleep(1)
     page.keyboard.type(command)
     page.keyboard.press("Enter")
-    while expected not in screen(page):
+    # Output wraps at the column's width; a narrow column breaks it across rows.
+    while expected not in screen(page).replace("\n", ""):
         assert time.monotonic() < deadline, f"{expected!r} never appeared: {screen(page)!r}"
         time.sleep(0.5)
     return screen(page)
@@ -205,7 +206,8 @@ def answers_queries(page: Page, name: str) -> Any:
     first = columns(page)[0]
     mark = str(time.time_ns())
     shown = run_in_column(page, first, QUERIES.format(mark=mark), f"answers-{mark} [?62;22 ]11;rgb:")
-    return {"column": first, "answers": next(line for line in shown.splitlines() if line.startswith(f"answers-{mark}"))}
+    answers = re.search(rf"answers-{mark} (\S+ \]11;rgb:[0-9a-f/]+)", shown.replace("\n", ""))
+    return {"column": first, "answers": answers and answers[1]}
 
 
 def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
