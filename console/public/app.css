@@ -235,6 +235,9 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 /* workspace view */
 .wsv { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 16px; height: 100%; }
 .side { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; }
+/* A zoomed column has the page: the list of workspaces folds away until it's put back. */
+.wsv.zoomed { grid-template-columns: minmax(0, 1fr); }
+.wsv.zoomed > .side { display: none; }
 .tree { display: flex; flex-direction: column; gap: 1px; overflow: auto; min-height: 0; }
 .t-group { display: flex; align-items: center; gap: 2px; padding: 10px 0 2px; }
 .t-group:first-child { padding-top: 0; }
@@ -315,6 +318,7 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .col-ctl button { border: 0; background: transparent; color: var(--term-dim); font: 12px/1 var(--mono); padding: 4px 6px; border-radius: 4px; }
 .col-ctl button:hover { background: var(--term-line); color: var(--term-ink); }
 .col-ctl .end { color: var(--error); }
+.col-ctl button[aria-pressed="true"] { color: var(--accent); }
 /* Positioned, so the terminal's hidden input sits inside its own column:
    focusing it otherwise scrolled the strip back to its start. */
 .term-host { position: relative; flex: 1; min-height: 0; padding: 4px 6px; }
@@ -383,6 +387,8 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .pv-row .url:hover { text-decoration: underline; }
 .pv-row .to { color: var(--muted); font-size: 13px; }
 .pv-row .to b { color: var(--ink); font-weight: 600; }
+.pv-acts { display: inline-flex; gap: 6px; }
+.pv-who { margin: 0; font-size: 13px; color: var(--muted); }
 
 /* overlays */
 /* A modal <dialog> that fills the screen with the scrim and holds its box. */

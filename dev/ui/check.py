@@ -83,6 +83,8 @@ def main() -> None:
             step("enter-presses-buttons", browser.enter_presses_buttons, page)
             step("prefix-cancels", browser.prefix_cancels, page, NAME)
             step("names-column", browser.names_column, page, NAME)
+            step("zooms", browser.zooms, page, NAME)
+            step("goes-back", browser.goes_back, page, NAME)
             step("renames-follow", browser.renames_follow, page, NAME)
             step("drafts-survive", browser.drafts_survive, page, PROJECT)
             step("adds-at-once", browser.adds_at_once, page, NAME)

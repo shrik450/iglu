@@ -271,6 +271,8 @@ try:
         browser("enter-presses-buttons")
         browser("prefix-cancels", "demo")
         browser("names-column", "demo")
+        browser("zooms", "demo")
+        browser("goes-back", "demo")
         browser("renames-follow", "demo")
         browser("drafts-survive", "app")
         browser("adds-at-once", "demo")

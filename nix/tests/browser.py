@@ -531,6 +531,47 @@ def names_column(page: Page, name: str) -> Any:
     return {"column": first}
 
 
+def zooms(page: Page, name: str) -> Any:
+    """Zoom gives a column the page and puts it back as it was: the layout
+    iglu keeps doesn't change, and the keyboard stays in the terminal."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    width = column(page, first).get_by_role("button", name=re.compile("^Width of ")).inner_text()
+    sidebar = page.get_by_role("navigation", name="Workspaces")
+    prefix(page, "KeyZ")
+    expect(column(page, first)).to_have_attribute("style", re.compile(r"--cw:\s*1\b"))
+    expect(sidebar).to_be_hidden()
+    expect(column(page, first).get_by_role("button", name=re.compile("^Put .* back$"))).to_have_attribute("aria-pressed", "true")
+    reaches(page, first)
+    # The palette has the column's actions too.
+    prefix(page, "Slash")
+    page.get_by_role("combobox", name="Search").fill("put back")
+    page.keyboard.press("Enter")
+    expect(sidebar).to_be_visible()
+    expect(column(page, first).get_by_role("button", name=re.compile("^Width of "))).to_have_text(width)
+    reaches(page, first)
+    return {"width": width}
+
+
+def goes_back(page: Page, name: str, other: str | None = None) -> Any:
+    """The prefix then ; goes back to the workspace you were in before, even
+    by way of the overview; with none yet, it says so."""
+    open_workspace(page, name)
+    if other is None:
+        prefix(page, "Semicolon")
+        expect(page.get_by_text("There's no other workspace to go back to yet.")).to_be_visible()
+        return {"back": None}
+    page.get_by_role("link", name="iglu, overview").click()
+    page.get_by_role("link", name=other, exact=True).first.click()
+    page.wait_for_url(f"{CONSOLE}/w/{other}")
+    prefix(page, "Semicolon")
+    page.wait_for_url(f"{CONSOLE}/w/{name}")
+    prefix(page, "Semicolon")
+    page.wait_for_url(f"{CONSOLE}/w/{other}")
+    return {"back": other}
+
+
 def renames_follow(page: Page, name: str) -> Any:
     """Renaming keeps the same workspace open: its column keeps the keyboard,
     and another tab showing it follows to the new name, terminals and all."""
@@ -720,6 +761,8 @@ STEPS: dict[str, Callable[..., Any]] = {
     "enter-presses-buttons": enter_presses_buttons,
     "prefix-cancels": prefix_cancels,
     "names-column": names_column,
+    "zooms": zooms,
+    "goes-back": goes_back,
     "renames-follow": renames_follow,
     "drafts-survive": drafts_survive,
     "adds-at-once": adds_at_once,

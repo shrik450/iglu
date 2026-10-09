@@ -1,6 +1,7 @@
 // Every published port, across workspaces.
 
 import { lookOf, WorkspaceLink } from "../components/bits.tsx";
+import { CopyLink } from "../components/CopyLink.tsx";
 import { groups } from "../state/store.ts";
 
 export function PreviewsView() {
@@ -9,6 +10,7 @@ export function PreviewsView() {
   return (
     <div class="pv">
       <h1 class="sr-only">Previews</h1>
+      <p class="pv-who">Only you can open your previews, signed in to iglu.</p>
       {shown.map(({ group, workspaces }) => (
         <section key={group.key} aria-label={group.label}>
           <h2 translate={false}>{group.label}</h2>
@@ -26,9 +28,12 @@ export function PreviewsView() {
                     → <b translate={false}>{ws.name}</b> :{route.port}
                     {state ? <span class="state"> {ws.phase}</span> : null}
                   </span>
-                  <WorkspaceLink ws={ws} class="btn" label={`Open ${ws.name}`}>
-                    Open
-                  </WorkspaceLink>
+                  <span class="pv-acts">
+                    <CopyLink url={route.url} name={route.name} />
+                    <WorkspaceLink ws={ws} class="btn" label={`Open ${ws.name}`}>
+                      Open workspace
+                    </WorkspaceLink>
+                  </span>
                 </div>
               );
             }),

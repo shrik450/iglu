@@ -22,6 +22,8 @@ export type Action =
   | { kind: "width" }
   | { kind: "close-column" }
   | { kind: "label-column" }
+  | { kind: "zoom" }
+  | { kind: "last-workspace" }
   | { kind: "add-column" }
   | { kind: "rename" }
   | { kind: "freeze" }
@@ -125,6 +127,7 @@ export const BINDINGS: readonly Binding[] = [
   },
   { action: { kind: "open" }, does: "Open the selected workspace", group: "Workspaces", page: [{ code: "Enter", label: "↩" }] },
   { action: { kind: "back" }, does: "Back to the overview", group: "Workspaces", page: [{ code: "Escape", label: "esc" }] },
+  { action: { kind: "last-workspace" }, does: "The workspace you were in before", group: "Workspaces", after: { code: "Semicolon", label: ";" } },
   { action: { kind: "rename" }, does: "Rename", group: "Workspaces", after: letter("r") },
   { action: { kind: "freeze" }, does: "Freeze or thaw", group: "Workspaces", after: letter("f") },
   { action: { kind: "details" }, does: "Details", group: "Workspaces", after: letter("i") },
@@ -133,6 +136,7 @@ export const BINDINGS: readonly Binding[] = [
   { action: { kind: "move-column", step: -1 }, does: "Move the column left", group: "Columns", after: letter("h", true) },
   { action: { kind: "move-column", step: 1 }, does: "Move the column right", group: "Columns", after: letter("l", true) },
   { action: { kind: "width" }, does: "Change its width", group: "Columns", after: letter("w") },
+  { action: { kind: "zoom" }, does: "Zoom it to fill the page, or put it back", group: "Columns", after: letter("z") },
   { action: { kind: "add-column" }, does: "New column", group: "Columns", after: letter("c") },
   { action: { kind: "label-column" }, does: "Rename the column", group: "Columns", after: { code: "Comma", label: "," } },
   { action: { kind: "close-column" }, does: "End the column", group: "Columns", after: letter("x") },

@@ -26,10 +26,13 @@ import {
   saveOpening,
   setState,
   toggleFreeze,
+  toggleZoom,
   unpublish,
+  zoomedIn,
 } from "../actions.ts";
 import { api } from "../api/client.ts";
 import { FieldError, type Form, FormError, InputError, invalid, textOf, useForm, useGrab } from "../components/forms.tsx";
+import { CopyLink, ONLY_YOU } from "../components/CopyLink.tsx";
 import { Previews } from "../components/Previews.tsx";
 import {
   attentionGlyph,
@@ -59,7 +62,7 @@ import { loadGhostty, TerminalPane } from "../terminal.ts";
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
   const r = route.value;
   return (
-    <div class="wsv" data-phase={ws?.phase}>
+    <div class={`wsv${ws && zoomedIn(ws) ? " zoomed" : ""}`} data-phase={ws?.phase}>
       <Tree current={ws} />
       {ws ? (
         <Main ws={ws} />
@@ -482,7 +485,8 @@ function Columns({ ws }: { ws: WorkspaceView }) {
   const strip = useRef<HTMLDivElement>(null);
   const activeNow = useRef(active);
   activeNow.current = active;
-  const arrangement = columns.map((c) => `${c.name}:${c.width}`).join(" ");
+  const zoom = zoomedIn(ws);
+  const arrangement = `${columns.map((c) => `${c.name}:${c.width}`).join(" ")} ${zoom ?? ""}`;
   // The strip scrolls so the active column is wholly in view, whenever it,
   // the order, the widths or the window change.
   const settle = (smooth: boolean) => {
@@ -532,13 +536,13 @@ function Columns({ ws }: { ws: WorkspaceView }) {
   return (
     <div class="w-cols" ref={strip}>
       {columns.map((c) => (
-        <Column key={`${ws.id}/${c.name}`} ws={ws} column={c} on={c.name === active} threads={threads.get(c.name) ?? []} />
+        <Column key={`${ws.id}/${c.name}`} ws={ws} column={c} on={c.name === active} zoomed={c.name === zoom} threads={threads.get(c.name) ?? []} />
       ))}
     </div>
   );
 }
 
-function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads: AttentionView[] }) {
+function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: boolean; threads: AttentionView[] }) {
   const { ws, column, threads } = props;
   const attention = threads[0] ?? null;
   const [listing, setListing] = useState(false);
@@ -551,7 +555,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
   const ending = asked?.kind === "end" && asked.column === name;
   const naming = asked?.kind === "label" && asked.column === name;
   return (
-    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[column.width]) }} data-column={name} aria-label={`Column ${title}`}>
+    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[props.zoomed ? "full" : column.width]) }} data-column={name} aria-label={`Column ${title}`}>
       <header
         class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}
         onMouseDown={(e) => {
@@ -586,6 +590,15 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
           <span class="col-ctl">
             {arranged ? (
               <>
+                <button
+                  type="button"
+                  aria-pressed={props.zoomed}
+                  aria-label={props.zoomed ? `Put ${title} back` : `Zoom ${title}`}
+                  title={`${props.zoomed ? "Put it back" : "Zoom to fill the page"} (${keysFor("zoom")})`}
+                  onClick={() => (markActive(ws, name), toggleZoom(ws))}
+                >
+                  <Icon name={props.zoomed ? "unzoom" : "zoom"} size={11} />
+                </button>
                 <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${title}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
                   {LABEL[column.width]}
                 </button>
@@ -879,9 +892,10 @@ function RouteRow({ ws, route: r }: { ws: WorkspaceView; route: RouteView }) {
   const [sure, setSure] = useState(false);
   return (
     <div class="row">
-      <a href={r.url} target="_blank" rel="noopener" translate={false}>
+      <a href={r.url} target="_blank" rel="noopener" translate={false} title={ONLY_YOU}>
         {r.name} :{r.port}
       </a>
+      <CopyLink url={r.url} name={r.name} />
       {sure ? (
         <button type="button" class="btn danger" onClick={() => void unpublish(ws, r)}>
           Unpublish for good

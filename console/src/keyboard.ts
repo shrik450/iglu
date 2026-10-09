@@ -2,7 +2,7 @@
 
 import { signal } from "@preact/signals";
 
-import { activeOf, back, columnsOf, cycleWidth, focusColumn, labelOrSay, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze } from "./actions.ts";
+import { activeOf, back, columnsOf, cycleWidth, focusColumn, labelOrSay, lastWorkspace, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze, toggleZoom } from "./actions.ts";
 import { type Action, BINDINGS, chordLabel, type Focus, type KeyInput, metaBytes, onKeyboard, prefixBytes, resolve } from "./state/keys.ts";
 import { type KeyboardPrefs, loadKeyboard, saveKeyboard, watch } from "./state/prefs.ts";
 import { unreachable } from "./state/unsaved.ts";
@@ -20,11 +20,16 @@ export function setKeyboard(prefs: KeyboardPrefs): void {
   saveKeyboard(prefs);
 }
 
-/** How to press an action from anywhere, for hints: "⌃Space n". */
-export function keysFor(kind: Action["kind"]): string | undefined {
-  if (kind === "palette") return onKeyboard("⌘K", mac);
-  const after = BINDINGS.find((b) => b.action.kind === kind && b.after)?.after;
-  return after ? `${chordLabel(keyboard.value.prefix, mac)} ${after.label}` : undefined;
+/** The prefix and a key after it, for hints: "⌃Space 3". */
+export const afterPrefix = (key: string) => `${chordLabel(keyboard.value.prefix, mac)} ${key}`;
+
+/** How to press an action from anywhere, for hints: "⌃Space n". A kind
+ * alone means its first binding; a whole action, the binding for exactly it. */
+export function keysFor(action: Action["kind"] | Action): string | undefined {
+  if (action === "palette") return onKeyboard("⌘K", mac);
+  const wanted = typeof action === "string" ? (b: Action) => b.kind === action : (b: Action) => JSON.stringify(b) === JSON.stringify(action);
+  const after = BINDINGS.find((b) => wanted(b.action) && b.after)?.after;
+  return after ? afterPrefix(after.label) : undefined;
 }
 
 /** The prefix was pressed: the next key is the console's. */
@@ -85,6 +90,12 @@ export function perform(action: Action): void {
     }
     case "add-column":
       if (ws?.phase === "running") ask(ws, { kind: "add-column" });
+      return;
+    case "zoom":
+      if (ws) toggleZoom(ws);
+      return;
+    case "last-workspace":
+      lastWorkspace();
       return;
     case "label-column": {
       const column = ws && activeOf(ws);

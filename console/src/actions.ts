@@ -22,6 +22,7 @@ import {
   listed,
   navigate,
   overlay,
+  previous,
   projects,
   question,
   route,
@@ -29,6 +30,7 @@ import {
   settle,
   waiting,
   workspaces,
+  zoomed,
 } from "./state/store.ts";
 import { panes } from "./terminal.ts";
 
@@ -222,6 +224,28 @@ effect(() => {
 /** Records which column has focus, without moving focus. */
 export function markActive(ws: WorkspaceView, name: string): void {
   if (activeColumn.value[ws.id] !== name) activeColumn.value = { ...activeColumn.value, [ws.id]: name };
+  // Zoom is for one column: moving to another puts it back.
+  const zoom = zoomed.peek();
+  if (zoom?.ws === ws.id && zoom.column !== name) zoomed.value = null;
+}
+
+/** The zoomed column of `ws`, if one is. */
+export function zoomedIn(ws: WorkspaceView): string | null {
+  const zoom = zoomed.value;
+  return zoom?.ws === ws.id ? zoom.column : null;
+}
+
+export function toggleZoom(ws: WorkspaceView): void {
+  const column = activeOf(ws);
+  if (!column) return;
+  zoomed.value = zoomedIn(ws) === column ? null : { ws: ws.id, column };
+}
+
+/** Goes back to the workspace visited before this one. */
+export function lastWorkspace(): void {
+  const ws = workspaces.value.find((w) => w.id === previous.value);
+  if (ws) open(ws);
+  else say("There's no other workspace to go back to yet.");
 }
 
 export function focusColumn(ws: WorkspaceView, name: string): void {

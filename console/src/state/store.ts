@@ -89,6 +89,11 @@ export const overlay = signal<null | "palette" | "new" | "project" | "keys">(nul
 /** The project the new-workspace form starts on. */
 export const newIn = signal<ProjectId | null>(null);
 export const details = signal(false);
+/** The column zoomed to fill the page, for this visit: the strip shows it
+ * whole and the list of workspaces folds away until it's put back. */
+export const zoomed = signal<{ ws: WorkspaceId; column: string } | null>(null);
+/** The workspace visited before the open one, to go back to. */
+export const previous = signal<WorkspaceId | null>(null);
 
 /** Something a workspace is asking the person: its new name, whether to
  * delete it or end a column, a column's name, a port to publish, or a column
@@ -125,7 +130,10 @@ export function settle(ws: WorkspaceView, kind?: Question["kind"]): void {
 export const isAsking = (kind: Question["kind"]) => question.value?.kind === kind;
 
 // A visit starts fresh: what the last one asked or showed stays with it.
+// Passing through the overview between two workspaces still goes from one
+// to the other.
 let visiting: WorkspaceId | null = null;
+let visited: WorkspaceId | null = null;
 effect(() => {
   const id = current.value?.id ?? null;
   if (id === visiting) return;
@@ -133,6 +141,10 @@ effect(() => {
   untracked(() => {
     asked.value = null;
     details.value = false;
+    zoomed.value = null;
+    if (id === null) return;
+    if (visited !== null && visited !== id) previous.value = visited;
+    visited = id;
   });
 });
 

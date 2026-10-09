@@ -3,12 +3,28 @@
 import { useEffect, useId, useMemo, useState } from "preact/hooks";
 
 import { api } from "../api/client.ts";
-import { activeOf, addColumn, columnsOf, labelOrSay, nextWaiting, open, toggleFreeze } from "../actions.ts";
-import { keysFor } from "../keyboard.ts";
+import {
+  activeOf,
+  addColumn,
+  columnsOf,
+  cycleWidth,
+  focusColumn,
+  labelOrSay,
+  moveColumn,
+  nextWaiting,
+  open,
+  restartColumn,
+  toggleFreeze,
+  toggleZoom,
+  zoomedIn,
+} from "../actions.ts";
+import { afterPrefix, keysFor } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
-import { titleOf } from "../state/layout.ts";
+import type { WorkspaceView } from "../generated/WorkspaceView.ts";
+import { LABEL, titleOf } from "../state/layout.ts";
 import { search } from "../state/search.ts";
-import { ask, current, details, listed, look, navigate, overlay, projects, say } from "../state/store.ts";
+import { ask, current, details, listed, look, navigate, overlay, previous, projects, say, workspaces } from "../state/store.ts";
+import { copyLink, ONLY_YOU } from "./CopyLink.tsx";
 import { Modal } from "./Modal.tsx";
 
 interface Item {
@@ -16,6 +32,36 @@ interface Item {
   sub?: string | undefined;
   hint?: string | undefined;
   run: () => void;
+}
+
+/** What can be done with the open workspace's columns: go to one, or act on
+ * the one that has the keyboard, with the keys for each. */
+function columnItems(ws: WorkspaceView): Item[] {
+  const list: Item[] = [];
+  const columns = columnsOf(ws);
+  const active = activeOf(ws);
+  columns.forEach((c, i) => {
+    if (c.name !== active) list.push({ label: `Go to column ${titleOf(c)}`, sub: c.label ? `session ${c.name}` : undefined, hint: i < 9 ? afterPrefix(String(i + 1)) : undefined, run: () => focusColumn(ws, c.name) });
+  });
+  const here = columns.findIndex((c) => c.name === active);
+  const column = columns[here];
+  if (!column) return list;
+  const title = titleOf(column);
+  if (column.state === "adopted") {
+    list.push({ label: `End ${title}`, hint: keysFor("close-column"), run: () => ask(ws, { kind: "end", column: column.name }) });
+    return list;
+  }
+  const zoom = zoomedIn(ws) === column.name;
+  list.push(
+    { label: zoom ? `Put ${title} back` : `Zoom ${title} to fill the page`, hint: keysFor("zoom"), run: () => toggleZoom(ws) },
+    { label: `Change ${title}'s width`, sub: `It's ${LABEL[column.width]} of the strip`, hint: keysFor("width"), run: () => void cycleWidth(ws) },
+  );
+  if (here > 0) list.push({ label: `Move ${title} left`, hint: keysFor({ kind: "move-column", step: -1 }), run: () => void moveColumn(ws, -1) });
+  if (here < columns.length - 1) list.push({ label: `Move ${title} right`, hint: keysFor({ kind: "move-column", step: 1 }), run: () => void moveColumn(ws, 1) });
+  list.push({ label: `Rename column ${title}`, sub: column.label ? `session ${column.name}` : undefined, hint: keysFor("label-column"), run: () => labelOrSay(ws, column.name) });
+  if (column.state === "ended") list.push({ label: `Restart ${title}`, run: () => void restartColumn(ws, column.name) });
+  list.push({ label: `End ${title}`, hint: keysFor("close-column"), run: () => ask(ws, { kind: "end", column: column.name }) });
+  return list;
 }
 
 function items(): Item[] {
@@ -30,15 +76,13 @@ function items(): Item[] {
     // Keys are no help on a touch screen.
     ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: keysFor("keys"), run: () => (overlay.value = "keys") }]),
   ];
+  const before = workspaces.value.find((w) => w.id === previous.value && w.id !== ws?.id);
+  if (before) list.push({ label: `Back to ${before.name}`, sub: "The workspace you were in before", hint: keysFor("last-workspace"), run: () => open(before) });
   if (ws) {
     list.push({ label: `Rename ${ws.name}`, hint: keysFor("rename"), run: () => ask(ws, { kind: "rename" }) });
-    const active = activeOf(ws);
-    for (const c of columnsOf(ws)) {
-      if (c.state === "adopted") continue;
-      const title = titleOf(c);
-      list.push({ label: `Rename column ${title}`, sub: c.label ? `session ${c.name}` : undefined, hint: c.name === active ? keysFor("label-column") : undefined, run: () => labelOrSay(ws, c.name) });
-    }
     list.push({ label: `Details of ${ws.name}`, hint: keysFor("details"), run: () => (details.value = true) });
+    list.push(...columnItems(ws));
+    for (const r of ws.routes) list.push({ label: `Copy the link to ${r.name}`, sub: ONLY_YOU, run: () => copyLink(r.url) });
     if (ws.phase === "running") {
       list.push({ label: `Shell in ${ws.name}`, run: () => void addColumn(ws, { kind: "shell" }) });
       for (const agent of ws.agents) list.push({ label: `${agent} in ${ws.name}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
