@@ -3,8 +3,8 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { attempt } from "../actions.ts";
-import { api, failure } from "../api/client.ts";
-import { textOf } from "../components/forms.ts";
+import { api } from "../api/client.ts";
+import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
 import { enableNotifications } from "../notify.ts";
 import type { EnvironmentView } from "../generated/EnvironmentView.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
@@ -28,33 +28,6 @@ export function Settings() {
   );
 }
 
-/** A form's submit handler that shows the request's error beside it. */
-function useSubmit(run: (data: FormData, form: HTMLFormElement) => Promise<void>) {
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const onSubmit = async (e: Event) => {
-    e.preventDefault();
-    const form = e.currentTarget as HTMLFormElement;
-    setBusy(true);
-    setError(null);
-    try {
-      await run(new FormData(form), form);
-    } catch (err) {
-      setError(failure(err));
-    }
-    setBusy(false);
-  };
-  return { error, busy, onSubmit };
-}
-
-function FormError({ error }: { error: string | null }) {
-  return error ? (
-    <p class="field-err" role="alert">
-      {error}
-    </p>
-  ) : null;
-}
-
 function buildText(env: EnvironmentView): string {
   const latest = env.latest;
   if (!latest) return "never built";
@@ -69,7 +42,7 @@ function buildText(env: EnvironmentView): string {
 }
 
 function Environments() {
-  const add = useSubmit(async (data, form) => {
+  const add = useForm(async (data, form) => {
     const text = textOf(data);
     const name = text("name");
     const source = text("source");
@@ -104,16 +77,18 @@ function Environments() {
       <form class="set-form" aria-label="Add an environment" onSubmit={add.onSubmit}>
         <label>
           Name
-          <input name="name" required placeholder="default…" autocomplete="off" spellcheck={false} />
+          <input name="name" required placeholder="default…" autocomplete="off" spellcheck={false} {...invalid(add, "name")} />
+          <FieldError form={add} input="name" />
         </label>
         <label class="grow">
           Flake
-          <input name="source" required placeholder="github:you/iglu-env#default…" autocomplete="off" spellcheck={false} />
+          <input name="source" required placeholder="github:you/iglu-env#default…" autocomplete="off" spellcheck={false} {...invalid(add, "source")} />
+          <FieldError form={add} input="source" />
         </label>
         <button type="submit" class="btn" disabled={add.busy}>
           {add.busy ? "Adding…" : "Add"}
         </button>
-        <FormError error={add.error} />
+        <FormError form={add} />
       </form>
     </section>
   );
@@ -194,20 +169,24 @@ function targetOf(kind: TargetKind, text: (key: string) => string | undefined): 
   }
 }
 
-function TargetFields({ kind }: { kind: TargetKind }) {
+/** The inputs for where a secret goes. iglu names them all `target`, and so
+ * does the form's kind select; the error shows by the last of them. */
+function TargetFields({ kind, form }: { kind: TargetKind; form: Form }) {
   switch (kind) {
     case "env":
       return (
         <label>
           Variable
-          <input name="env" required placeholder="CLAUDE_CODE_OAUTH_TOKEN…" autocomplete="off" spellcheck={false} />
+          <input name="env" required placeholder="CLAUDE_CODE_OAUTH_TOKEN…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
+          <FieldError form={form} input="target" />
         </label>
       );
     case "file":
       return (
         <label>
           Path
-          <input name="path" required placeholder=".ssh/id_ed25519…" autocomplete="off" spellcheck={false} />
+          <input name="path" required placeholder=".ssh/id_ed25519…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
+          <FieldError form={form} input="target" />
         </label>
       );
     case "git_credential":
@@ -215,11 +194,12 @@ function TargetFields({ kind }: { kind: TargetKind }) {
         <>
           <label>
             Host
-            <input name="host" required placeholder="github.com…" autocomplete="off" spellcheck={false} />
+            <input name="host" required placeholder="github.com…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
           </label>
           <label>
             Username
-            <input name="username" required placeholder="x-access-token…" autocomplete="off" spellcheck={false} />
+            <input name="username" required placeholder="x-access-token…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
+            <FieldError form={form} input="target" />
           </label>
         </>
       );
@@ -234,7 +214,7 @@ function Secrets() {
   const [removing, setRemoving] = useState<string | null>(null);
   const load = async () => setSecrets((await attempt(() => api.secrets())) ?? []);
   useEffect(() => void load(), []);
-  const add = useSubmit(async (data, form) => {
+  const add = useForm(async (data, form) => {
     const text = textOf(data);
     const name = text("name");
     const value = data.get("value");
@@ -288,11 +268,12 @@ function Secrets() {
       <form class="set-form" aria-label="Add or replace a secret" onSubmit={add.onSubmit}>
         <label>
           Name
-          <input name="name" required placeholder="anthropic…" autocomplete="off" spellcheck={false} />
+          <input name="name" required placeholder="anthropic…" autocomplete="off" spellcheck={false} {...invalid(add, "name")} />
+          <FieldError form={add} input="name" />
         </label>
         <label>
           Goes to
-          <select name="kind" value={kind} onChange={(e) => setKind(oneOf(KINDS, e.currentTarget.value) ?? kind)}>
+          <select name="target" value={kind} onChange={(e) => setKind(oneOf(KINDS, e.currentTarget.value) ?? kind)}>
             {Object.entries(KINDS).map(([k, label]) => (
               <option key={k} value={k}>
                 {label}
@@ -300,15 +281,16 @@ function Secrets() {
             ))}
           </select>
         </label>
-        <TargetFields kind={kind} />
+        <TargetFields kind={kind} form={add} />
         <label class="grow">
           Value
-          <input name="value" type="password" required autocomplete="new-password" spellcheck={false} />
+          <input name="value" type="password" required autocomplete="new-password" spellcheck={false} {...invalid(add, "value")} />
+          <FieldError form={add} input="value" />
         </label>
         <button type="submit" class="btn" disabled={add.busy}>
           {add.busy ? "Saving…" : "Save"}
         </button>
-        <FormError error={add.error} />
+        <FormError form={add} />
       </form>
     </section>
   );
@@ -335,7 +317,14 @@ function Account() {
           >
             Notifications
           </button>
-          <button type="button" class="btn" onClick={() => void api.logout().then(() => location.assign("/"))}>
+          <button type="button" class="btn" onClick={() =>
+              void attempt(async () => {
+                await api.logout();
+                return true;
+              }).then((done) => {
+                if (done) location.assign("/");
+              })
+            }>
             Sign out
           </button>
         </span>

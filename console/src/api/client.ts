@@ -1,5 +1,7 @@
 // iglud's JSON API. The console trusts iglud's responses as their generated
-// types: iglud serves this bundle, so both always ship from the same commit.
+// types: iglud serves this bundle, so both ship from the same commit. A tab
+// left open across an upgrade notices from the snapshot stream's boot ID
+// (events.ts) and asks to reload.
 
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
 import type { AddColumn } from "../generated/AddColumn.ts";
@@ -13,6 +15,8 @@ import type { DnsLabel } from "../generated/DnsLabel.ts";
 import type { CreateWorkspace } from "../generated/CreateWorkspace.ts";
 import type { DesiredState } from "../generated/DesiredState.ts";
 import type { ErrorBody } from "../generated/ErrorBody.ts";
+import type { ErrorKind } from "../generated/ErrorKind.ts";
+import type { Field } from "../generated/Field.ts";
 import type { GuestPort } from "../generated/GuestPort.ts";
 import type { LiveView } from "../generated/LiveView.ts";
 import type { Me } from "../generated/Me.ts";
@@ -32,14 +36,20 @@ import type { WorkspaceId } from "../generated/WorkspaceId.ts";
 import type { WorkspaceName } from "../generated/WorkspaceName.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 
+/** A request iglu refused, or that never got an answer from iglu. */
 export class ApiError extends Error {
+  /** 0 when iglu couldn't be reached. */
   readonly status: number;
-  readonly code: string;
+  /** null when the answer wasn't iglu's, such as a proxy's. */
+  readonly kind: ErrorKind | null;
+  /** The input the error is about, when it's about one. */
+  readonly field: Field | null;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, kind: ErrorKind | null, message: string, field: Field | null = null) {
     super(message);
     this.status = status;
-    this.code = code;
+    this.kind = kind;
+    this.field = field;
   }
 }
 
@@ -52,16 +62,34 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
     headers: { ...headers, ...(method === "GET" ? {} : { "x-csrf-token": csrf }), ...(body === undefined ? {} : { "content-type": "application/json" }) },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
-  const response = await fetch(path, init);
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch {
+    throw new ApiError(0, null, "Couldn't reach iglu. Check the connection and try again.");
+  }
   if (response.status === 401) {
     location.assign(`/auth/login?return=${encodeURIComponent(location.pathname)}`);
     throw new ApiError(401, "unauthorized", "Signing in…");
   }
   if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as ErrorBody | null;
-    throw new ApiError(response.status, error?.error ?? "error", error?.message ?? `The request failed (${response.status}).`);
+    const error = await errorBody(response);
+    if (error) throw new ApiError(response.status, error.error, error.message, error.field);
+    const status = `${response.status} ${response.statusText}`.trim();
+    throw new ApiError(response.status, null, `Something other than iglu answered ${status}.`);
   }
-  return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+  if (response.status === 204) return undefined as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError(response.status, null, "iglu's reply wasn't what this page expected. Reload the page.");
+  }
+}
+
+/** iglu's error body, if the response has one. */
+async function errorBody(response: Response): Promise<ErrorBody | null> {
+  if (!response.headers.get("content-type")?.startsWith("application/json")) return null;
+  return (await response.json().catch(() => null)) as ErrorBody | null;
 }
 
 export const api = {

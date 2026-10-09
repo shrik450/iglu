@@ -1,10 +1,10 @@
 //! A typed client for iglud's API using a stored API token.
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow};
 use iglu_api::{
     ActivityEntry, BuildStarted, ColumnStatus, CreateEnvironment, CreateProject, CreateWorkspace,
-    EnvironmentView, ErrorBody, LiveView, ProjectView, PublishPort, PutSecret, RenameWorkspace,
-    RouteView, SecretView, SetDesiredState, WorkspaceView,
+    EnvironmentView, ErrorBody, ErrorKind, LiveView, ProjectView, PublishPort, PutSecret,
+    RenameWorkspace, RouteView, SecretView, SetDesiredState, WorkspaceView,
 };
 use iglu_domain::env::EnvName;
 use iglu_domain::id::{ProjectId, WorkspaceId};
@@ -46,7 +46,7 @@ impl Client {
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        Ok(Some(parse(response).await?))
+        Ok(Some(self.parse(response).await?))
     }
 
     /// Finds a workspace by name or ID.
@@ -130,7 +130,7 @@ impl Client {
 
     pub async fn delete_project(&self, id: ProjectId) -> anyhow::Result<()> {
         let url = self.url(&format!("/v1/projects/{id}"))?;
-        check(self.start(self.http.delete(url)).await?).await?;
+        self.check(self.start(self.http.delete(url)).await?).await?;
         Ok(())
     }
 
@@ -158,13 +158,14 @@ impl Client {
 
     pub async fn put_secret(&self, name: &SecretName, request: &PutSecret) -> anyhow::Result<()> {
         let url = self.url(&format!("/v1/secrets/{name}"))?;
-        check(self.start(self.http.put(url).json(request)).await?).await?;
+        self.check(self.start(self.http.put(url).json(request)).await?)
+            .await?;
         Ok(())
     }
 
     pub async fn delete_secret(&self, name: &SecretName) -> anyhow::Result<()> {
         let url = self.url(&format!("/v1/secrets/{name}"))?;
-        check(self.start(self.http.delete(url)).await?).await?;
+        self.check(self.start(self.http.delete(url)).await?).await?;
         Ok(())
     }
 
@@ -203,30 +204,109 @@ impl Client {
     }
 
     async fn json<T: DeserializeOwned>(&self, request: RequestBuilder) -> anyhow::Result<T> {
-        parse(self.start(request).await?).await
+        let response = self.start(request).await?;
+        self.parse(response).await
+    }
+
+    async fn parse<T: DeserializeOwned>(&self, response: Response) -> anyhow::Result<T> {
+        let body = self
+            .check(response)
+            .await?
+            .bytes()
+            .await
+            .context("reading iglu's reply")?;
+        reply(&body)
+    }
+
+    /// Passes a success through; turns a refusal into an error saying why.
+    async fn check(&self, response: Response) -> anyhow::Result<Response> {
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+        let body = response.bytes().await.unwrap_or_default();
+        Err(anyhow!(refusal(status, &body, &self.server)))
     }
 }
 
-async fn parse<T: DeserializeOwned>(response: Response) -> anyhow::Result<T> {
-    check(response)
-        .await?
-        .json()
-        .await
-        .context("reading iglu's reply")
+/// A successful reply as `T`, or where it differs from what this CLI expects.
+pub fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
+    let mut deserializer = serde_json::Deserializer::from_slice(body);
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
+        let at = if error.path().iter().next().is_some() {
+            format!(" at {}", error.path())
+        } else {
+            String::new()
+        };
+        anyhow!(
+            "iglu's reply didn't match this CLI{at}: {}; is the CLI the same version as the server?",
+            error.inner()
+        )
+    })
 }
 
-/// Turns an error status into an error carrying iglud's message.
-async fn check(response: Response) -> anyhow::Result<Response> {
-    let status = response.status();
-    if status.is_success() {
-        return Ok(response);
+/// What iglu said when it refused a request, for a person to read. Anything
+/// that isn't iglu's error body came from something else at that address.
+pub fn refusal(status: StatusCode, body: &[u8], server: &url::Url) -> String {
+    match serde_json::from_slice::<ErrorBody>(body) {
+        Ok(ErrorBody {
+            error: ErrorKind::Unauthorized,
+            message,
+            ..
+        }) => format!("{message}; run `iglu login` again"),
+        Ok(ErrorBody {
+            field: Some(field),
+            message,
+            ..
+        }) => format!("{field}: {message}"),
+        Ok(ErrorBody { message, .. }) => message,
+        Err(_) => format!("{server} answered {status}, which isn't an answer from iglu"),
     }
-    let message = response
-        .json::<ErrorBody>()
-        .await
-        .map_or_else(|_| "request failed".to_owned(), |body| body.message);
-    if status == StatusCode::UNAUTHORIZED {
-        bail!("{message}; run `iglu login` again");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server() -> url::Url {
+        url::Url::parse("https://iglu.example.org").expect("a URL")
     }
-    bail!("{message} ({status})")
+
+    #[test]
+    fn refusals_name_their_field() {
+        let body = br#"{"error":"bad_request","message":"invalid DNS label: may not start or end with '-'","field":"name"}"#;
+        assert_eq!(
+            refusal(StatusCode::BAD_REQUEST, body, &server()),
+            "name: invalid DNS label: may not start or end with '-'"
+        );
+    }
+
+    #[test]
+    fn an_ended_session_says_how_to_start_another() {
+        let body = br#"{"error":"unauthorized","message":"sign in first","field":null}"#;
+        assert_eq!(
+            refusal(StatusCode::UNAUTHORIZED, body, &server()),
+            "sign in first; run `iglu login` again"
+        );
+    }
+
+    #[test]
+    fn a_refusal_that_isnt_iglus_says_where_it_came_from() {
+        let message = refusal(
+            StatusCode::BAD_GATEWAY,
+            b"<html>bad gateway</html>",
+            &server(),
+        );
+        assert!(
+            message.starts_with("https://iglu.example.org/ answered 502"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_reply_that_doesnt_match_says_where() {
+        let error = reply::<PublishPort>(br#"{"port":"x"}"#).expect_err("a string isn't a port");
+        assert!(error.to_string().contains(" at port: "), "{error}");
+        assert!(reply::<PublishPort>(br#"{"port":3000}"#).is_ok());
+    }
 }

@@ -39,6 +39,8 @@ tower-http = { version = "0.7.1", features = ["fs", "trace"] }
 http = "1.5.0"
 url = { version = "2.5.8", features = ["serde"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
+serde_path_to_error = "0.1.20"
+serde_urlencoded = "0.7.1"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 
 [lints]

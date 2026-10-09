@@ -26,6 +26,7 @@ use iglu_domain::terminal::SessionName;
 use iglu_domain::time::Timestamp;
 use iglu_proto::ErrorCode;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// The signed-in person, and what the console needs to act for them.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,6 +38,7 @@ pub struct Me {
     /// Sent back in `x-csrf-token` on every mutating console request.
     pub csrf_token: String,
     pub preview_domain: String,
+    pub boot: BootId,
 }
 
 /// A workspace as the console and CLI see it.
@@ -284,19 +286,94 @@ pub struct BuildStarted {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Snapshot {
+    /// Which run of iglud sent it; see [`BootId`].
+    pub boot: BootId,
     pub workspaces: Vec<WorkspaceView>,
     pub projects: Vec<ProjectView>,
     pub environments: Vec<EnvironmentView>,
 }
 
-/// Every error response's body.
+/// Every error response's body, whatever refused the request.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ErrorBody {
-    /// A stable, machine-readable code such as `not_found`.
-    pub error: String,
-    /// Safe to show the user.
+    pub error: ErrorKind,
+    /// Safe to show the user: a lowercase phrase such as `a project with
+    /// that name exists`.
     pub message: String,
+    /// The input the error is about, when it's about one.
+    pub field: Option<Field>,
+}
+
+/// What kind of refusal an error is. Each kind has one HTTP status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, rename_all = "snake_case")
+)]
+pub enum ErrorKind {
+    /// 400: the request didn't parse, or asked for something impossible.
+    BadRequest,
+    /// 401: no session, or it ended.
+    Unauthorized,
+    /// 403
+    Forbidden,
+    /// 404: no such thing, or the caller may not know it exists.
+    NotFound,
+    /// 405: the path exists, but not with this method.
+    MethodNotAllowed,
+    /// 409: the request conflicts with what's there now.
+    Conflict,
+    /// 413: the request body is too large.
+    TooLarge,
+    /// 415: the request body isn't JSON.
+    UnsupportedMediaType,
+    /// 503: try again later.
+    Unavailable,
+    /// 500: iglud's fault; its log says more.
+    Internal,
+}
+
+/// Which input an error is about: a path into the request body such as
+/// `source`, `ports[1]` or `opening[0].kind`, or a path parameter's name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, type = "string"))]
+#[serde(transparent)]
+pub struct Field(String);
+
+impl Field {
+    #[must_use]
+    pub fn new(path: impl Into<String>) -> Self {
+        Self(path.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Which run of iglud is answering. It changes whenever iglud restarts, which
+/// is how a console left open across an upgrade knows to reload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, type = "string"))]
+#[serde(transparent)]
+pub struct BootId(Uuid);
+
+impl BootId {
+    /// Wraps a UUID; iglud picks a fresh one when it starts.
+    #[must_use]
+    pub const fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
 }
 
 // ---- requests ----

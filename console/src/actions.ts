@@ -95,31 +95,24 @@ export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
   else if (ws.phase === "frozen") await setState(ws, "running");
 }
 
-export async function rename(ws: WorkspaceView, name: string): Promise<string | null> {
-  try {
-    const renamed = await api.rename(ws.id, name);
-    renaming.value = false;
-    if (current.value?.id === ws.id) navigate({ view: "workspace", name: renamed.name }, "replace");
-    return null;
-  } catch (error) {
-    return failure(error);
-  }
+/** Renames a workspace; throws what iglu refused, for the form to show. */
+export async function rename(ws: WorkspaceView, name: string): Promise<void> {
+  const renamed = await api.rename(ws.id, name);
+  renaming.value = false;
+  if (current.value?.id === ws.id) navigate({ view: "workspace", name: renamed.name }, "replace");
 }
 
-export async function create(body: CreateWorkspace): Promise<string | null> {
-  try {
-    const ws = await api.create(body);
-    overlay.value = null;
-    open(ws);
-    return null;
-  } catch (error) {
-    return failure(error);
-  }
+/** Creates a workspace and opens it; throws what iglu refused, for the form to show. */
+export async function create(body: CreateWorkspace): Promise<void> {
+  const ws = await api.create(body);
+  overlay.value = null;
+  open(ws);
 }
 
+/** Publishes a port; throws what iglu refused, for a form to show. */
 export async function publish(ws: WorkspaceView, port: number): Promise<void> {
-  const route = await attempt(() => api.publish(ws.id, port));
-  if (route) say(`Published :${route.port} at ${route.url}`);
+  const route = await api.publish(ws.id, port);
+  say(`Published :${route.port} at ${route.url}`);
   addingPort.value = false;
 }
 
@@ -212,15 +205,21 @@ export async function loadColumns(ws: WorkspaceView): Promise<void> {
   if (list) columnStates.value = { ...columnStates.value, [ws.id]: list };
 }
 
-/** Opens a column after the focused one and focuses it. */
-export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
-  addingColumn.value = false;
+/** Opens a column after the focused one and focuses it; throws what iglu
+ * refused, for a form to show. */
+export async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
   if (ws.phase !== "running") return;
   const after = activeOf(ws);
-  const created = await attempt(() => api.addColumn(ws.id, after ? { kind, after } : { kind }));
-  if (!created) return;
+  const created = await api.addColumn(ws.id, after ? { kind, after } : { kind });
+  addingColumn.value = false;
   markActive(ws, created.name);
   await loadColumns(ws);
+}
+
+/** openColumn for buttons and keys. */
+export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
+  addingColumn.value = false;
+  await attempt(() => openColumn(ws, kind));
 }
 
 export async function restartColumn(ws: WorkspaceView, name: string): Promise<void> {

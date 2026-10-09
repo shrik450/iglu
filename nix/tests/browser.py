@@ -9,6 +9,7 @@ each other like one long browser session. A failing step leaves a screenshot.
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -90,6 +91,21 @@ def create(page: Page, environment: str, repo: str, name: str) -> Any:
     expect(page.get_by_role("heading", name=name)).to_be_visible()
     expect(page.locator('.wsv[data-phase="running"]')).to_be_visible(timeout=600_000)
     return {"name": name, "columns": columns(page)}
+
+
+def refused_environment(page: Page) -> Any:
+    """Adds an environment whose flake has no #attribute; iglu refuses it,
+    and the console shows why by the Flake input."""
+    page.goto(f"{CONSOLE}/settings")
+    form = page.get_by_role("form", name="Add an environment")
+    form.get_by_label("Name").fill("broken")
+    flake = form.get_by_label("Flake")
+    flake.fill("github:you/env")
+    form.get_by_role("button", name="Add").click()
+    expect(flake).to_have_attribute("aria-invalid", "true")
+    expect(flake).to_be_focused()
+    expect(flake).to_have_accessible_description(re.compile("invalid environment source"))
+    return {"error": form.locator(".field-err").inner_text()}
 
 
 def terminal(page: Page, name: str, command: str, expected: str) -> Any:
@@ -182,6 +198,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "sign-in": sign_in,
     "approve-cli": approve_cli,
     "create": create,
+    "refused-environment": refused_environment,
     "terminal": terminal,
     "new-column": new_column,
     "card": card,

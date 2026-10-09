@@ -13,8 +13,8 @@ use iglu_domain::terminal::{SessionName, TerminalControl, TerminalSize};
 use rustix::termios::{self, OptionalActions, Termios};
 use tokio::io::AsyncReadExt;
 use tokio::signal::unix::{SignalKind, signal};
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::{self, Message};
 
 /// Ctrl-], as in telnet: unlikely to matter to anything running inside.
 const DETACH: u8 = 0x1d;
@@ -121,9 +121,17 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
     request
         .headers_mut()
         .insert("authorization", format!("Bearer {token}").parse()?);
-    let (socket, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .context("couldn't attach")?;
+    let (socket, _) = match tokio_tungstenite::connect_async(request).await {
+        Ok(connected) => connected,
+        Err(tungstenite::Error::Http(response)) => {
+            let body = response.body().as_deref().unwrap_or_default();
+            bail!(
+                "couldn't attach: {}",
+                crate::client::refusal(response.status(), body, &url)
+            );
+        }
+        Err(error) => return Err(error).context("couldn't attach"),
+    };
     let (mut to_column, mut from_column) = socket.split();
 
     let raw = Raw::enter()?;
@@ -131,6 +139,8 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
     let mut stdout = std::io::stdout();
     let mut resized = signal(SignalKind::window_change())?;
     let mut buffer = [0u8; 4096];
+    // Why iglu closed the column, when it said.
+    let mut reason = None;
     let ended = loop {
         tokio::select! {
             read = stdin.read(&mut buffer) => {
@@ -150,7 +160,11 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
                     stdout.write_all(&bytes)?;
                     stdout.flush()?;
                 }
-                Some(Ok(Message::Close(_)) | Err(_)) | None => break true,
+                Some(Ok(Message::Close(frame))) => {
+                    reason = frame.map(|frame| frame.reason.to_string()).filter(|r| !r.is_empty());
+                    break true;
+                }
+                Some(Err(_)) | None => break true,
                 Some(Ok(_)) => {}
             },
             _ = resized.recv() => {
@@ -163,7 +177,10 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
     let _ = to_column.close().await;
     drop(raw);
     if ended {
-        bail!("the column's session ended or the connection dropped");
+        match reason {
+            Some(reason) => bail!("{reason}"),
+            None => bail!("the column's session ended or the connection dropped"),
+        }
     }
     Ok(())
 }

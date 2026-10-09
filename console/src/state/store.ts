@@ -20,6 +20,9 @@ export const workspaces = signal<WorkspaceView[]>([]);
 export const projects = signal<ProjectView[]>([]);
 export const environments = signal<EnvironmentView[]>([]);
 export const live = signal(false);
+/** iglu restarted, likely upgraded, since this page loaded: its code may no
+ * longer match what iglu sends, so it asks to be reloaded. */
+export const outdated = signal(false);
 
 export const route = signal<Route>(parseRoute(location.pathname));
 addEventListener("popstate", () => {
