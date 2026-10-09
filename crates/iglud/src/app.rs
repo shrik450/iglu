@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
-use axum::extract::FromRequestParts;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -18,6 +19,7 @@ use iglu_domain::preview::{
 };
 use iglu_domain::secret::{SecretTarget, SecretValue};
 use iglu_domain::time::{Millis, Timestamp};
+use serde::de::DeserializeOwned;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
@@ -176,6 +178,38 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response()
+    }
+}
+
+/// A JSON request body. One that doesn't parse is answered like any other
+/// bad request, so the reason reaches the console instead of axum's plain-text
+/// rejection.
+pub struct Body<T>(pub T);
+
+impl<T, S> FromRequest<S> for Body<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(request, state).await {
+            Ok(Json(value)) => Ok(Self(value)),
+            Err(rejection) => Err(ApiError::BadRequest(reason(&rejection))),
+        }
+    }
+}
+
+/// Why a body didn't parse, without axum's preamble. A field that failed to
+/// parse reads as the field and its own message.
+fn reason(rejection: &JsonRejection) -> String {
+    if let JsonRejection::JsonDataError(error) = rejection
+        && let Some(cause) = std::error::Error::source(error)
+    {
+        cause.to_string()
+    } else {
+        rejection.body_text()
     }
 }
 

@@ -13,7 +13,7 @@ use iglu_domain::id::{PrincipalId, ProjectId};
 use iglu_domain::project::Origin;
 use uuid::Uuid;
 
-use crate::app::{ApiError, App, Caller, now};
+use crate::app::{ApiError, App, Body, Caller, now};
 use crate::db::{self, AddOutcome, ChangeOutcome, NewProject, ProjectChange, RemoveOutcome};
 use crate::views::project_view;
 
@@ -64,7 +64,7 @@ fn environment_id(
 async fn create(
     caller: Caller,
     State(app): State<Arc<App>>,
-    Json(request): Json<CreateProject>,
+    Body(request): Body<CreateProject>,
 ) -> Result<(StatusCode, Json<ProjectView>), ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageProject, owner)?;
@@ -108,7 +108,7 @@ async fn change(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<ProjectId>,
-    Json(request): Json<ChangeProject>,
+    Body(request): Body<ChangeProject>,
 ) -> Result<Json<ProjectView>, ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageProject, owner)?;

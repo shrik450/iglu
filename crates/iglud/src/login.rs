@@ -18,7 +18,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app::{
-    ApiError, App, CONSOLE_COOKIE, PREVIEW_COOKIE, cookie, fetch_metadata, now, session_principal,
+    ApiError, App, Body, CONSOLE_COOKIE, PREVIEW_COOKIE, cookie, fetch_metadata, now,
+    session_principal,
 };
 use crate::crypto;
 use crate::db::{self, LoginRow, SessionKind};
@@ -359,7 +360,7 @@ async fn cli_approve(
 
 async fn cli_token(
     State(app): State<Arc<App>>,
-    Json(exchange): Json<CliTokenRequest>,
+    Body(exchange): Body<CliTokenRequest>,
 ) -> Result<Json<CliToken>, ApiError> {
     let hash = crypto::hash(&exchange.code);
     let (principal, challenge) = app

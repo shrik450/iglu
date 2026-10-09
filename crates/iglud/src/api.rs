@@ -36,7 +36,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::app::{ApiError, App, Caller, now, open_secrets};
+use crate::app::{ApiError, App, Body, Caller, now, open_secrets};
 use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, RenameOutcome, SealedSecret};
 use crate::model::{ColumnRecord, RouteRecord, WorkspaceRecord};
@@ -186,7 +186,7 @@ async fn create_workspace(
     caller: Caller,
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    Json(request): Json<CreateWorkspace>,
+    Body(request): Body<CreateWorkspace>,
 ) -> Result<Response, ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::OperateWorkspace, owner)?;
@@ -418,7 +418,7 @@ async fn set_desired_state(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Json(request): Json<SetDesiredState>,
+    Body(request): Body<SetDesiredState>,
 ) -> Result<Json<WorkspaceView>, ApiError> {
     let action = match request.state {
         DesiredState::Deleted => Action::DeleteWorkspace,
@@ -459,7 +459,7 @@ async fn rename_workspace(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Json(request): Json<RenameWorkspace>,
+    Body(request): Body<RenameWorkspace>,
 ) -> Result<Json<WorkspaceView>, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let actor = caller.principal.id;
@@ -606,7 +606,7 @@ async fn add_column(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Json(request): Json<AddColumn>,
+    Body(request): Body<AddColumn>,
 ) -> Result<(StatusCode, Json<ColumnSpec>), ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let host = host_for(&app, &ws)?;
@@ -659,7 +659,7 @@ async fn put_layout(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Json(request): Json<PutLayout>,
+    Body(request): Body<PutLayout>,
 ) -> Result<StatusCode, ApiError> {
     owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let layout: Vec<(SessionName, ColumnWidth)> = request
@@ -820,7 +820,7 @@ async fn publish_route(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Json(request): Json<PublishPort>,
+    Body(request): Body<PublishPort>,
 ) -> Result<(StatusCode, Json<RouteView>), ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::PublishRoute).await?;
     let entropy = crypto::random_u64()?;
@@ -862,7 +862,7 @@ async fn list_environments(
 async fn create_environment(
     caller: Caller,
     State(app): State<Arc<App>>,
-    Json(request): Json<CreateEnvironment>,
+    Body(request): Body<CreateEnvironment>,
 ) -> Result<(StatusCode, Json<BuildStarted>), ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageEnvironment, owner)?;
@@ -961,7 +961,7 @@ async fn put_secret(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(name): Path<SecretName>,
-    Json(request): Json<PutSecret>,
+    Body(request): Body<PutSecret>,
 ) -> Result<StatusCode, ApiError> {
     let owner = caller.principal.id;
     caller.authorize(Action::ManageSecrets, owner)?;
