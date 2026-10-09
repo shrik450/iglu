@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::ws::{Message as Browser, WebSocket};
+use axum::extract::ws::{CloseFrame, Message as Browser, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use iglu_domain::auth::{Action, Decision, Resource, authorize};
 use iglu_domain::terminal::{SessionName, TerminalControl, TerminalSize};
@@ -19,6 +19,26 @@ pub const LEASE: Duration = Duration::from_secs(5);
 
 /// How long attaching waits for a frozen workspace to thaw.
 const THAW: Duration = Duration::from_secs(60);
+
+/// The close code for a terminal iglud ended on purpose. The frame's reason
+/// says why, for the console and CLI to show.
+const REFUSED: u16 = 4000;
+
+fn refusal(reason: &str) -> Browser {
+    Browser::Close(Some(CloseFrame {
+        code: REFUSED,
+        reason: close_reason(reason).into(),
+    }))
+}
+
+/// As much of `text` as fits in a close frame's reason: 123 bytes.
+fn close_reason(text: &str) -> &str {
+    let mut end = text.len().min(123);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
 
 /// Whether the person used a stream since its last lease check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,14 +108,17 @@ pub async fn relay(
     let (mut to_browser, mut from_browser) = browser.split();
     // Opening a frozen workspace thaws it.
     if !crate::idle::thaw(&app, &ws, THAW).await {
-        let _ = to_browser.send(Browser::Close(None)).await;
+        let _ = to_browser
+            .send(refusal("the workspace isn't running"))
+            .await;
         return;
     }
     let upstream = match host.attach(ws.id, &session, size).await {
         Ok(socket) => socket,
         Err(error) => {
             tracing::warn!(workspace = %ws.id, %error, "attach failed");
-            let _ = to_browser.send(Browser::Close(None)).await;
+            let reason = crate::api::host_error(error).to_string();
+            let _ = to_browser.send(refusal(&reason)).await;
             return;
         }
     };
@@ -103,6 +126,7 @@ pub async fn relay(
     let mut lease = tokio::time::interval(LEASE);
     lease.tick().await;
     let mut used = Use::Idle;
+    let mut revoked = false;
 
     loop {
         tokio::select! {
@@ -133,6 +157,7 @@ pub async fn relay(
                 app.usage.used(ws.id);
                 if !still_allowed(&app, &caller, &ws, used).await {
                     tracing::info!(workspace = %ws.id, "closing a terminal whose authorization ended");
+                    revoked = true;
                     break;
                 }
                 used = Use::Idle;
@@ -140,5 +165,24 @@ pub async fn relay(
         }
     }
     let _ = to_host.close().await;
-    let _ = to_browser.close().await;
+    if revoked {
+        let _ = to_browser
+            .send(refusal("access to this workspace ended"))
+            .await;
+    } else {
+        let _ = to_browser.close().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn close_reasons_fit_a_frame_without_splitting_a_character() {
+        assert_eq!(close_reason("short"), "short");
+        let long = "é".repeat(100);
+        let cut = close_reason(&long);
+        assert!(cut.len() <= 123 && cut.chars().all(|c| c == 'é'), "{cut}");
+    }
 }

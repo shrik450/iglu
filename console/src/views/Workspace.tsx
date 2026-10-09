@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   activeOf,
   addColumn,
+  attempt,
   closeColumn,
   columnsOf,
   cycleWidth,
@@ -14,6 +15,7 @@ import {
   loadLive,
   markActive,
   moveColumn,
+  openColumn,
   publish,
   rename,
   restartColumn,
@@ -23,6 +25,7 @@ import {
   unpublish,
 } from "../actions.ts";
 import { api } from "../api/client.ts";
+import { FieldError, FormError, InputError, invalid, useForm } from "../components/forms.tsx";
 import { Previews } from "../components/Previews.tsx";
 import {
   attentionGlyph,
@@ -175,36 +178,44 @@ function Main({ ws }: { ws: WorkspaceView }) {
 }
 
 function Header({ ws }: { ws: WorkspaceView }) {
-  const [error, setError] = useState<string | null>(null);
   const phase = phaseText(ws.phase);
+  const naming = useForm(async (data) => {
+    const name = data.get("name");
+    if (typeof name !== "string" || name.trim() === ws.name) {
+      renaming.value = false;
+      return;
+    }
+    await rename(ws, name.trim());
+  });
+  const publishing = useForm(async (data) => {
+    const text = String(data.get("port") ?? "").trim();
+    const port = Number(text);
+    if (!/^\d+$/.test(text)) throw new InputError("port", `${text || "That"} isn't a port number.`);
+    await publish(ws, port);
+  });
   return (
     <>
       <header class="w-head">
         {renaming.value ? (
-          <form
-            class="rename"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const name = new FormData(e.currentTarget).get("name");
-              if (typeof name !== "string" || name.trim() === ws.name) {
-                renaming.value = false;
-                return;
-              }
-              setError(await rename(ws, name.trim()));
-            }}
-          >
-            <input name="name" aria-label="Workspace name" defaultValue={ws.name} autocomplete="off" spellcheck={false} autoFocus onFocus={(e) => e.currentTarget.select()} />
+          <form class="rename" onSubmit={naming.onSubmit}>
+            <input
+              name="name"
+              aria-label="Workspace name"
+              defaultValue={ws.name}
+              autocomplete="off"
+              spellcheck={false}
+              autoFocus
+              onFocus={(e) => e.currentTarget.select()}
+              {...invalid(naming, "name")}
+            />
             <button type="submit" class="btn">
               Rename
             </button>
             <button type="button" class="btn" onClick={() => (renaming.value = false)}>
               Cancel
             </button>
-            {error ? (
-              <span class="err" role="alert">
-                {error}
-              </span>
-            ) : null}
+            <FieldError form={naming} input="name" />
+            <FormError form={naming} />
           </form>
         ) : (
           <div class="w-title">
@@ -221,18 +232,13 @@ function Header({ ws }: { ws: WorkspaceView }) {
           {ws.phase === "running" ? <Listening ws={ws} /> : null}
           {ws.phase === "running" ? (
             addingPort.value ? (
-              <form
-                class="addport"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const port = Number(new FormData(e.currentTarget).get("port"));
-                  if (Number.isInteger(port) && port > 0 && port < 65536) void publish(ws, port);
-                }}
-              >
-                <input type="number" name="port" min="1" max="65535" placeholder="3000…" aria-label="Port to publish" autocomplete="off" autoFocus />
-                <button type="submit" class="btn">
+              <form class="addport" onSubmit={publishing.onSubmit}>
+                <input name="port" inputMode="numeric" placeholder="3000…" aria-label="Port to publish" autocomplete="off" autoFocus {...invalid(publishing, "port")} />
+                <button type="submit" class="btn" disabled={publishing.busy}>
                   Publish
                 </button>
+                <FieldError form={publishing} input="port" />
+                <FormError form={publishing} />
               </form>
             ) : (
               <button type="button" class="chip" aria-label="Publish a port" onClick={() => (addingPort.value = true)}>
@@ -298,7 +304,7 @@ function Listening({ ws }: { ws: WorkspaceView }) {
             class="chip listening"
             aria-label={`Publish :${l.port}${l.process ? ` (${l.process})` : ""}`}
             title={`${l.process || "Something"} is listening${l.column ? ` in ${l.column}` : ""}. Publish it.`}
-            onClick={() => void publish(ws, l.port)}
+            onClick={() => void attempt(() => publish(ws, l.port))}
           >
             + :{l.port} <span translate={false}>{l.process}</span>
           </button>
@@ -358,21 +364,20 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
   }, []);
+  const run = useForm(async (data) => {
+    const text = data.get("command");
+    // The person's own command in their own workspace, so a shell may read it.
+    if (typeof text === "string" && text.trim()) await openColumn(ws, { kind: "server", command: ["sh", "-c", text.trim()] });
+  });
   if (command) {
     return (
-      <form
-        class="add-menu"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const text = new FormData(e.currentTarget).get("command");
-          // The person's own command in their own workspace, so a shell may read it.
-          if (typeof text === "string" && text.trim()) void addColumn(ws, { kind: "server", command: ["sh", "-c", text.trim()] });
-        }}
-      >
-        <input name="command" aria-label="Command to run" placeholder="npm run dev…" autocomplete="off" spellcheck={false} autoFocus />
-        <button type="submit" class="btn">
+      <form class="add-menu" onSubmit={run.onSubmit}>
+        <input name="command" aria-label="Command to run" placeholder="npm run dev…" autocomplete="off" spellcheck={false} autoFocus {...invalid(run, "command")} />
+        <button type="submit" class="btn" disabled={run.busy}>
           Run
         </button>
+        <FieldError form={run} input="command" />
+        <FormError form={run} />
       </form>
     );
   }

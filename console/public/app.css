@@ -208,10 +208,11 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .w-title .g { align-self: center; }
 .rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1 1 auto; }
 .rename input { font: 500 17px/1.2 var(--display); background: var(--bg); border: 1px solid var(--accent); border-radius: 7px; padding: 3px 8px; width: min(320px, 100%); }
-.rename .err, .field-err { font-size: 13px; color: var(--error); }
+.field-err { font-size: 13px; color: var(--error); }
+[aria-invalid="true"] { border-color: var(--error) !important; }
 .w-ports, .w-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13.5px; }
-.addport { display: inline-flex; gap: 6px; }
+.addport { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .addport input { width: 92px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font: 12px/1.4 var(--mono); }
 .condition { color: var(--error); font-size: 13.5px; }
 .condition.calm { color: var(--muted); }

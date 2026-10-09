@@ -3,9 +3,9 @@
 import { useState } from "preact/hooks";
 
 import { attempt } from "../actions.ts";
-import { api, failure } from "../api/client.ts";
+import { api } from "../api/client.ts";
 import { Card } from "../components/Card.tsx";
-import { textOf } from "../components/forms.ts";
+import { FieldError, FormError, InputError, invalid, textOf, useForm } from "../components/forms.tsx";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnTemplate } from "../generated/ColumnTemplate.ts";
 import type { IdleRule } from "../generated/IdleRule.ts";
@@ -91,8 +91,6 @@ function idleChoice(rule: IdleRule): IdleRule["kind"] {
 function Settings({ project }: { project: ProjectView }) {
   const [opening, setOpening] = useState<ColumnTemplate[]>(project.opening);
   const [idle, setIdle] = useState<IdleRule["kind"]>(idleChoice(project.idle));
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [envName, setEnvName] = useState(project.environment);
   const latest = environments.value.find((env) => env.name === envName)?.latest;
   const agents = latest?.status === "ready" ? latest.image.agents.map((a) => a.name) : [];
@@ -103,83 +101,69 @@ function Settings({ project }: { project: ProjectView }) {
     setOpening(next);
   };
   const add = (kind: ColumnKind) => setOpening([...opening, { kind, width: "half" }]);
+  const save = useForm(async (data) => {
+    const text = textOf(data);
+    const name = text("name");
+    if (!name) return;
+    const ports = parsePorts(text("ports") ?? "");
+    if ("error" in ports) throw new InputError("ports", ports.error);
+    let rule: IdleRule;
+    switch (idle) {
+      case "default":
+        rule = { kind: "default" };
+        break;
+      case "never":
+        rule = { kind: "never" };
+        break;
+      case "after": {
+        const minutes = text("minutes") ?? "";
+        if (!/^\d+$/.test(minutes)) throw new InputError("minutes", "Freeze after a whole number of minutes.");
+        rule = { kind: "after", minutes: Number(minutes) };
+        break;
+      }
+      default:
+        return unreachable(idle);
+    }
+    await api.changeProject(project.id, {
+      expected_revision: project.revision,
+      name,
+      repo: text("repo") ?? null,
+      environment: envName,
+      opening,
+      agent: text("agent") ?? null,
+      ports: ports.ports,
+      idle: rule,
+    });
+    say("Saved.");
+    if (name !== project.name) navigate({ view: "project", name }, "replace");
+  });
   return (
-    <form
-      class="set-form p-settings"
-      aria-label={`Settings for ${project.name}`}
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const data = new FormData(e.currentTarget);
-        const text = textOf(data);
-        const name = text("name");
-        if (!name) return;
-        const ports = parsePorts(text("ports") ?? "");
-        if ("error" in ports) {
-          setError(ports.error);
-          return;
-        }
-        const minutes = Number(text("minutes"));
-        let rule: IdleRule;
-        switch (idle) {
-          case "default":
-            rule = { kind: "default" };
-            break;
-          case "never":
-            rule = { kind: "never" };
-            break;
-          case "after":
-            if (!Number.isInteger(minutes) || minutes < 1) {
-              setError("Freeze after a whole number of minutes.");
-              return;
-            }
-            rule = { kind: "after", minutes };
-            break;
-          default:
-            return unreachable(idle);
-        }
-        setBusy(true);
-        setError(null);
-        try {
-          await api.changeProject(project.id, {
-            expected_revision: project.revision,
-            name,
-            repo: text("repo") ?? null,
-            environment: envName,
-            opening,
-            agent: text("agent") ?? null,
-            ports: ports.ports,
-            idle: rule,
-          });
-          say("Saved.");
-          if (name !== project.name) navigate({ view: "project", name }, "replace");
-        } catch (err) {
-          setError(failure(err));
-        }
-        setBusy(false);
-      }}
-    >
+    <form class="set-form p-settings" aria-label={`Settings for ${project.name}`} onSubmit={save.onSubmit}>
       <h2>Settings</h2>
       <label>
         Name
-        <input name="name" required defaultValue={project.name} autocomplete="off" spellcheck={false} />
+        <input name="name" required defaultValue={project.name} autocomplete="off" spellcheck={false} {...invalid(save, "name")} />
+        <FieldError form={save} input="name" />
       </label>
       <label class="grow">
         Repository
-        <input name="repo" defaultValue={project.repo ?? ""} placeholder="None…" autocomplete="off" spellcheck={false} />
+        <input name="repo" defaultValue={project.repo ?? ""} placeholder="None…" autocomplete="off" spellcheck={false} {...invalid(save, "repo")} />
+        <FieldError form={save} input="repo" />
       </label>
       <label>
         Environment
-        <select name="environment" value={envName} onChange={(e) => setEnvName(e.currentTarget.value)}>
+        <select name="environment" value={envName} onChange={(e) => setEnvName(e.currentTarget.value)} {...invalid(save, "environment")}>
           {environments.value.map((env) => (
             <option key={env.name} value={env.name}>
               {env.name}
             </option>
           ))}
         </select>
+        <FieldError form={save} input="environment" />
       </label>
       <label>
         Starts
-        <select name="agent" defaultValue={project.agent ?? ""}>
+        <select name="agent" defaultValue={project.agent ?? ""} {...invalid(save, "agent")}>
           <option value="">No agent</option>
           {agents.map((a) => (
             <option key={a} value={a}>
@@ -187,35 +171,39 @@ function Settings({ project }: { project: ProjectView }) {
             </option>
           ))}
         </select>
+        <FieldError form={save} input="agent" />
       </label>
       <label>
         Previews
-        <input name="ports" defaultValue={project.ports.join(", ")} placeholder="3000, 5173…" inputMode="numeric" autocomplete="off" spellcheck={false} />
+        <input name="ports" defaultValue={project.ports.join(", ")} placeholder="3000, 5173…" inputMode="numeric" autocomplete="off" spellcheck={false} {...invalid(save, "ports")} />
+        <FieldError form={save} input="ports" />
       </label>
       <label>
         When unused
-        <select name="idle" value={idle} onChange={(e) => setIdle(oneOf(IDLE, e.currentTarget.value) ?? idle)}>
+        <select name="idle" value={idle} onChange={(e) => setIdle(oneOf(IDLE, e.currentTarget.value) ?? idle)} {...invalid(save, "idle")}>
           {Object.entries(IDLE).map(([kind, label]) => (
             <option key={kind} value={kind}>
               {label}
             </option>
           ))}
         </select>
+        <FieldError form={save} input="idle" />
       </label>
       {idle === "after" ? (
         <label>
           Minutes
           <input
             name="minutes"
-            type="number"
-            min="1"
+            inputMode="numeric"
             required
             defaultValue={project.idle.kind === "after" ? String(project.idle.minutes) : "60"}
             autocomplete="off"
+            {...invalid(save, "minutes")}
           />
+          <FieldError form={save} input="minutes" />
         </label>
       ) : null}
-      <fieldset class="opening">
+      <fieldset class="opening" name="opening" {...invalid(save, "opening")}>
         <legend>New workspaces open with</legend>
         <ol>
           {opening.map((t, i) => (
@@ -257,15 +245,12 @@ function Settings({ project }: { project: ProjectView }) {
             </button>
           ))}
         </div>
+        <FieldError form={save} input="opening" />
       </fieldset>
-      <button type="submit" class="btn primary" disabled={busy}>
-        {busy ? "Saving…" : "Save"}
+      <button type="submit" class="btn primary" disabled={save.busy}>
+        {save.busy ? "Saving…" : "Save"}
       </button>
-      {error ? (
-        <p class="field-err" role="alert">
-          {error}
-        </p>
-      ) : null}
+      <FormError form={save} />
     </form>
   );
 }

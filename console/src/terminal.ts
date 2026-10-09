@@ -120,7 +120,9 @@ export class TerminalPane {
       this.onDrop();
       const delay = Math.min(10_000, 500 * 2 ** this.retries);
       this.retries += 1;
-      this.onStatus("Reconnecting…");
+      // iglud gives a reason when it ends a terminal on purpose. One it
+      // refused before connecting reaches onDrop's reload of the columns.
+      this.onStatus(event.reason ? `Reconnecting… (${event.reason})` : "Reconnecting…");
       this.retryTimer = window.setTimeout(() => {
         if (!this.closed) {
           this.term.reset();

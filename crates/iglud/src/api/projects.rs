@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -13,8 +13,9 @@ use iglu_domain::id::{PrincipalId, ProjectId};
 use iglu_domain::project::Origin;
 use uuid::Uuid;
 
-use crate::app::{ApiError, App, Body, Caller, now};
+use crate::app::{ApiError, App, Caller, Problem, now};
 use crate::db::{self, AddOutcome, ChangeOutcome, NewProject, ProjectChange, RemoveOutcome};
+use crate::extract::{Body, Path};
 use crate::views::project_view;
 
 pub fn router() -> Router<Arc<App>> {
@@ -78,9 +79,9 @@ async fn create(
         .db
         .call(move |tx| {
             let Some(environment_id) = environment_id(tx, owner, &request.environment)? else {
-                return Ok(Err(format!(
-                    "no environment called {}",
-                    request.environment
+                return Ok(Err(Problem::at(
+                    "environment",
+                    format!("no environment called {}", request.environment),
                 )));
             };
             let new = NewProject {
@@ -94,7 +95,9 @@ async fn create(
             };
             Ok(match db::add_project(tx, &new)? {
                 AddOutcome::Added => Ok(db::project(tx, owner, id)?),
-                AddOutcome::NameTaken => Err("a project with that name exists".to_owned()),
+                AddOutcome::NameTaken => {
+                    Err(Problem::at("name", "a project with that name exists"))
+                }
             })
         })
         .await?
@@ -116,9 +119,9 @@ async fn change(
         .db
         .call(move |tx| {
             let Some(environment_id) = environment_id(tx, owner, &request.environment)? else {
-                return Ok(Err(ApiError::Conflict(format!(
-                    "no environment called {}",
-                    request.environment
+                return Ok(Err(ApiError::Conflict(Problem::at(
+                    "environment",
+                    format!("no environment called {}", request.environment),
                 ))));
             };
             let change = ProjectChange {
@@ -136,9 +139,10 @@ async fn change(
                     ChangeOutcome::Stale => Err(ApiError::Conflict(
                         "the project changed since you loaded it".into(),
                     )),
-                    ChangeOutcome::NameTaken => {
-                        Err(ApiError::Conflict("a project with that name exists".into()))
-                    }
+                    ChangeOutcome::NameTaken => Err(ApiError::Conflict(Problem::at(
+                        "name",
+                        "a project with that name exists",
+                    ))),
                     ChangeOutcome::Missing => Err(ApiError::NotFound),
                 },
             )

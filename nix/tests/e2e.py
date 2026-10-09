@@ -54,6 +54,20 @@ def guest_of(instance: str):
     return run
 
 
+def api_refusal(method: str, path: str, *curl: str) -> tuple[int, Any, str]:
+    """Calls the API as the CLI's user, expecting a refusal: its status,
+    its JSON body, and its headers."""
+    token = client.succeed("jq -r .token /root/.config/iglu/credentials.json").strip()
+    flags = " ".join(shlex.quote(c) for c in curl)
+    status = client.succeed(
+        f"curl -sS -D /tmp/refused-headers -o /tmp/refused-body -w '%{{http_code}}' -X {method} "
+        f"-H 'Authorization: Bearer {token}' {flags} {shlex.quote(CONSOLE + path)}"
+    )
+    headers = client.succeed("cat /tmp/refused-headers").lower()
+    assert "content-type: application/json" in headers, headers
+    return int(status), json.loads(client.succeed("cat /tmp/refused-body")), headers
+
+
 def phase_is(name: str, phase: str) -> None:
     client.wait_until_succeeds(
         f"{IGLU} --json show {name} | jq -e '.phase == \"{phase}\"'", timeout=600
@@ -115,8 +129,10 @@ try:
         authorize = client.succeed(f"curl -sS -o /dev/null -w '%{{redirect_url}}' {CONSOLE}/auth/login")
         state = found(r"[?&]state=([^&]+)", authorize)
         # Another browser, without the sign-in cookie, follows the callback.
-        refused = client.succeed(f"curl -sS '{CONSOLE}/auth/callback?code=stolen&state={state}'")
-        assert "browser that started it" in refused, refused
+        page = client.succeed(f"curl -sS -i '{CONSOLE}/auth/callback?code=stolen&state={state}'")
+        assert "browser that started it" in page, page
+        # A person sees a page, not the API's JSON.
+        assert "content-type: text/html" in page.lower(), page
 
     with subtest("the CLI signs in through the browser"):
         client.succeed(
@@ -169,6 +185,36 @@ try:
         # A second secret for a destination one already has is refused.
         client.fail(f"printf other | {IGLU} secret set clash --env TEST_TOKEN")
         client.fail(f"printf other | {IGLU} secret set clash --file .config/git/config/extra")
+
+    with subtest("every refused request says why, as JSON naming the input"):
+        json_body = ("-H", "Content-Type: application/json")
+        status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":"broken","source":"github:a/b"}')
+        assert status == 400 and body["error"] == "bad_request" and body["field"] == "source", body
+        assert "#" in body["message"] and " at line " not in body["message"], body
+        # A path parameter's own parser doesn't know its name; the route's only one is it.
+        status, body, _ = api_refusal(
+            "PUT", "/v1/secrets/Bad%20Name", *json_body, "-d", '{"target":{"kind":"env","name":"X"},"value":"x"}'
+        )
+        assert status == 400 and body["field"] == "name", body
+        status, body, _ = api_refusal("GET", "/v1/workspaces/not-a-uuid")
+        assert status == 400 and body["field"] == "id", body
+        # Not the console's page, which every other path gets.
+        status, body, _ = api_refusal("GET", "/v1/no-such-thing")
+        assert status == 404 and body["error"] == "not_found", body
+        status, body, headers = api_refusal("DELETE", "/v1/me")
+        assert status == 405 and body["error"] == "method_not_allowed", body
+        assert "allow: get" in headers, headers
+        status, body, _ = api_refusal("POST", "/v1/environments", "-d", "name=broken")
+        assert status == 415 and body["error"] == "unsupported_media_type", body
+        status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":')
+        assert status == 400 and body["field"] is None and "isn't JSON" in body["message"], body
+        # The CLI shows the server's reason and the input it's about.
+        code, said = client.execute(f"{IGLU} env add example 'path:{SELF}#example' 2>&1")
+        assert code != 0 and "name: an environment with that name exists" in said, said
+
+    with subtest("the console shows a refusal by the input it's about"):
+        shown = browser("refused-environment")
+        assert "invalid environment source" in shown["error"], shown
 
     with subtest("the same Git credential lets the host fetch the private environment"):
         iglu("env build private")

@@ -1,0 +1,8 @@
+# iglud's own extractors refuse with an API error that names the input, so
+# every request that doesn't parse is answered the same way (src/extract.rs).
+disallowed-types = [
+    { path = "axum::extract::Path", reason = "use extract::Path, which refuses with an ApiError" },
+    { path = "axum::extract::Query", reason = "use extract::Query, which refuses with an ApiError" },
+    { path = "axum::Form", reason = "use extract::Form, which refuses with an ApiError" },
+    { path = "axum::extract::ws::WebSocketUpgrade", reason = "use extract::Upgrade, which refuses with an ApiError" },
+]

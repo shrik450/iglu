@@ -122,10 +122,15 @@ pub async fn login(server: &url::Url) -> anyhow::Result<()> {
         .json(&CliTokenRequest { code, verifier })
         .send()
         .await?;
-    if !response.status().is_success() {
-        bail!("iglu refused the sign-in ({})", response.status());
+    let status = response.status();
+    let body = response.bytes().await.context("reading iglu's reply")?;
+    if !status.is_success() {
+        bail!(
+            "iglu refused the sign-in: {}",
+            crate::client::refusal(status, &body, server)
+        );
     }
-    let CliToken { token } = response.json().await.context("reading iglu's reply")?;
+    let CliToken { token } = crate::client::reply(&body)?;
     Stored {
         server: server.clone(),
         token,

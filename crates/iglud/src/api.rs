@@ -6,12 +6,11 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{any, delete, get, post, put};
 use futures_util::Stream;
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnStatus, CreateEnvironment, CreateWorkspace,
@@ -36,9 +35,10 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::app::{ApiError, App, Body, Caller, now, open_secrets};
+use crate::app::{ApiError, App, Caller, Problem, no_such_method, no_such_path, now, open_secrets};
 use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, RenameOutcome, SealedSecret};
+use crate::extract::{Body, Path, Query, Upgrade};
 use crate::model::{ColumnRecord, RouteRecord, WorkspaceRecord};
 use crate::views::{ordered, route_view, workspace_view};
 
@@ -90,7 +90,10 @@ pub fn router() -> Router<Arc<App>> {
         .route("/v1/secrets", get(list_secrets))
         .route("/v1/secrets/{name}", put(put_secret).delete(delete_secret))
         .route("/v1/events", get(events))
+        .route("/v1/cli/token", post(crate::login::cli_token))
         .merge(projects::router())
+        .route("/v1/{*rest}", any(no_such_path))
+        .method_not_allowed_fallback(no_such_method)
 }
 
 async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, ApiError> {
@@ -100,6 +103,7 @@ async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, Api
         email: caller.principal.email,
         csrf_token: caller.csrf_token,
         preview_domain: app.config.preview_domain.clone(),
+        boot: app.boot,
     }))
 }
 
@@ -160,6 +164,7 @@ async fn environment_views(
 
 async fn snapshot(app: &Arc<App>, owner: PrincipalId) -> Result<Snapshot, ApiError> {
     Ok(Snapshot {
+        boot: app.boot,
         workspaces: views_for(app, owner).await?,
         projects: projects::views(app, owner).await?,
         environments: environment_views(app, owner).await?,
@@ -222,7 +227,7 @@ async fn create_workspace(
                 return Ok(if hash == fresh.request_hash {
                     Ok(existing)
                 } else {
-                    Err("Idempotency-Key reused with a different request".to_owned())
+                    Err("Idempotency-Key reused with a different request".into())
                 });
             }
             insert_requested(tx, owner, request, &fresh)
@@ -251,15 +256,16 @@ fn insert_requested(
     owner: PrincipalId,
     request: CreateWorkspace,
     fresh: &Fresh,
-) -> Result<Result<WorkspaceRecord, String>, db::DbError> {
+) -> Result<Result<WorkspaceRecord, Problem>, db::DbError> {
     let Some(project) = db::project(tx, owner, request.project)? else {
-        return Ok(Err("no such project".to_owned()));
+        return Ok(Err(Problem::at("project", "no such project")));
     };
     let Some((revision, image)) = db::latest_ready_revision(tx, project.environment_id)? else {
         return Ok(Err(format!(
             "the environment {} has no built image yet",
             project.environment
-        )));
+        )
+        .into()));
     };
     let started = match project::start(
         &project.opening,
@@ -268,7 +274,7 @@ fn insert_requested(
         request.prompt.as_ref(),
     ) {
         Ok(started) => started,
-        Err(refused) => return Ok(Err(refused.to_string())),
+        Err(refused) => return Ok(Err(refused.to_string().into())),
     };
     let name = match choose_name(
         tx,
@@ -283,7 +289,7 @@ fn insert_requested(
     let checkout =
         match project::checkout(project.repo.as_ref(), &name, request.branch, request.base) {
             Ok(checkout) => checkout,
-            Err(refused) => return Ok(Err(refused.to_string())),
+            Err(refused) => return Ok(Err(refused.to_string().into())),
         };
     let record = WorkspaceRecord {
         id: fresh.id,
@@ -380,7 +386,7 @@ fn choose_name(
     asked: Option<WorkspaceName>,
     prompt: Option<&Prompt>,
     entropy: u64,
-) -> Result<Result<WorkspaceName, String>, db::DbError> {
+) -> Result<Result<WorkspaceName, Problem>, db::DbError> {
     let free = |name: &WorkspaceName| -> Result<bool, db::DbError> {
         Ok(!db::workspace_name_taken(tx, owner, name.as_str())?)
     };
@@ -388,7 +394,7 @@ fn choose_name(
         return Ok(if free(&name)? {
             Ok(name)
         } else {
-            Err("a workspace with that name exists".to_owned())
+            Err(Problem::at("name", "a workspace with that name exists"))
         });
     }
     if let Some(prompt) = prompt {
@@ -427,7 +433,8 @@ async fn set_desired_state(
         }
     };
     let ws = owned_workspace(&app, &caller, id, action).await?;
-    allow_transition(ws.phase(), request.state).map_err(|e| ApiError::Conflict(e.to_string()))?;
+    allow_transition(ws.phase(), request.state)
+        .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
     let actor = caller.principal.id;
     let updated = app
         .db
@@ -484,9 +491,10 @@ async fn rename_workspace(
     let updated = match renamed {
         (RenameOutcome::Done, Some(updated)) => updated,
         (RenameOutcome::NameTaken, _) => {
-            return Err(ApiError::Conflict(
-                "another workspace already has that name".into(),
-            ));
+            return Err(ApiError::Conflict(Problem::at(
+                "name",
+                "another workspace already has that name",
+            )));
         }
         (RenameOutcome::Missing | RenameOutcome::Done, _) => return Err(ApiError::NotFound),
     };
@@ -523,7 +531,7 @@ fn host_for(app: &App, ws: &WorkspaceRecord) -> Result<Arc<crate::hosts::HostCli
         .ok_or_else(|| ApiError::Unavailable("the workspace's host isn't configured".into()))
 }
 
-fn host_error(error: crate::hosts::HostError) -> ApiError {
+pub fn host_error(error: crate::hosts::HostError) -> ApiError {
     let error = error.into_command_error();
     match error.code {
         iglu_proto::ErrorCode::NotFound | iglu_proto::ErrorCode::InvalidState => {
@@ -592,7 +600,7 @@ async fn session_for(
             Some(
                 agent::find(&agents, agent)
                     .and_then(|found| agent::command(found, prompt))
-                    .map_err(|e| ApiError::Conflict(e.to_string()))?,
+                    .map_err(|e| ApiError::Conflict(e.to_string().into()))?,
             )
         }
     };
@@ -619,7 +627,10 @@ async fn add_column(
         .collect();
     let name = match request.name {
         Some(name) if taken.contains(&name) => {
-            return Err(ApiError::Conflict(format!("{name} is already a column")));
+            return Err(ApiError::Conflict(Problem::at(
+                "name",
+                format!("{name} is already a column"),
+            )));
         }
         Some(name) => name,
         None => column::free_name(request.kind.default_name(), &taken),
@@ -691,7 +702,7 @@ async fn put_layout(
             })
         })
         .await?;
-    arranged.map_err(|e| ApiError::Conflict(e.to_string()))?;
+    arranged.map_err(|e| ApiError::Conflict(e.to_string().into()))?;
     app.changed();
     Ok(StatusCode::NO_CONTENT)
 }
@@ -756,7 +767,7 @@ async fn attach_column(
     State(app): State<Arc<App>>,
     Path((id, session)): Path<(WorkspaceId, SessionName)>,
     Query(query): Query<AttachQuery>,
-    upgrade: WebSocketUpgrade,
+    Upgrade(upgrade): Upgrade,
 ) -> Result<Response, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let host = host_for(&app, &ws)?;
@@ -884,9 +895,10 @@ async fn create_environment(
         app.changed();
     }
     if !created {
-        return Err(ApiError::Conflict(
-            "an environment with that name exists".into(),
-        ));
+        return Err(ApiError::Conflict(Problem::at(
+            "name",
+            "an environment with that name exists",
+        )));
     }
     let revision = start_build(&app, owner, name).await?;
     Ok((StatusCode::ACCEPTED, Json(BuildStarted { revision })))
@@ -987,7 +999,10 @@ async fn put_secret(
                 .iter()
                 .find(|(_, target)| target.conflicts_with(&sealed.target))
             {
-                return Ok(Err(format!("{other} already goes there")));
+                return Ok(Err(Problem::at(
+                    "target",
+                    format!("{other} already goes there"),
+                )));
             }
             db::put_secret(
                 tx,

@@ -5,12 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, FromRequestParts, Request};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use iglu_api::ErrorBody;
+use iglu_api::{ErrorBody, ErrorKind, Field};
 use iglu_domain::auth::{Action, Decision, Resource, authorize};
 use iglu_domain::id::PrincipalId;
 use iglu_domain::label::HostId;
@@ -19,7 +18,6 @@ use iglu_domain::preview::{
 };
 use iglu_domain::secret::{SecretTarget, SecretValue};
 use iglu_domain::time::{Millis, Timestamp};
-use serde::de::DeserializeOwned;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
@@ -47,6 +45,8 @@ pub struct App {
     pub reconciler: Arc<crate::reconcile::Reconciler>,
     pub pool: crate::gateway::Pool,
     pub usage: crate::idle::Usage,
+    /// This run of iglud, which the console compares to notice an upgrade.
+    pub boot: iglu_api::BootId,
 }
 
 impl App {
@@ -122,14 +122,110 @@ pub enum ApiError {
     Forbidden(String),
     #[error("not found")]
     NotFound,
+    #[error("this path doesn't take that method")]
+    MethodNotAllowed,
     #[error("{0}")]
-    Conflict(String),
+    Conflict(Problem),
     #[error("{0}")]
-    BadRequest(String),
+    BadRequest(Problem),
+    #[error("the request body is too large")]
+    TooLarge,
+    #[error("{0}")]
+    UnsupportedMediaType(String),
     #[error("{0}")]
     Unavailable(String),
     #[error("internal error")]
     Internal,
+}
+
+/// What's wrong with a request, and the input it's about when there is one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub message: String,
+    pub field: Option<Field>,
+}
+
+impl Problem {
+    pub fn at(field: &str, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            field: Some(Field::new(field)),
+        }
+    }
+}
+
+impl From<String> for Problem {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            field: None,
+        }
+    }
+}
+
+impl From<&str> for Problem {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl ApiError {
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Unauthorized => ErrorKind::Unauthorized,
+            Self::Forbidden(_) => ErrorKind::Forbidden,
+            Self::NotFound => ErrorKind::NotFound,
+            Self::MethodNotAllowed => ErrorKind::MethodNotAllowed,
+            Self::Conflict(_) => ErrorKind::Conflict,
+            Self::BadRequest(_) => ErrorKind::BadRequest,
+            Self::TooLarge => ErrorKind::TooLarge,
+            Self::UnsupportedMediaType(_) => ErrorKind::UnsupportedMediaType,
+            Self::Unavailable(_) => ErrorKind::Unavailable,
+            Self::Internal => ErrorKind::Internal,
+        }
+    }
+
+    pub const fn status(&self) -> StatusCode {
+        match self.kind() {
+            ErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+            ErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
+            ErrorKind::Forbidden => StatusCode::FORBIDDEN,
+            ErrorKind::NotFound => StatusCode::NOT_FOUND,
+            ErrorKind::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
+            ErrorKind::Conflict => StatusCode::CONFLICT,
+            ErrorKind::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            ErrorKind::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            ErrorKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            ErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+
+    pub fn body(self) -> ErrorBody {
+        let error = self.kind();
+        let message = self.to_string();
+        let field = match self {
+            Self::Conflict(problem) | Self::BadRequest(problem) => problem.field,
+            Self::Unauthorized
+            | Self::Forbidden(_)
+            | Self::NotFound
+            | Self::MethodNotAllowed
+            | Self::TooLarge
+            | Self::UnsupportedMediaType(_)
+            | Self::Unavailable(_)
+            | Self::Internal => None,
+        };
+        ErrorBody {
+            error,
+            message,
+            field,
+        }
+    }
 }
 
 impl From<DbError> for ApiError {
@@ -155,62 +251,26 @@ impl From<OpenSecretsError> for ApiError {
 
 impl From<iglu_domain::ParseError> for ApiError {
     fn from(error: iglu_domain::ParseError) -> Self {
-        Self::BadRequest(error.to_string())
+        Self::BadRequest(error.to_string().into())
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, code) = match &self {
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            Self::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
-            Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
-            Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
-            Self::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
-            Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
-        };
-        (
-            status,
-            Json(ErrorBody {
-                error: code.to_owned(),
-                message: self.to_string(),
-            }),
-        )
-            .into_response()
+        (self.status(), Json(self.body())).into_response()
     }
 }
 
-/// A JSON request body. One that doesn't parse is answered like any other
-/// bad request, so the reason reaches the console instead of axum's plain-text
-/// rejection.
-pub struct Body<T>(pub T);
-
-impl<T, S> FromRequest<S> for Body<T>
-where
-    T: DeserializeOwned,
-    S: Send + Sync,
-{
-    type Rejection = ApiError;
-
-    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        match Json::<T>::from_request(request, state).await {
-            Ok(Json(value)) => Ok(Self(value)),
-            Err(rejection) => Err(ApiError::BadRequest(reason(&rejection))),
-        }
-    }
+/// Answers API paths that don't exist, so they get an API error rather than
+/// the console's page.
+pub async fn no_such_path() -> ApiError {
+    ApiError::NotFound
 }
 
-/// Why a body didn't parse, without axum's preamble. A field that failed to
-/// parse reads as the field and its own message.
-fn reason(rejection: &JsonRejection) -> String {
-    if let JsonRejection::JsonDataError(error) = rejection
-        && let Some(cause) = std::error::Error::source(error)
-    {
-        cause.to_string()
-    } else {
-        rejection.body_text()
-    }
+/// Answers API paths that exist, but not with the request's method. axum
+/// adds the `Allow` header.
+pub async fn no_such_method() -> ApiError {
+    ApiError::MethodNotAllowed
 }
 
 /// Reads one cookie from the request.

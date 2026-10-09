@@ -2,10 +2,9 @@
 
 use std::sync::Arc;
 
-use axum::Form;
 use axum::Json;
 use axum::Router;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -18,20 +17,61 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app::{
-    ApiError, App, Body, CONSOLE_COOKIE, PREVIEW_COOKIE, cookie, fetch_metadata, now,
-    session_principal,
+    ApiError, App, CONSOLE_COOKIE, PREVIEW_COOKIE, cookie, fetch_metadata, now, session_principal,
 };
 use crate::crypto;
 use crate::db::{self, LoginRow, SessionKind};
+use crate::extract::{Body, Form, Query};
 use crate::oidc::{OidcError, RelyingParty};
 
+/// The console's sign-in pages. The CLI's token exchange is part of the API.
 pub fn console_router() -> Router<Arc<App>> {
     Router::new()
         .route("/auth/login", get(console_login))
         .route("/auth/callback", get(console_callback))
         .route("/auth/logout", post(logout))
         .route("/auth/cli", get(cli_confirm).post(cli_approve))
-        .route("/v1/cli/token", post(cli_token))
+        .method_not_allowed_fallback(async || PageError(ApiError::MethodNotAllowed))
+}
+
+/// A refusal on a page someone opened in their browser: a page saying why,
+/// rather than the API's JSON.
+pub struct PageError(ApiError);
+
+impl From<ApiError> for PageError {
+    fn from(error: ApiError) -> Self {
+        Self(error)
+    }
+}
+
+impl IntoResponse for PageError {
+    fn into_response(self) -> Response {
+        error_page(&self.0, "/")
+    }
+}
+
+/// A page saying why a sign-in step was refused, linking back to `home`.
+fn error_page(error: &ApiError, home: &str) -> Response {
+    let page = format!(
+        r#"<!doctype html><meta charset="utf-8"><title>iglu</title>
+<main class="dialog"><h1>That didn't work</h1><p>{message}</p><p><a href="{home}">Back to iglu</a></p></main>"#,
+        message = escape(&sentence(&error.to_string())),
+        home = escape(home),
+    );
+    (error.status(), Html(page)).into_response()
+}
+
+/// An API message, which is a lowercase phrase, as a sentence.
+fn sentence(message: &str) -> String {
+    let mut chars = message.chars();
+    let mut text: String = chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default();
+    if !text.ends_with(['.', '!', '?']) {
+        text.push('.');
+    }
+    text
 }
 
 #[derive(Deserialize)]
@@ -86,9 +126,10 @@ async fn begin(
 
 async fn console_login(
     State(app): State<Arc<App>>,
-    Query(query): Query<ReturnTo>,
-) -> Result<Response, ApiError> {
-    begin(
+    query: Result<Query<ReturnTo>, ApiError>,
+) -> Result<Response, PageError> {
+    let Query(query) = query?;
+    Ok(begin(
         &app,
         &app.console,
         SessionKind::Console,
@@ -98,7 +139,7 @@ async fn console_login(
             .unwrap_or_else(ReturnPath::root)
             .to_string(),
     )
-    .await
+    .await?)
 }
 
 #[derive(Deserialize)]
@@ -198,9 +239,10 @@ fn with_cookie(mut response: Response, cookie: &str) -> Response {
 
 async fn console_callback(
     State(app): State<Arc<App>>,
-    Query(callback): Query<Callback>,
+    callback: Result<Query<Callback>, ApiError>,
     headers: HeaderMap,
-) -> Result<Response, ApiError> {
+) -> Result<Response, PageError> {
+    let Query(callback) = callback?;
     let (principal, return_to) = complete(
         &app,
         &app.console,
@@ -267,8 +309,9 @@ fn escape(text: &str) -> String {
 async fn cli_confirm(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    Query(request): Query<CliRequest>,
-) -> Result<Response, ApiError> {
+    request: Result<Query<CliRequest>, ApiError>,
+) -> Result<Response, PageError> {
+    let Query(request) = request?;
     request.check()?;
     let session = match cookie(&headers, CONSOLE_COOKIE) {
         Some(token) => session_principal(&app, token, SessionKind::Console).await?,
@@ -318,8 +361,9 @@ struct CliApproval {
 async fn cli_approve(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    Form(form): Form<CliApproval>,
-) -> Result<Response, ApiError> {
+    form: Result<Form<CliApproval>, ApiError>,
+) -> Result<Response, PageError> {
+    let Form(form) = form?;
     let request = CliRequest {
         port: form.port,
         challenge: form.challenge,
@@ -327,16 +371,16 @@ async fn cli_approve(
     };
     request.check()?;
     if fetch_metadata(&headers).site != Some(FetchSite::SameOrigin) {
-        return Err(ApiError::Forbidden("cross-origin request".into()));
+        return Err(ApiError::Forbidden("cross-origin request".into()).into());
     }
     let token = cookie(&headers, CONSOLE_COOKIE).ok_or(ApiError::Unauthorized)?;
     let (principal, row) = session_principal(&app, token, SessionKind::Console)
         .await?
         .ok_or(ApiError::Unauthorized)?;
     if !crypto::constant_time_eq(form.csrf.as_bytes(), row.csrf.as_bytes()) {
-        return Err(ApiError::Forbidden("missing or wrong CSRF token".into()));
+        return Err(ApiError::Forbidden("missing or wrong CSRF token".into()).into());
     }
-    let code = crypto::token()?;
+    let code = crypto::token().map_err(ApiError::from)?;
     let hash = crypto::hash(&code);
     let challenge = request.challenge.clone();
     let id = principal.id;
@@ -350,7 +394,8 @@ async fn cli_approve(
                 now().plus(Millis::from_secs(120)),
             )
         })
-        .await?;
+        .await
+        .map_err(ApiError::from)?;
     Ok(Redirect::to(&format!(
         "http://127.0.0.1:{}/callback?code={code}&state={}",
         request.port, request.state
@@ -358,7 +403,7 @@ async fn cli_approve(
     .into_response())
 }
 
-async fn cli_token(
+pub async fn cli_token(
     State(app): State<Arc<App>>,
     Body(exchange): Body<CliTokenRequest>,
 ) -> Result<Json<CliToken>, ApiError> {
@@ -436,5 +481,5 @@ pub async fn preview_auth(
         }
         _ => Err(ApiError::NotFound),
     };
-    result.unwrap_or_else(IntoResponse::into_response)
+    result.unwrap_or_else(|error| error_page(&error, &app.config.console_origin_string()))
 }

@@ -10,7 +10,7 @@ import { PreviewsView } from "./views/Previews.tsx";
 import { ProjectPage } from "./views/Project.tsx";
 import { Settings } from "./views/Settings.tsx";
 import { Workspace } from "./views/Workspace.tsx";
-import { current, flash, live, me, navigate, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
+import { current, flash, live, me, navigate, outdated, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
 
 function Topbar() {
   const view = route.value.view;
@@ -36,7 +36,16 @@ function Topbar() {
             {count} waiting
           </button>
         ) : null}
-        {live.value ? null : <span class="offline">Reconnecting…</span>}
+        {outdated.value ? (
+          <span class="offline" role="status">
+            iglu was updated.{" "}
+            <button type="button" class="btn" onClick={() => location.reload()}>
+              Reload
+            </button>
+          </span>
+        ) : live.value ? null : (
+          <span class="offline">Reconnecting…</span>
+        )}
       </div>
       <div class="tb-right">
         <div class="seg" role="group" aria-label="View">
