@@ -8,7 +8,7 @@ use hyper::Method;
 use iglu_domain::network::{allowed_ipv4, default_denied_ipv4};
 use serde_json::{Value, json};
 
-use crate::incus::Incus;
+use super::client::{Incus, IncusError};
 
 /// Creates or replaces the ACL and attaches it to the bridge with a default
 /// egress action of reject. DNS to the bridge's own resolver stays allowed.
@@ -17,12 +17,12 @@ pub async fn ensure(
     network: &str,
     acl: &str,
     timeout: std::time::Duration,
-) -> anyhow::Result<()> {
+) -> Result<(), IncusError> {
     let bridge: Value = incus.get(&format!("/1.0/networks/{network}")).await?;
     let gateway = bridge["config"]["ipv4.address"]
         .as_str()
         .and_then(|cidr| cidr.split('/').next())
-        .ok_or_else(|| anyhow::anyhow!("network {network} has no IPv4 address"))?
+        .ok_or_else(|| IncusError::Protocol(format!("network {network} has no IPv4 address")))?
         .to_owned();
 
     let allowed: Vec<String> = allowed_ipv4(&default_denied_ipv4())
@@ -76,7 +76,7 @@ pub async fn ensure(
                 .run(Method::POST, "/1.0/network-acls", Some(&create), timeout)
                 .await?;
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error),
     }
 
     let mut updated = bridge.clone();

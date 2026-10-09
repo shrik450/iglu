@@ -143,6 +143,8 @@ pub enum ErrorCode {
     /// An instance with this workspace's name exists but isn't iglu's.
     Conflict,
     ImageMissing,
+    /// The environment's image was built for a different version of iglu.
+    ImageIncompatible,
     /// The instance isn't in a state where the command makes sense.
     InvalidState,
     /// A command inside the guest failed, such as `git clone`.

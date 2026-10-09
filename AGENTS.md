@@ -12,7 +12,8 @@ crates/
 ├── iglu-domain/   # pure core: domain types, parsing, planning, policy. No I/O.
 ├── iglu-proto/    # the iglud ⇄ hostd wire protocol, built from domain types
 ├── iglu-api/      # iglud's HTTP API types, shared with the CLI and, generated, the console
-├── iglu-hostd/    # execution-host daemon: the only thing that talks to Incus
+├── iglu-hostd/    # execution-host daemon: hostd's rules over a Runtime, with Incus for production
+├── iglu-devhost/  # hostd over local processes, for the dev stack; not isolating, loopback only
 ├── iglud/         # control plane: API, console, preview gateway, OIDC, reconciler
 ├── iglu-cli/      # the `iglu` command
 └── iglu-guest/    # tools baked into workspace images (status, provisioning, git credentials)
@@ -32,7 +33,7 @@ shell with `nix develop`, then use `just`:
 ```sh
 just fmt       # format Rust and Nix
 just lint      # rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint
-just test      # the unit tests; fast, run anywhere
+just test      # the unit tests and the local runtime's conformance suite; fast
 just console   # type-check and bundle the console
 just api-types # regenerate console/src/generated after changing iglu-api; a check fails if stale
 just check     # every flake check: CI's, plus the VM test on x86_64-linux
@@ -95,6 +96,17 @@ reasonable, not only correct.
   is parsing.
 - Guest output is untrusted. Incus responses, guest files, and IdP responses
   are parsed like any other external input.
+
+### Runtimes
+
+- hostd runs workspaces through `Runtime` (`crates/iglu-hostd/src/runtime.rs`),
+  in hostd's vocabulary, never Incus's. A new host feature lands in that
+  contract first: a typed method or a `GuestCommand`/`GuestFile` variant, so
+  every runtime fails to build until it handles it. Behaviour the types
+  can't express goes in the conformance suite (`conformance.rs`), which each
+  runtime runs in its real environment.
+- Only an `Isolating` runtime may serve beyond loopback. A runtime earns it
+  with negative isolation tests of its own, like `incus/checks.rs`.
 
 ### Errors
 

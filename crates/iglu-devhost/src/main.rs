@@ -1,14 +1,14 @@
-//! `iglu-hostd`: the execution host's only privileged service, running
-//! workspaces on Incus.
+//! `iglu-devhost --config <path>`: hostd over the local runtime, serving
+//! iglud on loopback. `just dev` runs it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
+use iglu_devhost::config::Config;
+use iglu_devhost::local::LocalRuntime;
 use iglu_hostd::auth::Verifier;
-use iglu_hostd::config::Config;
 use iglu_hostd::host::Host;
-use iglu_hostd::incus::IncusRuntime;
 use iglu_hostd::server::{self, App};
 use tracing_subscriber::EnvFilter;
 
@@ -25,29 +25,16 @@ async fn main() -> anyhow::Result<()> {
         .skip_while(|arg| arg != "--config")
         .nth(1)
         .map(PathBuf::from)
-        .context("usage: iglu-hostd --config <path>")?;
+        .context("usage: iglu-devhost --config <path>")?;
     let config: Config = iglu_hostd::config::load(&config_path)?;
 
-    let runtime = IncusRuntime::new(
-        config.incus,
-        config.build,
-        &config.runtime_dir,
-        config.timeouts,
-    )
-    .await
-    .context("applying the workspace egress policy")?;
-    let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-        &config.tls.certificate,
-        &config.tls.key,
-    )
-    .await
-    .context("loading the TLS certificate")?;
+    let runtime = LocalRuntime::new(&config.runtime, config.timeouts).await?;
     let app = Arc::new(App {
         host_id: config.host_id,
         arch: iglu_hostd::host_arch().context("unsupported host architecture")?,
         host: Host::new(runtime, config.timeouts),
         verifier: Verifier::from_config(config.auth)?,
     });
-    server::serve_tls(app, config.listen, tls).await?;
+    server::serve_loopback(app, config.listen).await?;
     Ok(())
 }

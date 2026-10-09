@@ -164,6 +164,13 @@ iglu env add default github:you/iglu-env#default
 `iglu env build default` rebuilds it after you change the flake. New
 workspaces use the newest image; existing ones keep theirs.
 
+An environment's flake pins its own iglu, whose guest tools hosts drive.
+Each image records the version of that interface, and a host refuses
+images, and workspaces created from them, that speak another one. After
+upgrading your hosts, run `nix flake update iglu` in each environment's
+flake, push it, and rebuild the environment; recreate workspaces made from
+the old image. They can still be stopped and deleted, but not started.
+
 The flake can be private. Builds use your Git credential secrets (see
 [Using it](#using-it)) as Nix access tokens, so the token that lets a
 workspace clone from GitHub also lets the host fetch

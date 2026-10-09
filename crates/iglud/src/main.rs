@@ -130,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         .map(|host| {
             Arc::new(hosts::HostClient::new(
                 host.id.clone(),
-                host.url.clone(),
+                host.url.as_url().clone(),
                 http.clone(),
                 tls.clone(),
                 tokens.clone(),

@@ -42,6 +42,7 @@ pub enum IncusError {
 }
 
 impl IncusError {
+    #[must_use]
     pub const fn is_not_found(&self) -> bool {
         matches!(self, Self::Api { status: 404, .. })
     }
@@ -223,66 +224,6 @@ impl Incus {
         }
     }
 
-    fn file_path(instance: InstanceName, path: &str) -> String {
-        format!(
-            "/1.0/instances/{instance}/files?path={}",
-            utf8_percent_encode(path, QUERY)
-        )
-    }
-
-    /// Writes a file inside a running instance.
-    pub async fn put_file(
-        &self,
-        instance: InstanceName,
-        path: &str,
-        content: Vec<u8>,
-        owner: FileOwner,
-    ) -> Result<(), IncusError> {
-        let request = self
-            .request(Method::POST, &Self::file_path(instance, path))
-            .header("content-type", "application/octet-stream")
-            .header("x-incus-type", "file")
-            .header("x-incus-write", "overwrite")
-            .header("x-incus-uid", owner.uid.to_string())
-            .header("x-incus-gid", owner.gid.to_string())
-            .header("x-incus-mode", format!("{:04o}", owner.mode))
-            .body(Full::new(Bytes::from(content)))
-            .map_err(|e| IncusError::Http(e.to_string()))?;
-        let (status, body) = Self::read_body(self.send(request).await?).await?;
-        if status.is_success() {
-            Ok(())
-        } else {
-            let message = serde_json::from_slice::<Envelope>(&body)
-                .map(|e| e.error)
-                .unwrap_or_default();
-            Err(IncusError::Api {
-                status: status.as_u16(),
-                message,
-            })
-        }
-    }
-
-    /// Reads raw bytes from an API path, such as an exec output log.
-    pub async fn get_raw(&self, path: &str) -> Result<Bytes, IncusError> {
-        let request = self
-            .request(Method::GET, path)
-            .body(Full::new(Bytes::new()))
-            .map_err(|e| IncusError::Http(e.to_string()))?;
-        let (status, body) = Self::read_body(self.send(request).await?).await?;
-        if status.is_success() {
-            Ok(body)
-        } else {
-            Err(IncusError::Api {
-                status: status.as_u16(),
-                message: path.to_owned(),
-            })
-        }
-    }
-
-    pub async fn delete(&self, path: &str) -> Result<(), IncusError> {
-        self.call(Method::DELETE, path, None).await.map(|_| ())
-    }
-
     /// Opens one of an operation's `WebSockets`.
     pub async fn websocket(
         &self,
@@ -372,13 +313,6 @@ pub enum StateAction {
     Unfreeze,
     Stop { timeout_secs: u32 },
     ForceStop,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FileOwner {
-    pub uid: u32,
-    pub gid: u32,
-    pub mode: u32,
 }
 
 /// The fields of an Incus instance iglu reads.

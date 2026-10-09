@@ -1,12 +1,14 @@
 # End to end: an identity provider, the control box, an execution host with
 # real Incus, a Git server on "public" address space, and a client running
 # Chromium. A person signs in and approves the CLI in the browser, builds an
-# environment from a private flake with their Git credential, creates a
-# workspace from a private repository, types in its terminals, gets Claude
-# Code's attention, publishes a port, and has a preview page try to act on
-# the console. Then workspaces clone over HTTPS, freeze and thaw, survive a
-# host restart, wait for memory, and are cleaned up after an interrupted
-# delete, and iglud's backups are checked.
+# environment, and the host's Incus runtime passes hostd's conformance suite
+# and its isolation checks. Then they build from a private flake with their
+# Git credential, create a workspace from a private repository, type in its
+# terminals, get Claude Code's attention, publish a port, and have a preview
+# page try to act on the console. Then workspaces clone over HTTPS, can't
+# reach each other, freeze and thaw, survive a host restart, wait for memory,
+# and are cleaned up after an interrupted delete, and iglud's backups are
+# checked.
 { self, nixpkgs }:
 { lib, pkgs, ... }:
 
@@ -336,6 +338,10 @@ in
             prefixLength = 24;
           }
         ];
+        environment.systemPackages = [
+          packages.hostd-conformance
+        ];
+
         # Test VMs force swapDevices to [ ]; freezing needs swap.
         zramSwap.enable = true;
 
@@ -438,6 +444,8 @@ in
       GIT_ADDRESS = "${gitAddress}"
       HOST_IP = "${nodes.host.networking.primaryIPAddress}"
       CONTROL_IP = "${nodes.control.networking.primaryIPAddress}"
+      IMAGE = "${image}"
+      HOSTD_CONFIG = "${lib.last (lib.splitString " " nodes.host.systemd.services.iglu-hostd.serviceConfig.ExecStart)}"
       PYTHON = "${lib.getExe pkgs.python3}"
     ''
     + builtins.readFile ./e2e.py;
