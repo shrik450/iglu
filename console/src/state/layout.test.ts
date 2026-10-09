@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ColumnSpec } from "../generated/ColumnSpec.ts";
-import { inView, moved, nextWidth, scrollTarget, shown, stepIndex, titleOf, widened } from "./layout.ts";
+import { inView, moved, nextWidth, placed, scrollTarget, shown, stepIndex, titleOf, widened } from "./layout.ts";
 
 const columns: ColumnSpec[] = [
   { name: "shell", kind: { kind: "shell" }, width: "half", label: null },
@@ -88,4 +88,15 @@ test("a column is in view only when all of it is", () => {
 
 test("a column shows its label, or its session name when it has none", () => {
   assert.deepEqual(shown(columns, undefined).map(titleOf), ["shell", "claude", "preview"]);
+});
+
+test("a column dropped beside another goes there, and a drop that changes nothing is nothing", () => {
+  const names = (list: ColumnSpec[] | null) => list?.map((c) => c.name) ?? null;
+  assert.deepEqual(names(placed(columns, "server", "shell", false)), ["server", "shell", "claude"]);
+  assert.deepEqual(names(placed(columns, "shell", "server", true)), ["claude", "server", "shell"]);
+  assert.deepEqual(names(placed(columns, "shell", "server", false)), ["claude", "shell", "server"]);
+  assert.equal(placed(columns, "shell", "claude", false), null);
+  assert.equal(placed(columns, "claude", "shell", true), null);
+  assert.equal(placed(columns, "shell", "shell", true), null);
+  assert.equal(placed(columns, "adhoc", "shell", true), null);
 });

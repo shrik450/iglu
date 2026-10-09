@@ -19,6 +19,7 @@ import {
   markActive,
   moveColumn,
   openColumn,
+  placeColumn,
   publish,
   remove,
   rename,
@@ -331,6 +332,14 @@ function Strip({ ws }: { ws: WorkspaceView }) {
   const columns = columnsOf(ws);
   const active = activeOf(ws);
   const threads = bySession(ws.threads);
+  // A chip dragged onto another's left or right half goes before or after it.
+  // The keys and the palette move columns too, for those who don't drag.
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [drop, setDrop] = useState<{ name: string; after: boolean } | null>(null);
+  const done = () => {
+    setDragging(null);
+    setDrop(null);
+  };
   return (
     <div class="w-strip">
       <nav class="minimap" aria-label="Columns">
@@ -339,7 +348,28 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             type="button"
             aria-current={c.name === active ? "true" : undefined}
             key={c.name}
-            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}`}
+            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}${dragging === c.name ? " dragging" : ""}`}
+            data-drop={drop?.name === c.name ? (drop.after ? "after" : "before") : undefined}
+            draggable={arrangeable(c.state)}
+            onDragStart={(e) => {
+              e.dataTransfer?.setData("text/plain", titleOf(c));
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+              setDragging(c.name);
+            }}
+            onDragOver={(e) => {
+              if (!dragging || dragging === c.name || !arrangeable(c.state)) return;
+              e.preventDefault();
+              const box = e.currentTarget.getBoundingClientRect();
+              const after = e.clientX > box.left + box.width / 2;
+              if (drop?.name !== c.name || drop.after !== after) setDrop({ name: c.name, after });
+            }}
+            onDragLeave={() => drop?.name === c.name && setDrop(null)}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragging && drop) void placeColumn(ws, dragging, drop.name, drop.after);
+              done();
+            }}
+            onDragEnd={done}
             onClick={() => focusColumn(ws, c.name)}
           >
             <Glyph kind={attentionGlyph(threads.get(c.name)?.[0] ?? null)} />

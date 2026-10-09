@@ -280,6 +280,9 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .sc:hover { color: var(--ink); }
 .sc.vis { color: var(--ink); background: var(--raised); }
 .sc[aria-current] { border-color: var(--accent); color: var(--ink); }
+.sc.dragging { opacity: .45; }
+.sc[data-drop="before"] { box-shadow: -3px 0 0 -1px var(--accent); }
+.sc[data-drop="after"] { box-shadow: 3px 0 0 -1px var(--accent); }
 .sc-add { flex: none; display: inline-grid; place-items: center; width: 28px; height: 26px; border: 1px solid var(--line); background: transparent; border-radius: 7px; padding: 0; color: var(--muted); }
 .sc-add:hover { color: var(--ink); border-color: var(--accent); }
 .sc.ended { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }

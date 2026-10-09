@@ -238,6 +238,7 @@ async fn create_workspace(
         })
         .await?;
     let record = created.map_err(ApiError::Conflict)?;
+    tracing::info!(workspace = %record.id, name = %record.name, %owner, "workspace requested");
     app.usage.used(record.id);
     app.kick();
     app.changed();
@@ -460,6 +461,7 @@ async fn set_desired_state(
         })
         .await?
         .ok_or_else(|| ApiError::Conflict("the workspace changed; reload and retry".into()))?;
+    tracing::info!(workspace = %id, state = %request.state, by = %actor, "workspace state requested");
     app.usage.used(id);
     app.kick();
     app.changed();

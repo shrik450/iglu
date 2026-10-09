@@ -572,6 +572,30 @@ def goes_back(page: Page, name: str, other: str | None = None) -> Any:
     return {"back": other}
 
 
+def drags_column(page: Page, name: str) -> Any:
+    """Dragging a column's chip onto another's left half puts it before that
+    one, and the order is what iglu keeps."""
+    open_workspace(page, name)
+    before = columns(page)
+    assert len(before) >= 2, before
+    chips = page.get_by_role("navigation", name="Columns").get_by_role("button")
+
+    def drag(source: int, target: int) -> None:
+        box = chips.nth(target).bounding_box()
+        assert box, target
+        chips.nth(source).drag_to(chips.nth(target), target_position={"x": 3, "y": box["height"] / 2})
+
+    drag(1, 0)
+    swapped = [before[1], before[0], *before[2:]]
+    expect(page.locator("section[data-column]").first).to_have_attribute("data-column", before[1])
+    page.reload()
+    expect(page.locator("section[data-column]").first).to_have_attribute("data-column", before[1])
+    assert columns(page) == swapped, columns(page)
+    drag(1, 0)
+    expect(page.locator("section[data-column]").first).to_have_attribute("data-column", before[0])
+    return {"swapped": swapped}
+
+
 def renames_follow(page: Page, name: str) -> Any:
     """Renaming keeps the same workspace open: its column keeps the keyboard,
     and another tab showing it follows to the new name, terminals and all."""
@@ -762,6 +786,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "prefix-cancels": prefix_cancels,
     "names-column": names_column,
     "zooms": zooms,
+    "drags-column": drags_column,
     "goes-back": goes_back,
     "renames-follow": renames_follow,
     "drafts-survive": drafts_survive,

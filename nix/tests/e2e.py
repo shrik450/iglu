@@ -272,6 +272,7 @@ try:
         browser("prefix-cancels", "demo")
         browser("names-column", "demo")
         browser("zooms", "demo")
+        browser("drags-column", "demo")
         browser("goes-back", "demo")
         browser("renames-follow", "demo")
         browser("drafts-survive", "app")

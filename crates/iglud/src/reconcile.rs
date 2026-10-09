@@ -327,6 +327,7 @@ async fn act(
                     )
                 })
                 .await?;
+            tracing::info!(workspace = %id, "workspace deleted");
             Ok(true)
         }
         Plan::Stable => {

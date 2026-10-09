@@ -10,7 +10,7 @@ import type { CreateWorkspace } from "./generated/CreateWorkspace.ts";
 import type { DesiredState } from "./generated/DesiredState.ts";
 import type { RouteView } from "./generated/RouteView.ts";
 import type { WorkspaceView } from "./generated/WorkspaceView.ts";
-import { layoutOf, moved, type Shown, shown, stepIndex, widened } from "./state/layout.ts";
+import { layoutOf, moved, placed, type Shown, shown, stepIndex, widened } from "./state/layout.ts";
 import {
   activeColumn,
   ask,
@@ -269,6 +269,13 @@ async function arrange(ws: WorkspaceView, columns: ColumnSpec[]): Promise<void> 
 export async function moveColumn(ws: WorkspaceView, direction: -1 | 1): Promise<void> {
   const active = activeOf(ws);
   const next = active ? moved(ws.columns, active, direction) : null;
+  if (next) await arrange(ws, next);
+}
+
+/** Puts a column just before or after another, as a drag across the strip does. */
+export async function placeColumn(ws: WorkspaceView, name: string, target: string, after: boolean): Promise<void> {
+  const next = placed(ws.columns, name, target, after);
+  markActive(ws, name);
   if (next) await arrange(ws, next);
 }
 
