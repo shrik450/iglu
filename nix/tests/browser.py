@@ -373,6 +373,41 @@ def focus_returns(page: Page, name: str) -> Any:
     return {"cases": list(cases)}
 
 
+def selects_in_place(page: Page, name: str) -> Any:
+    """Selecting text in a column scrolled into view leaves the strip where it
+    is; focusing the terminal's hidden input scrolled it back to the first
+    column."""
+    open_workspace(page, name)
+    names = columns(page)
+    assert len(names) >= 2, names
+    at_prompt(page, names[0])
+    prefix(page, "l")
+    second = column(page, names[1])
+    width = second.locator(".wbtn")
+    opened = width.inner_text()
+    # As wide as the strip, so showing it scrolls the first column away.
+    while width.inner_text() != "1":
+        width.click()
+    strip = page.locator(".w-cols")
+    expect(second).to_be_in_viewport(ratio=0.9)
+    time.sleep(0.5)
+    before = strip.evaluate("(s) => s.scrollLeft")
+    assert before > 0, before
+    strip.evaluate("(s) => { window.stripMoves = []; s.addEventListener('scroll', () => window.stripMoves.push(s.scrollLeft)); }")
+    box = second.locator("canvas").first.bounding_box()
+    assert box
+    page.mouse.move(box["x"] + 40, box["y"] + 20)
+    page.mouse.down()
+    page.mouse.move(box["x"] + 200, box["y"] + 60, steps=8)
+    page.mouse.up()
+    time.sleep(0.5)
+    moves = page.evaluate("window.stripMoves")
+    while width.inner_text() != opened:
+        width.click()
+    assert moves == [], {"before": before, "moves": moves}
+    return {"scrollLeft": before}
+
+
 def questions_end(page: Page, name: str) -> Any:
     """A question ends with the visit that asked it: a Delete armed and left
     unanswered is gone on coming back, so no later click can answer it."""
@@ -475,6 +510,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "keys-stay": keys_stay,
     "prefix-moves": prefix_moves,
     "focus-returns": focus_returns,
+    "selects-in-place": selects_in_place,
     "questions-end": questions_end,
     "card": card,
     "lands-on-waiting": lands_on_waiting,

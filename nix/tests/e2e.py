@@ -264,6 +264,7 @@ try:
         browser("keys-stay", "demo")
         browser("prefix-moves", "demo")
         browser("focus-returns", "demo")
+        browser("selects-in-place", "demo")
         browser("questions-end", "demo")
         assert second["columns"] == ["shell", "shell-2"], second
 

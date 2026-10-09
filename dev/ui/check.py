@@ -76,6 +76,7 @@ def main() -> None:
             step("keys-stay", browser.keys_stay, page, NAME)
             step("prefix-moves", browser.prefix_moves, page, NAME)
             step("focus-returns", browser.focus_returns, page, NAME)
+            step("selects-in-place", browser.selects_in_place, page, NAME)
             step("questions-end", browser.questions_end, page, NAME)
             step("card", browser.card, page, NAME, "Check needs you")
             step("lands-on-waiting", browser.lands_on_waiting, page, NAME, "shell", added)

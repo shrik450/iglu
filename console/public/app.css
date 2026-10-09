@@ -282,7 +282,9 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .col-ctl button { border: 0; background: transparent; color: var(--term-dim); font: 12px/1 var(--mono); padding: 4px 6px; border-radius: 4px; }
 .col-ctl button:hover { background: var(--term-line); color: var(--term-ink); }
 .col-ctl .end { color: var(--error); }
-.term-host { flex: 1; min-height: 0; padding: 4px 6px; }
+/* Positioned, so the terminal's hidden input sits inside its own column:
+   focusing it otherwise scrolled the strip back to its start. */
+.term-host { position: relative; flex: 1; min-height: 0; padding: 4px 6px; }
 .col-ended { flex: 1; display: grid; place-items: center; align-content: center; gap: 10px; color: var(--term-dim); font-size: 13px; }
 .cols-note { display: grid; place-items: center; align-content: center; gap: 12px; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; border: 1px dashed var(--line); border-radius: 8px; position: relative; overflow: hidden; }
 .cols-note.problem { justify-items: center; max-width: 100%; }
