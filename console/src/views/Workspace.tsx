@@ -406,8 +406,9 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
       <form class="add-menu" onSubmit={run.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
         <CommandInput form={run} />
         <button type="submit" class="btn" disabled={run.busy}>
-          Run
+          Start
         </button>
+        <p class="about">It keeps running, and starts again with the workspace. For a one-off command, use a shell.</p>
         <FieldError form={run} input="command" />
         <FormError form={run} />
       </form>
@@ -424,7 +425,7 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
         </button>
       ))}
       <button type="button" disabled={opening !== null} onClick={() => setCommand(true)}>
-        Command…
+        Server…
       </button>
     </div>
   );
@@ -442,7 +443,7 @@ function PortInput({ form }: { form: Form }) {
 
 function CommandInput({ form }: { form: Form }) {
   const ref = useGrab<HTMLInputElement>();
-  return <input ref={ref} name="command" aria-label="Command to run" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
+  return <input ref={ref} name="command" aria-label="Server command" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
 }
 
 /** Ending a column asks first; the question takes the keyboard, and Escape keeps the column. */

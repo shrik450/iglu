@@ -258,7 +258,9 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .add-menu > button { border: 0; background: transparent; text-align: left; padding: 6px 10px; border-radius: 6px; font: 13px/1.2 var(--mono); color: var(--ink); }
 .add-menu > button:hover, .add-menu > button:focus-visible { background: var(--raised); }
 .add-menu > button:focus-visible { outline-offset: -2px; }
-form.add-menu { display: flex; gap: 6px; min-width: 280px; }
+form.add-menu { display: flex; flex-wrap: wrap; gap: 6px; width: 300px; }
+form.add-menu > :not(input, button) { flex-basis: 100%; margin: 0; }
+form.add-menu .about { font-size: 12px; line-height: 1.4; color: var(--muted); }
 form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; font: 13px/1.2 var(--mono); }
 .w-body { position: relative; min-height: 0; display: grid; }
 .w-cols { position: relative; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; min-height: 0; overscroll-behavior-x: contain; padding-bottom: 6px; }
