@@ -9,9 +9,13 @@ import { scan } from "./state/replies.ts";
 
 let ghostty: Promise<Ghostty> | null = null;
 
-/** ghostty's WebAssembly, loaded once for every pane. */
+/** The console's monospace face; terminals draw with it once it's loaded,
+ * since a canvas measures its cells with whatever font is there at the time. */
+const FONT = "'JetBrains Mono', ui-monospace, Menlo, monospace";
+
+/** ghostty's WebAssembly and the terminal font, loaded once for every pane. */
 export function loadGhostty(): Promise<Ghostty> {
-  ghostty ??= Ghostty.load("/ghostty-vt.wasm");
+  ghostty ??= Promise.all([Ghostty.load("/ghostty-vt.wasm"), document.fonts.load(`13px ${FONT}`).catch(() => [])]).then(([loaded]) => loaded);
   return ghostty;
 }
 
@@ -52,6 +56,8 @@ export class TerminalPane {
   private closed = false;
   private retries = 0;
   private retryTimer = 0;
+  /** The size this pane last told the session, so it isn't repeated. */
+  private sent = "";
   /** The start of a query the next output may finish. */
   private carry: Uint8Array = new Uint8Array();
   private theme: ReturnType<typeof themeOf>;
@@ -86,7 +92,7 @@ export class TerminalPane {
     this.onStatus = options.onStatus;
     this.onDrop = options.onDrop;
     this.theme = themeOf(container);
-    this.term = new Terminal({ ghostty, fontSize: 13, scrollback: 10000, theme: this.theme, cursorBlink: true });
+    this.term = new Terminal({ ghostty, fontSize: 13, fontFamily: FONT, scrollback: 10000, theme: this.theme, cursorBlink: false, cursorStyle: "underline" });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
     // ghostty-web focuses a terminal as it opens, and again a moment later,
@@ -104,10 +110,19 @@ export class TerminalPane {
     // Unlike xterm.js, ghostty-web drops the key when the handler returns true.
     this.term.attachCustomKeyEventHandler((event) => shortcuts(event, (text) => this.send(this.encoder.encode(text))));
     this.term.onData((data) => this.send(this.encoder.encode(data)));
-    // zmx applies the most recent resize from any client, so only the
-    // focused client sends one.
+    // Every pane tells its session its own size when that changes, focused
+    // or not. zmx applies the most recent size from any client, so a
+    // browser in the background stays quiet, and focusing claims the size.
     this.term.onResize(({ cols, rows }) => {
-      if (this.focused) this.sendResize(cols, rows);
+      if (document.visibilityState === "visible") this.sendResize(cols, rows);
+    });
+    // A sideways swipe or Shift+wheel moves along the strip; the terminal
+    // keeps vertical scrolling for its scrollback.
+    this.term.attachCustomWheelEventHandler((event) => {
+      const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY) || (event.shiftKey && event.deltaX === 0);
+      if (!sideways) return false;
+      container.closest(".w-cols")?.scrollBy({ left: event.deltaX || event.deltaY });
+      return true;
     });
     container.addEventListener("focusin", this.focusIn);
     container.addEventListener("focusout", this.focusOut);
@@ -123,12 +138,18 @@ export class TerminalPane {
   private readonly focusIn = () => {
     this.focused = true;
     lastFocused = this;
-    this.sendResize(this.term.cols, this.term.rows);
+    this.term.options.cursorBlink = true;
+    this.term.options.cursorStyle = "block";
+    this.sendResize(this.term.cols, this.term.rows, true);
     this.onFocus();
   };
 
+  // Only the terminal with the keyboard blinks a block; the others keep a
+  // still underline, so it's plain where typing goes.
   private readonly focusOut = () => {
     this.focused = false;
+    this.term.options.cursorBlink = false;
+    this.term.options.cursorStyle = "underline";
   };
 
   private connect(): void {
@@ -143,7 +164,8 @@ export class TerminalPane {
     socket.onopen = () => {
       this.retries = 0;
       this.onStatus("");
-      if (this.focused) this.sendResize(this.term.cols, this.term.rows);
+      this.sent = "";
+      if (this.focused) this.sendResize(this.term.cols, this.term.rows, true);
     };
     socket.onmessage = (event: MessageEvent<ArrayBuffer | string>) => {
       if (event.data instanceof ArrayBuffer) this.output(new Uint8Array(event.data));
@@ -170,8 +192,9 @@ export class TerminalPane {
   /** Shows output, answering the queries in it in the order they were asked,
    * interleaved with the ones ghostty answers itself as it reads. */
   private output(bytes: Uint8Array): void {
-    const { replies, carry } = scan(this.carry, bytes, this.theme);
+    const { replies, copies, carry } = scan(this.carry, bytes, this.theme);
     this.carry = carry;
+    for (const copy of copies) void navigator.clipboard?.writeText(copy).catch(() => undefined);
     let shown = 0;
     for (const reply of replies) {
       this.term.write(bytes.subarray(shown, reply.end));
@@ -212,9 +235,12 @@ export class TerminalPane {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(data);
   }
 
-  private sendResize(cols: number, rows: number): void {
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
-    }
+  /** Tells the session this pane's size, unless it already knows; `claim`
+   * says it again, since another client may have set its own since. */
+  private sendResize(cols: number, rows: number, claim = false): void {
+    const size = `${cols}x${rows}`;
+    if (this.socket?.readyState !== WebSocket.OPEN || (size === this.sent && !claim)) return;
+    this.sent = size;
+    this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
   }
 }
