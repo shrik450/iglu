@@ -4,36 +4,37 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "pr
 
 import { api } from "../api/client.ts";
 import { addColumn, nextWaiting, open, toggleFreeze } from "../actions.ts";
+import { keysFor } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
 import { current, details, listed, look, navigate, overlay, renaming, say } from "../state/store.ts";
 
 interface Item {
   label: string;
   sub?: string;
-  hint?: string;
+  hint?: string | undefined;
   run: () => void;
 }
 
 function items(): Item[] {
   const ws = current.value;
   const list: Item[] = [
-    { label: "New workspace", hint: "n", run: () => (overlay.value = "new") },
+    { label: "New workspace", hint: keysFor("new"), run: () => (overlay.value = "new") },
     { label: "New project", run: () => (overlay.value = "project") },
-    { label: "Next waiting", hint: "⌥N", run: nextWaiting },
+    { label: "Next workspace that needs you", hint: keysFor("next-waiting"), run: nextWaiting },
     { label: "Overview", run: () => navigate({ view: "overview" }) },
-    { label: "Previews", hint: "p", run: () => navigate({ view: "previews" }) },
+    { label: "Previews", hint: keysFor("previews"), run: () => navigate({ view: "previews" }) },
     // Keys are no help on a touch screen.
-    ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: "?", run: () => (overlay.value = "keys") }]),
+    ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: keysFor("keys"), run: () => (overlay.value = "keys") }]),
   ];
   if (ws) {
-    list.push({ label: `Rename ${ws.name}`, hint: "e", run: () => (renaming.value = true) });
-    list.push({ label: `Details of ${ws.name}`, hint: "i", run: () => (details.value = true) });
+    list.push({ label: `Rename ${ws.name}`, hint: keysFor("rename"), run: () => (renaming.value = true) });
+    list.push({ label: `Details of ${ws.name}`, hint: keysFor("details"), run: () => (details.value = true) });
     if (ws.phase === "running") {
-      list.push({ label: `Shell in ${ws.name}`, hint: "a", run: () => void addColumn(ws, { kind: "shell" }) });
+      list.push({ label: `Shell in ${ws.name}`, run: () => void addColumn(ws, { kind: "shell" }) });
       for (const agent of ws.agents) list.push({ label: `${agent} in ${ws.name}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
-      list.push({ label: `Freeze ${ws.name}`, hint: "f", run: () => void toggleFreeze(ws) });
+      list.push({ label: `Freeze ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
     }
-    if (ws.phase === "frozen") list.push({ label: `Thaw ${ws.name}`, hint: "f", run: () => void toggleFreeze(ws) });
+    if (ws.phase === "frozen") list.push({ label: `Thaw ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
   }
   for (const w of listed.value) list.push({ label: w.name, sub: w.attention?.summary || (w.checkout ? `⎇ ${w.checkout.branch}` : ""), run: () => open(w) });
   for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${w.name} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });

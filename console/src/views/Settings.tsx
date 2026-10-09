@@ -6,12 +6,15 @@ import { attempt } from "../actions.ts";
 import { api } from "../api/client.ts";
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
+import { keyboard, mac, setKeyboard } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
 import type { EnvironmentView } from "../generated/EnvironmentView.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
 import type { SecretTarget } from "../generated/SecretTarget.ts";
 import type { SecretView } from "../generated/SecretView.ts";
 import { repoLabel } from "../state/groups.ts";
+import { type Chord, chordLabel, usablePrefix } from "../state/keys.ts";
+import type { OptionAsMeta } from "../state/prefs.ts";
 import { environments, look, me, navigate, projects, say, workspaces } from "../state/store.ts";
 import { oneOf, unreachable } from "../state/unsaved.ts";
 
@@ -24,6 +27,7 @@ export function Settings() {
       <Environments />
       <Projects />
       <Secrets />
+      <Keyboard />
       <Account />
     </div>
   );
@@ -269,6 +273,71 @@ function Secrets() {
         </button>
         <FormError form={add} />
       </form>
+    </section>
+  );
+}
+
+/** This browser's keys: a laptop and a phone can differ. */
+function Keyboard() {
+  const prefs = keyboard.value;
+  const [recording, setRecording] = useState(false);
+  const [refused, setRefused] = useState(false);
+  const record = (e: KeyboardEvent) => {
+    if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      setRecording(false);
+      return;
+    }
+    const chord: Chord = { code: e.code, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey };
+    if (!usablePrefix(chord)) {
+      setRefused(true);
+      return;
+    }
+    setKeyboard({ ...prefs, prefix: chord });
+    setRefused(false);
+    setRecording(false);
+  };
+  const meta: Record<OptionAsMeta, string> = { left: "Left Option", both: "Both Options", off: "Neither" };
+  return (
+    <section class="set" aria-labelledby="keyboard-h">
+      <h2 id="keyboard-h">Keyboard</h2>
+      <div class="set-row">
+        <span>Prefix, to reach iglu from a terminal</span>
+        <button
+          type="button"
+          class="btn"
+          aria-pressed={recording}
+          onClick={() => {
+            setRecording(true);
+            setRefused(false);
+          }}
+          onKeyDown={recording ? record : undefined}
+          onBlur={() => setRecording(false)}
+        >
+          {recording ? "Press a Ctrl chord…" : <kbd>{chordLabel(prefs.prefix, mac)}</kbd>}
+        </button>
+        {refused ? <span class="field-err" role="alert">Use Ctrl with a letter, Space, [, ] or \.</span> : null}
+      </div>
+      <label class="set-row">
+        <input type="checkbox" checked={prefs.altMoves} onChange={(e) => setKeyboard({ ...prefs, altMoves: e.currentTarget.checked })} />
+        <span>
+          {mac ? "⌥H ⌥J ⌥K ⌥L" : "Alt+H Alt+J Alt+K Alt+L"} move between columns and workspaces, even in a terminal
+        </span>
+      </label>
+      {mac ? (
+        <label class="set-row">
+          <span>Option as Meta in terminals</span>
+          <select value={prefs.optionAsMeta} onChange={(e) => setKeyboard({ ...prefs, optionAsMeta: e.currentTarget.value as OptionAsMeta })}>
+            {(["left", "both", "off"] as const).map((o) => (
+              <option key={o} value={o}>
+                {meta[o]}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
     </section>
   );
 }

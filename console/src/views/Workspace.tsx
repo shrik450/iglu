@@ -42,7 +42,7 @@ import type { AttentionView } from "../generated/AttentionView.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
-import { terminalShortcut } from "../keyboard.ts";
+import { keysFor, terminalKey } from "../keyboard.ts";
 import { FRACTION, LABEL, type Shown } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
@@ -577,7 +577,7 @@ function Pane(props: { ws: WorkspaceView; name: string; on: boolean; onStatus: (
         ghostty,
         workspace: ws.id,
         session: name,
-        shortcuts: terminalShortcut,
+        shortcuts: terminalKey,
         wantsFocus: () => on.current,
         onFocus: () => markActive(ws, name),
         onStatus,
@@ -640,7 +640,7 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
     case "frozen":
       return (
         <div class="cols-note is-frozen">
-          <Frost label={now.label} hint="f to thaw" />
+          <Frost label={now.label} hint={`${keysFor("freeze")} to thaw`} />
         </div>
       );
     case "stopped":

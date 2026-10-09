@@ -69,7 +69,8 @@ export class TerminalPane {
     ghostty: Ghostty;
     workspace: string;
     session: string;
-    shortcuts: (event: KeyboardEvent) => boolean;
+    /** Whether the console takes a key; it may write to the terminal instead. */
+    shortcuts: (event: KeyboardEvent, send: (text: string) => void) => boolean;
     /** Asked once the terminal has opened: whether it should take focus. */
     wantsFocus: () => boolean;
     onFocus: () => void;
@@ -101,7 +102,7 @@ export class TerminalPane {
     this.fit.fit();
     this.fit.observeResize();
     // Unlike xterm.js, ghostty-web drops the key when the handler returns true.
-    this.term.attachCustomKeyEventHandler(shortcuts);
+    this.term.attachCustomKeyEventHandler((event) => shortcuts(event, (text) => this.send(this.encoder.encode(text))));
     this.term.onData((data) => this.send(this.encoder.encode(data)));
     // zmx applies the most recent resize from any client, so only the
     // focused client sends one.

@@ -97,7 +97,7 @@ export function Card({ ws }: { ws: WorkspaceView }) {
           <Previews ws={ws} />
         </footer>
       ) : null}
-      {frozen ? <Frost label={ws.phase === "freezing" ? "Freezing…" : "Frozen"} hint="f to thaw" /> : null}
+      {frozen ? <Frost label={ws.phase === "freezing" ? "Freezing…" : "Frozen"} hint="Opening it thaws it" /> : null}
     </article>
   );
 }

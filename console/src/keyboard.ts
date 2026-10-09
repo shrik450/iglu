@@ -1,12 +1,33 @@
 // Turns key events into actions, for the page and for terminals.
 
-import { activeOf, back, cycleWidth, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze } from "./actions.ts";
-import { type Action, type Focus, resolve } from "./state/keys.ts";
+import { signal } from "@preact/signals";
+
+import { activeOf, back, columnsOf, cycleWidth, focusColumn, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze } from "./actions.ts";
+import { type Action, BINDINGS, chordLabel, type Focus, type KeyInput, metaBytes, onKeyboard, prefixBytes, resolve } from "./state/keys.ts";
+import { type KeyboardPrefs, loadKeyboard, saveKeyboard } from "./state/prefs.ts";
 import { unreachable } from "./state/unsaved.ts";
 import { addingColumn, closing, current, cursor, details, listed, navigate, overlay, renaming, route } from "./state/store.ts";
 
 /** Whether this keyboard has ⌘ and ⌥, or Ctrl and Alt. */
 export const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** This browser's keyboard settings. */
+export const keyboard = signal<KeyboardPrefs>(loadKeyboard());
+
+export function setKeyboard(prefs: KeyboardPrefs): void {
+  keyboard.value = prefs;
+  saveKeyboard(prefs);
+}
+
+/** How to press an action from anywhere, for hints: "⌃Space n". */
+export function keysFor(kind: Action["kind"]): string | undefined {
+  if (kind === "palette") return onKeyboard("⌘K", mac);
+  const after = BINDINGS.find((b) => b.action.kind === kind && b.after)?.after;
+  return after ? `${chordLabel(keyboard.value.prefix, mac)} ${after.label}` : undefined;
+}
+
+/** The prefix was pressed: the next key is the console's. */
+export const armed = signal(false);
 
 export function perform(action: Action): void {
   const ws = current.value;
@@ -41,6 +62,11 @@ export function perform(action: Action): void {
     case "column":
       if (ws) stepColumn(ws, action.step);
       return;
+    case "column-at": {
+      const column = ws && columnsOf(ws)[action.index];
+      if (ws && column) focusColumn(ws, column.name);
+      return;
+    }
     case "move-column":
       if (ws) void moveColumn(ws, action.step);
       return;
@@ -74,26 +100,96 @@ function focusOf(target: EventTarget | null): Focus {
   return "page";
 }
 
-function inputOf(event: KeyboardEvent, focus: Focus) {
-  return { key: event.key, code: event.code, alt: event.altKey, meta: event.metaKey, ctrl: event.ctrlKey, shift: event.shiftKey, focus };
+function inputOf(event: KeyboardEvent, focus: Focus): KeyInput {
+  return {
+    key: event.key,
+    code: event.code,
+    alt: event.altKey,
+    meta: event.metaKey,
+    ctrl: event.ctrlKey,
+    shift: event.shiftKey,
+    focus,
+    inWorkspace: route.value.view === "workspace",
+  };
 }
 
-/** The page's key handler. Terminals handle their own keys through `terminalShortcut`. */
+/** Which Option keys are down: a key event says Option is held, not which. */
+const options = new Set<string>();
+for (const type of ["keydown", "keyup"] as const) {
+  window.addEventListener(
+    type,
+    (event) => {
+      if (event.code === "AltLeft" || event.code === "AltRight") {
+        if (type === "keydown") options.add(event.code);
+        else options.delete(event.code);
+      }
+    },
+    { capture: true },
+  );
+}
+window.addEventListener("blur", () => options.clear());
+
+/** Whether the Option held now is one the person reads as Meta. */
+function optionIsMeta(): boolean {
+  switch (keyboard.value.optionAsMeta) {
+    case "off":
+      return false;
+    case "both":
+      return true;
+    case "left":
+      return options.has("AltLeft") || !mac;
+    default:
+      return unreachable(keyboard.value.optionAsMeta);
+  }
+}
+
+/** Does what the keymap says for a key; returns whether the console took it.
+ * `send` writes to the focused terminal, when one has focus. */
+function handle(event: KeyboardEvent, focus: Focus, send?: (text: string) => void): boolean {
+  if (event.type !== "keydown" || event.isComposing) return false;
+  const input = inputOf(event, focus);
+  const outcome = resolve(armed.value ? "prefix" : "normal", input, { mac, ...keyboard.value });
+  switch (outcome.kind) {
+    case "pass": {
+      if (!send || !input.alt || input.ctrl || input.meta || !optionIsMeta()) return false;
+      const bytes = metaBytes(input.code, input.shift);
+      if (!bytes) return false;
+      event.preventDefault();
+      send(bytes);
+      return true;
+    }
+    case "arm":
+      armed.value = true;
+      break;
+    case "hold":
+      break;
+    case "cancel":
+      armed.value = false;
+      break;
+    case "send-prefix": {
+      armed.value = false;
+      const bytes = prefixBytes(keyboard.value.prefix);
+      if (send && bytes) send(bytes);
+      break;
+    }
+    case "act":
+      armed.value = false;
+      perform(outcome.action);
+      break;
+    default:
+      unreachable(outcome);
+  }
+  event.preventDefault();
+  return true;
+}
+
+/** The page's key handler. Terminals handle their own keys through `terminalKey`. */
 export function onPageKey(event: KeyboardEvent): void {
   const focus = focusOf(event.target);
-  if (focus === "terminal") return;
-  const action = resolve(inputOf(event, focus));
-  if (!action) return;
-  event.preventDefault();
-  perform(action);
+  if (focus !== "terminal") handle(event, focus);
 }
 
-/** For ghostty: returns true when the key was a console shortcut, so the terminal drops it. */
-export function terminalShortcut(event: KeyboardEvent): boolean {
-  if (event.type !== "keydown") return false;
-  const action = resolve(inputOf(event, "terminal"));
-  if (!action) return false;
-  event.preventDefault();
-  perform(action);
-  return true;
+/** For ghostty: returns true when the console took the key, so the terminal drops it. */
+export function terminalKey(event: KeyboardEvent, send: (text: string) => void): boolean {
+  return handle(event, "terminal", send);
 }

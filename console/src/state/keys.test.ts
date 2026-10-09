@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type KeyInput, onKeyboard, resolve, SHEET } from "./keys.ts";
+import { type Chord, DEFAULT_PREFIX, type KeyInput, type Keymap, metaBytes, prefixBytes, resolve } from "./keys.ts";
+
+const mac: Keymap = { mac: true, prefix: DEFAULT_PREFIX, altMoves: true };
+const linux: Keymap = { ...mac, mac: false };
 
 const key = (code: string, extra: Partial<KeyInput> = {}): KeyInput => ({
   key: code.startsWith("Key") ? code.slice(3).toLowerCase() : code,
@@ -10,50 +13,74 @@ const key = (code: string, extra: Partial<KeyInput> = {}): KeyInput => ({
   meta: false,
   ctrl: false,
   shift: false,
-  focus: "page",
+  focus: "terminal",
+  inWorkspace: true,
   ...extra,
 });
+const prefix = key("Space", { key: " ", ctrl: true });
 
-test("plain letters act on the page", () => {
-  assert.deepEqual(resolve(key("KeyJ")), { kind: "workspace", step: 1 });
-  assert.deepEqual(resolve(key("KeyN")), { kind: "new" });
-  assert.deepEqual(resolve(key("KeyL", { shift: true })), { kind: "move-column", step: 1 });
-});
-
-test("typing in a terminal or a field never triggers a shortcut", () => {
-  for (const focus of ["terminal", "field"] as const) {
-    assert.equal(resolve(key("KeyJ", { focus })), null);
-    assert.equal(resolve(key("Escape", { focus })), null);
+test("a terminal keeps every chord shells and agents use", () => {
+  const theirs: Partial<KeyInput>[] = [
+    // readline and fish: words, history tokens, kill-line, help, list directory.
+    ...["KeyB", "KeyF", "KeyD", "KeyE", "KeyP", "KeyS", "KeyV", "KeyW", "KeyU", "KeyC", "KeyT", "Period", "Comma"].map((code) => ({ code, alt: true })),
+    ...["KeyA", "KeyE", "KeyK", "KeyU", "KeyW", "KeyR", "KeyL", "KeyB", "KeyF", "KeyP", "KeyN"].map((code) => ({ code, ctrl: true })),
+    // Plain typing, Escape, and the arrows.
+    ...["KeyF", "KeyJ", "KeyX", "Escape", "ArrowLeft", "Enter", "Slash"].map((code) => ({ code })),
+  ];
+  for (const extra of theirs) {
+    const input = key(extra.code!, extra);
+    assert.deepEqual(resolve("normal", input, mac), { kind: "pass" }, JSON.stringify(extra));
   }
 });
 
-test("Option chords work from a terminal, not from a field", () => {
-  assert.deepEqual(resolve(key("KeyH", { alt: true, focus: "terminal" })), { kind: "column", step: -1 });
-  assert.deepEqual(resolve(key("KeyN", { alt: true, focus: "terminal" })), { kind: "next-waiting" });
-  assert.equal(resolve(key("KeyH", { alt: true, focus: "field" })), null);
+test("off a Mac, Ctrl+K in a terminal is the shell's, and the palette elsewhere", () => {
+  assert.deepEqual(resolve("normal", key("KeyK", { ctrl: true }), linux), { kind: "pass" });
+  assert.deepEqual(resolve("normal", key("KeyK", { ctrl: true, focus: "page" }), linux), { kind: "act", action: { kind: "palette" } });
+  assert.deepEqual(resolve("normal", key("KeyK", { meta: true }), mac), { kind: "act", action: { kind: "palette" } });
 });
 
-test("Cmd-K opens search anywhere; other Cmd chords are left to the browser", () => {
-  for (const focus of ["page", "terminal", "field"] as const) {
-    assert.deepEqual(resolve(key("KeyK", { meta: true, focus })), { kind: "palette" });
-  }
-  assert.equal(resolve(key("KeyC", { meta: true })), null);
+test("the prefix arms, and the next key is the console's", () => {
+  assert.deepEqual(resolve("normal", prefix, mac), { kind: "arm" });
+  assert.deepEqual(resolve("prefix", key("KeyL"), mac), { kind: "act", action: { kind: "column", step: 1 } });
+  assert.deepEqual(resolve("prefix", key("KeyL", { shift: true }), mac), { kind: "act", action: { kind: "move-column", step: 1 } });
+  assert.deepEqual(resolve("prefix", key("Digit3"), mac), { kind: "act", action: { kind: "column-at", index: 2 } });
+  assert.deepEqual(resolve("prefix", key("Shift", { key: "Shift" }), mac), { kind: "hold" });
+  assert.deepEqual(resolve("prefix", key("Escape", { key: "Escape" }), mac), { kind: "cancel" });
+  assert.deepEqual(resolve("prefix", key("KeyQ"), mac), { kind: "cancel" });
+  assert.deepEqual(resolve("prefix", prefix, mac), { kind: "send-prefix" });
 });
 
-test("the shortcut sheet says what each key does", () => {
-  for (const { shortcuts } of SHEET) {
-    for (const s of shortcuts) {
-      const alt = s.keys.startsWith("⌥");
-      const meta = s.keys.startsWith("⌘");
-      const got = resolve({ ...s.press, alt, meta, ctrl: false, focus: "page" });
-      assert.equal(got?.kind, s.action, s.keys);
-    }
-  }
+test("⌥H/J/K/L move only when the person lets the console take them", () => {
+  assert.deepEqual(resolve("normal", key("KeyH", { alt: true }), mac), { kind: "act", action: { kind: "column", step: -1 } });
+  assert.deepEqual(resolve("normal", key("KeyJ", { alt: true }), mac), { kind: "act", action: { kind: "workspace", step: 1 } });
+  assert.deepEqual(resolve("normal", key("KeyH", { alt: true }), { ...mac, altMoves: false }), { kind: "pass" });
+  assert.deepEqual(resolve("normal", key("KeyH", { alt: true, focus: "field" }), mac), { kind: "pass" });
 });
 
-test("keys are written the way this keyboard labels them", () => {
-  assert.equal(onKeyboard("⌘ K", true), "⌘ K");
-  assert.equal(onKeyboard("⌘ K", false), "Ctrl+K");
-  assert.equal(onKeyboard("⌥ N", false), "Alt+N");
-  assert.equal(onKeyboard("⇧H ⇧L", false), "Shift+H Shift+L");
+test("plain keys act only on pages with nothing to type into, outside a workspace", () => {
+  const page = { focus: "page", inWorkspace: false } as const;
+  assert.deepEqual(resolve("normal", key("KeyJ", page), mac), { kind: "act", action: { kind: "workspace", step: 1 } });
+  assert.deepEqual(resolve("normal", key("Enter", page), mac), { kind: "act", action: { kind: "open" } });
+  assert.deepEqual(resolve("normal", key("Slash", { ...page, shift: true }), mac), { kind: "act", action: { kind: "keys" } });
+  assert.deepEqual(resolve("normal", key("KeyF", { focus: "page", inWorkspace: true }), mac), { kind: "pass" });
+  assert.deepEqual(resolve("normal", key("KeyJ", { focus: "field", inWorkspace: false }), mac), { kind: "pass" });
+});
+
+test("another prefix works the same way", () => {
+  const b: Chord = { code: "KeyB", ctrl: true, alt: false, shift: false, meta: false };
+  const tmux = { ...mac, prefix: b };
+  assert.deepEqual(resolve("normal", key("KeyB", { ctrl: true }), tmux), { kind: "arm" });
+  assert.deepEqual(resolve("normal", prefix, tmux), { kind: "pass" });
+  assert.equal(prefixBytes(b), "\x02");
+  assert.equal(prefixBytes(DEFAULT_PREFIX), "\x00");
+  assert.equal(prefixBytes({ ...b, ctrl: false }), null);
+});
+
+test("Option as Meta sends ESC and the unmodified character", () => {
+  assert.equal(metaBytes("KeyB", false), "\x1bb");
+  assert.equal(metaBytes("KeyB", true), "\x1bB");
+  assert.equal(metaBytes("Period", false), "\x1b.");
+  assert.equal(metaBytes("Digit2", true), "\x1b@");
+  assert.equal(metaBytes("ArrowLeft", false), null);
+  assert.equal(metaBytes("Backspace", false), null);
 });
