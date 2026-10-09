@@ -28,6 +28,10 @@ export function keysFor(kind: Action["kind"]): string | undefined {
 
 /** The prefix was pressed: the next key is the console's. */
 export const armed = signal(false);
+// It waits for that key only: a click, or leaving the window, puts it away,
+// so a later key typed into a field isn't taken as a command.
+window.addEventListener("pointerdown", () => (armed.value = false), { capture: true });
+window.addEventListener("blur", () => (armed.value = false));
 
 export function perform(action: Action): void {
   const ws = current.value;
@@ -99,6 +103,7 @@ function focusOf(target: EventTarget | null): Focus {
   if (!(target instanceof Element)) return "page";
   if (target.closest(".term-host")) return "terminal";
   if (target.closest("input, textarea, select, [contenteditable='true']")) return "field";
+  if (target.closest("button, a[href], summary, [role='button'], [role='option'], dialog")) return "control";
   return "page";
 }
 

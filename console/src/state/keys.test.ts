@@ -66,6 +66,15 @@ test("plain keys act only on pages with nothing to type into, outside a workspac
   assert.deepEqual(resolve("normal", key("KeyJ", { focus: "field", inWorkspace: false }), mac), { kind: "pass" });
 });
 
+test("a focused button, link or dialog keeps its own keys", () => {
+  const control = { focus: "control", inWorkspace: false } as const;
+  assert.deepEqual(resolve("normal", key("Enter", control), mac), { kind: "pass" });
+  assert.deepEqual(resolve("normal", key("KeyJ", control), mac), { kind: "pass" });
+  // The palette and the prefix still reach iglu from one.
+  assert.deepEqual(resolve("normal", key("KeyK", { ...control, meta: true }), mac), { kind: "act", action: { kind: "palette" } });
+  assert.deepEqual(resolve("normal", { ...prefix, ...control }, mac), { kind: "arm" });
+});
+
 test("another prefix works the same way", () => {
   const b: Chord = { code: "KeyB", ctrl: true, alt: false, shift: false, meta: false };
   const tmux = { ...mac, prefix: b };

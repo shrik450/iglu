@@ -359,6 +359,7 @@ def focus_returns(page: Page, name: str) -> Any:
         "add a column": lambda: asks("c", page.get_by_role("group", name="Add a column").get_by_role("button", name="Shell")),
         "end the column": lambda: asks("x", page.get_by_role("button", name=f"End {first}", exact=True)),
         "width button": width.click,
+        "details": lambda: (page.get_by_role("button", name="Details", exact=True).click(), page.get_by_role("button", name="Details", exact=True).click()),
         "column header": lambda: here.locator(".col-h b").click(),
     }
     for case, run in cases.items():
@@ -406,6 +407,60 @@ def selects_in_place(page: Page, name: str) -> Any:
         width.click()
     assert moves == [], {"before": before, "moves": moves}
     return {"scrollLeft": before}
+
+
+def dialogs_hold_focus(page: Page, name: str) -> Any:
+    """A dialog keeps the keyboard while it's open: Tab never reaches the page
+    behind it, Escape still closes it, and the terminal has the keyboard
+    again after."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    prefix(page, "Shift+Slash")
+    sheet = page.get_by_role("dialog", name="Keyboard shortcuts")
+    expect(sheet).to_be_visible()
+    # Past its last control, Tab may go to the browser's own controls, which
+    # leaves the page's body focused; never to the page behind the dialog.
+    for _ in range(3):
+        page.keyboard.press("Tab")
+        inside = page.evaluate("document.activeElement === document.body || Boolean(document.activeElement?.closest('dialog'))")
+        assert inside, page.evaluate("document.activeElement?.outerHTML.slice(0, 120)")
+    page.keyboard.press("Escape")
+    expect(sheet).to_have_count(0)
+    reaches(page, first)
+    return {"tabbed": 3}
+
+
+def enter_presses_buttons(page: Page) -> Any:
+    """On the overview, Enter on a focused button presses it, rather than
+    opening the selected workspace."""
+    page.goto(CONSOLE)
+    button = page.get_by_role("button", name="New project", exact=True)
+    button.focus()
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog", name="New project")
+    expect(dialog).to_be_visible()
+    assert page.url.rstrip("/") == CONSOLE, page.url
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    return {"opened": "New project"}
+
+
+def prefix_cancels(page: Page, name: str) -> Any:
+    """The prefix waits for the next key only: a click in between puts it
+    away, so what's typed next goes where the click went."""
+    open_workspace(page, name)
+    at_prompt(page, columns(page)[0])
+    page.keyboard.press("Control+Space")
+    expect(page.get_by_role("status", name="iglu is waiting for a key")).to_be_visible()
+    page.get_by_role("button", name="Search and commands").click()
+    search = page.get_by_role("combobox", name="Search")
+    expect(search).to_be_focused()
+    page.keyboard.type("previews")
+    expect(search).to_have_value("previews")
+    assert page.url == f"{CONSOLE}/w/{name}", page.url
+    page.keyboard.press("Escape")
+    return {"typed": "previews"}
 
 
 def questions_end(page: Page, name: str) -> Any:
@@ -511,6 +566,9 @@ STEPS: dict[str, Callable[..., Any]] = {
     "prefix-moves": prefix_moves,
     "focus-returns": focus_returns,
     "selects-in-place": selects_in_place,
+    "dialogs-hold-focus": dialogs_hold_focus,
+    "enter-presses-buttons": enter_presses_buttons,
+    "prefix-cancels": prefix_cancels,
     "questions-end": questions_end,
     "card": card,
     "lands-on-waiting": lands_on_waiting,

@@ -180,7 +180,7 @@ effect(() => {
  * would go nowhere. */
 let asking = false;
 effect(() => {
-  const now = Boolean(overlay.value) || question.value !== null;
+  const now = Boolean(overlay.value) || question.value !== null || details.value;
   const closed = asking && !now;
   asking = now;
   if (!closed) return;

@@ -7,8 +7,9 @@
 //   outside terminals);
 // - it follows the prefix, ⌃Space unless the person chose another, as in tmux;
 // - it's ⌥H/J/K/L and the person lets the console take those from terminals;
-// - or it's a plain key on a page with nothing to type into, outside a
-//   workspace, such as j/k and ↩ on the overview.
+// - or it's a plain key on a page where nothing interactive has focus,
+//   outside a workspace, such as j/k and ↩ on the overview. A focused button,
+//   link or dialog keeps its own keys, so ↩ presses the button.
 
 export type Action =
   | { kind: "palette" }
@@ -29,7 +30,9 @@ export type Action =
   | { kind: "back" }
   | { kind: "keys" };
 
-export type Focus = "page" | "terminal" | "field";
+/** What has the keyboard: nothing in particular, a terminal, a text field,
+ * or another control such as a button, link or dialog. */
+export type Focus = "page" | "terminal" | "field" | "control";
 
 export interface KeyInput {
   key: string;
