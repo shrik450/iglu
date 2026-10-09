@@ -11,10 +11,18 @@ import { unreachable } from "../state/unsaved.ts";
 
 type GlyphKind = "waiting" | "done" | "working" | "idle" | "exited" | "frozen" | "asleep" | "build" | "trouble";
 
-const GLYPH: Record<GlyphKind, string> = {
+// A spinner turns about its own centre; a text glyph's box isn't centred on its ink, so it wobbles.
+const SPINNER = (
+  <svg class="i" viewBox="0 0 16 16" width="12" height="12">
+    <circle cx="8" cy="8" r="5.75" fill="none" stroke="currentColor" stroke-opacity=".28" stroke-width="2" />
+    <path d="M8 2.25A5.75 5.75 0 0 1 13.75 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+);
+
+const GLYPH: Record<GlyphKind, ComponentChildren> = {
   waiting: "●",
   done: "✓",
-  working: "◐",
+  working: SPINNER,
   idle: "○",
   exited: "·",
   frozen: "❄",
@@ -22,6 +30,31 @@ const GLYPH: Record<GlyphKind, string> = {
   build: "△",
   trouble: "!",
 };
+
+export function Glyph({ kind }: { kind: GlyphKind }) {
+  return (
+    <span class={`g g-${kind}`} aria-hidden="true">
+      {GLYPH[kind]}
+    </span>
+  );
+}
+
+/** Line icons drawn on a 16-unit square, so they sit at the centre of their box as text can't. */
+const ICON = {
+  plus: "M8 3v10M3 8h10",
+  chevron: "m6 3.5 4.5 4.5L6 12.5",
+  back: "m10 3.5L5.5 8l4.5 4.5",
+  close: "m4.5 4.5 7 7m0-7-7 7",
+  search: "M11.6 7A4.6 4.6 0 1 1 2.4 7a4.6 4.6 0 0 1 9.2 0Zm-1.2 3.4 3.4 3.4",
+} as const;
+
+export function Icon({ name, size = 14 }: { name: keyof typeof ICON; size?: number }) {
+  return (
+    <svg class={`i i-${name}`} viewBox="0 0 16 16" width={size} height={size} aria-hidden="true">
+      <path d={ICON[name]} fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  );
+}
 
 /** A link to a workspace that opens it in place; modified clicks open a tab. */
 export function WorkspaceLink({ ws, class: className, label, children }: { ws: WorkspaceView; class?: string; label?: string; children: ComponentChildren }) {
@@ -38,14 +71,6 @@ export function WorkspaceLink({ ws, class: className, label, children }: { ws: W
     >
       {children}
     </a>
-  );
-}
-
-export function Glyph({ kind }: { kind: GlyphKind }) {
-  return (
-    <span class={`g g-${kind}`} aria-hidden="true">
-      {GLYPH[kind]}
-    </span>
   );
 }
 

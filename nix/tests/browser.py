@@ -264,7 +264,7 @@ def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
     open_workspace(page, name)
     column(page, other).locator(".term-host").click()
     expect(column(page, other)).to_have_class(re.compile(r"\bon\b"))
-    page.get_by_role("button", name="Overview").click()
+    page.get_by_role("link", name="iglu, overview").click()
     page.get_by_role("link", name=name, exact=True).click()
     # Until the columns' sessions load, the first column stands in as active;
     # judge once they have.
@@ -591,7 +591,7 @@ def questions_end(page: Page, name: str) -> Any:
     details.click()
     panel.get_by_role("button", name="Delete", exact=True).click()
     expect(panel.get_by_text(f"Delete {name}?")).to_be_visible()
-    page.get_by_role("group", name="View").get_by_role("button", name="Overview").click()
+    page.get_by_role("link", name="iglu, overview").click()
     page.wait_for_url(f"{CONSOLE}/")
     page.go_back()
     page.wait_for_url(f"{CONSOLE}/w/{name}")

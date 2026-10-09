@@ -129,8 +129,6 @@ effect(() => {
   });
 });
 
-export const filter = signal("");
-
 export interface Flash {
   message: string;
   undo?: () => void;

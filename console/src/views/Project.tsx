@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { attempt } from "../actions.ts";
 import { api } from "../api/client.ts";
+import { Icon } from "../components/bits.tsx";
 import { Card } from "../components/Card.tsx";
 import { FieldError, FormError, InputError, invalid, textOf, useForm } from "../components/forms.tsx";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
@@ -256,24 +257,26 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
                 ))}
               </select>
               <button type="button" class="btn icon" aria-label="Move left" disabled={i === 0} onClick={() => move(i, -1)}>
-                ‹
+                <Icon name="back" size={12} />
               </button>
               <button type="button" class="btn icon" aria-label="Move right" disabled={i === opening.length - 1} onClick={() => move(i, 1)}>
-                ›
+                <Icon name="chevron" size={12} />
               </button>
               <button type="button" class="btn icon" aria-label={`Remove ${t.name ?? kindText(t.kind)}`} onClick={() => setOpening(opening.filter((_, j) => j !== i))}>
-                ×
+                <Icon name="close" size={12} />
               </button>
             </li>
           ))}
         </ol>
         <div class="opening-add">
           <button type="button" class="btn" onClick={() => add({ kind: "shell" })}>
-            + Shell
+            <Icon name="plus" size={12} />
+            Shell
           </button>
           {agents.map((agent) => (
             <button key={agent} type="button" class="btn" onClick={() => add({ kind: "agent", agent })}>
-              + {agent}
+              <Icon name="plus" size={12} />
+              {agent}
             </button>
           ))}
         </div>

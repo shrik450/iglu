@@ -35,6 +35,7 @@ import {
   buildRows,
   Frost,
   Glyph,
+  Icon,
   Igloo,
   phaseText,
   workspaceGlyph,
@@ -50,7 +51,7 @@ import { FRACTION, inView, LABEL, scrollTarget, type Shown } from "../state/layo
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
-import { ask, collapsed, details, filter, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
+import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
 import { loadGhostty, TerminalPane } from "../terminal.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
@@ -73,81 +74,59 @@ export function Workspace({ ws }: { ws: WorkspaceView | null }) {
 }
 
 function Tree({ current }: { current: WorkspaceView | null }) {
-  const query = filter.value.trim().toLowerCase();
-  const shown = groups.value
-    .map((group) => ({
-      ...group,
-      workspaces: group.workspaces.filter((ws) => !query || [ws.name, ws.checkout?.branch ?? "", group.label, ws.attention?.summary ?? ""].some((t) => t.toLowerCase().includes(query))),
-    }))
-    .filter((group) => group.workspaces.length > 0);
   const toggle = (key: string) => {
     const next = new Set(collapsed.value);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     collapsed.value = next;
   };
+  // Finding a workspace by name is the palette's job, so the list is only a list.
   return (
     <nav class="side" aria-label="Workspaces">
-      <div class="tree-tools">
-        <input
-          type="search"
-          name="filter"
-          placeholder="Filter…"
-          aria-label="Filter workspaces"
-          autocomplete="off"
-          spellcheck={false}
-          value={filter.value}
-          onInput={(e) => (filter.value = e.currentTarget.value)}
-        />
-        <button type="button" aria-label="Collapse all" title="Collapse all" onClick={() => (collapsed.value = new Set(groups.value.map((g) => g.key)))}>
-          ⊟
-        </button>
-        <button type="button" aria-label="Expand all" title="Expand all" onClick={() => (collapsed.value = new Set())}>
-          ⊞
-        </button>
-      </div>
       <div class="tree">
-        {shown.map((group) => {
-          const closed = collapsed.value.has(group.key) && !query;
-          const need = group.workspaces.filter((ws) => ws.needs_you).length;
-          return (
-            <div key={group.key} role="group" aria-label={group.label}>
-              <div class="t-group">
-                <button type="button" class="chev" aria-expanded={!closed} aria-label={`${closed ? "Expand" : "Collapse"} ${group.label}`} onClick={() => toggle(group.key)}>
-                  {closed ? "▸" : "▾"}
-                </button>
-                <span class="label" translate={false}>
-                  {group.label}
-                </span>
-                <span class={`cnt${need ? " hot" : ""}`}>{need ? `● ${need}` : group.workspaces.length}</span>
+        {groups.value
+          .filter((group) => group.workspaces.length > 0)
+          .map((group) => {
+            const closed = collapsed.value.has(group.key);
+            const need = group.workspaces.filter((ws) => ws.needs_you).length;
+            return (
+              <div key={group.key} role="group" aria-label={group.label}>
+                <div class="t-group">
+                  <button type="button" class="chev" aria-expanded={!closed} aria-label={`${closed ? "Expand" : "Collapse"} ${group.label}`} onClick={() => toggle(group.key)}>
+                    <Icon name="chevron" size={12} />
+                  </button>
+                  <span class="label" translate={false}>
+                    {group.label}
+                  </span>
+                  <span class={`cnt${need ? " hot" : ""}`}>{need ? `● ${need}` : group.workspaces.length}</span>
+                </div>
+                {/* A folded project still shows the open workspace, and a phone, with no
+                    projects to unfold, shows them all. */}
+                {group.workspaces.map((ws) => (
+                  <a
+                    key={ws.id}
+                    href={`/w/${ws.name}`}
+                    class={`t-ws${ws.needs_you ? " needs" : ""}${ws.phase === "stopped" || ws.phase === "frozen" ? " asleep" : ""}${closed && ws.id !== current?.id ? " folded" : ""}`}
+                    aria-current={ws.id === current?.id ? "page" : undefined}
+                    // In the one-row list on a phone, the current workspace may be off to the side.
+                    ref={(el) => {
+                      if (ws.id === current?.id) el?.scrollIntoView({ inline: "nearest", block: "nearest" });
+                    }}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                      e.preventDefault();
+                      navigate({ view: "workspace", name: ws.name });
+                    }}
+                  >
+                    <Glyph kind={workspaceGlyph(ws)} />
+                    <span class="n" translate={false}>
+                      {ws.name}
+                    </span>
+                  </a>
+                ))}
               </div>
-              {closed
-                ? null
-                : group.workspaces.map((ws) => (
-                    <a
-                      key={ws.id}
-                      href={`/w/${ws.name}`}
-                      class={`t-ws${ws.needs_you ? " needs" : ""}${ws.phase === "stopped" || ws.phase === "frozen" ? " asleep" : ""}`}
-                      aria-current={ws.id === current?.id ? "page" : undefined}
-                      // In the one-row list on a phone, the current workspace may be off to the side.
-                      ref={(el) => {
-                        if (ws.id === current?.id) el?.scrollIntoView({ inline: "nearest", block: "nearest" });
-                      }}
-                      onClick={(e) => {
-                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                        e.preventDefault();
-                        navigate({ view: "workspace", name: ws.name });
-                      }}
-                    >
-                      <Glyph kind={workspaceGlyph(ws)} />
-                      <span class="n" translate={false}>
-                        {ws.name}
-                      </span>
-                    </a>
-                  ))}
-            </div>
-          );
-        })}
+            );
+          })}
       </div>
     </nav>
   );
@@ -239,7 +218,8 @@ function Header({ ws }: { ws: WorkspaceView }) {
               </form>
             ) : (
               <button type="button" class="chip" aria-label="Publish a port" onClick={() => ask(ws, { kind: "port" })}>
-                + port
+                <Icon name="plus" size={11} />
+                port
               </button>
             )
           ) : null}
@@ -371,7 +351,7 @@ function Strip({ ws }: { ws: WorkspaceView }) {
           title={`Add a column (${keysFor("add-column")})`}
           onClick={() => (isAsking("add-column") ? settle(ws) : ask(ws, { kind: "add-column" }))}
         >
-          +
+          <Icon name="plus" size={13} />
         </button>
         {isAsking("add-column") ? <AddMenu ws={ws} /> : null}
       </div>
