@@ -188,6 +188,26 @@ def new_column(page: Page, name: str, command: str, expected: str) -> Any:
     return {"columns": columns(page), "added": added, "screen": run_in_column(page, added, command, expected)}
 
 
+# Asks the terminal for its device attributes and background colour, as
+# fish does after every command, and prints the answers without their ESC
+# after a mark, so an earlier run's answers on screen don't count.
+QUERIES = (
+    "bash -c 'printf \"\\e[c\" >/dev/tty; IFS= read -rs -t 5 -d c d </dev/tty; "
+    "printf \"\\e]11;?\\a\" >/dev/tty; IFS= read -rs -t 5 -d \"$(printf \"\\a\")\" o </dev/tty; "
+    "printf \"answers-%s %s %s\\n\" {mark} \"${{d#?}}\" \"${{o#?}}\"'"
+)
+
+
+def answers_queries(page: Page, name: str) -> Any:
+    """The terminal answers the queries shells wait on; fish held every
+    keystroke for ten seconds after each command when it didn't."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    shown = run_in_column(page, first, QUERIES.format(mark=mark), f"answers-{mark} [?62;22 ]11;rgb:")
+    return {"column": first, "answers": next(line for line in shown.splitlines() if line.startswith(f"answers-{mark}"))}
+
+
 def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
     """Coming back to a workspace where an agent waits lands on that agent's
     column, whichever column you were in when you left."""
@@ -302,6 +322,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "project-agent": project_agent,
     "terminal": terminal,
     "new-column": new_column,
+    "answers-queries": answers_queries,
     "palette-from-terminal": palette_from_terminal,
     "card": card,
     "lands-on-waiting": lands_on_waiting,

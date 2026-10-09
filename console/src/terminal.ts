@@ -5,6 +5,8 @@
 
 import { FitAddon, Ghostty, Terminal } from "ghostty-web";
 
+import { scan } from "./state/replies.ts";
+
 let ghostty: Promise<Ghostty> | null = null;
 
 /** ghostty's WebAssembly, loaded once for every pane. */
@@ -50,6 +52,9 @@ export class TerminalPane {
   private closed = false;
   private retries = 0;
   private retryTimer = 0;
+  /** The start of a query the next output may finish. */
+  private carry: Uint8Array = new Uint8Array();
+  private theme: ReturnType<typeof themeOf>;
 
   private readonly key: string;
   private readonly container: HTMLElement;
@@ -79,7 +84,8 @@ export class TerminalPane {
     this.onFocus = options.onFocus;
     this.onStatus = options.onStatus;
     this.onDrop = options.onDrop;
-    this.term = new Terminal({ ghostty, fontSize: 13, scrollback: 10000, theme: themeOf(container), cursorBlink: true });
+    this.theme = themeOf(container);
+    this.term = new Terminal({ ghostty, fontSize: 13, scrollback: 10000, theme: this.theme, cursorBlink: true });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
     // ghostty-web focuses a terminal as it opens, and again a moment later,
@@ -109,7 +115,8 @@ export class TerminalPane {
   }
 
   restyle(): void {
-    this.term.options.theme = themeOf(this.container);
+    this.theme = themeOf(this.container);
+    this.term.options.theme = this.theme;
   }
 
   private readonly focusIn = () => {
@@ -138,7 +145,7 @@ export class TerminalPane {
       if (this.focused) this.sendResize(this.term.cols, this.term.rows);
     };
     socket.onmessage = (event: MessageEvent<ArrayBuffer | string>) => {
-      if (event.data instanceof ArrayBuffer) this.term.write(new Uint8Array(event.data));
+      if (event.data instanceof ArrayBuffer) this.output(new Uint8Array(event.data));
     };
     socket.onclose = (event) => {
       if (this.socket !== socket || this.closed) return;
@@ -152,10 +159,25 @@ export class TerminalPane {
       this.retryTimer = window.setTimeout(() => {
         if (!this.closed) {
           this.term.reset();
+          this.carry = new Uint8Array();
           this.connect();
         }
       }, delay);
     };
+  }
+
+  /** Shows output, answering the queries in it in the order they were asked,
+   * interleaved with the ones ghostty answers itself as it reads. */
+  private output(bytes: Uint8Array): void {
+    const { replies, carry } = scan(this.carry, bytes, this.theme);
+    this.carry = carry;
+    let shown = 0;
+    for (const reply of replies) {
+      this.term.write(bytes.subarray(shown, reply.end));
+      this.send(this.encoder.encode(reply.text));
+      shown = reply.end;
+    }
+    this.term.write(bytes.subarray(shown));
   }
 
   /** The visible screen as text, one line per row. The canvas has no text to read. */
