@@ -11,6 +11,7 @@
   actionlint,
   shellcheck,
   zmx,
+  lsof,
   git,
   netcat,
 }:
@@ -52,6 +53,7 @@ in
         zmx
         git
         netcat
+        lsof
       ]
       ''
         cargo build -p iglu-guest --offline

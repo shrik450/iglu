@@ -306,6 +306,9 @@ impl Runtime for IncusRuntime {
                 paths::in_runtime_dir(&guest.user, guest_tools::SECRETS_GENERATION)
             }
             GuestFile::Status => paths::in_runtime_dir(&guest.user, guest_tools::STATUS),
+            GuestFile::ColumnsOpened => {
+                paths::in_runtime_dir(&guest.user, guest_tools::COLUMNS_OPENED)
+            }
         };
         guestfs::read(guest.boot.get(), path)
             .await

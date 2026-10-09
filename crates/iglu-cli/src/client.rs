@@ -2,12 +2,14 @@
 
 use anyhow::{Context, bail};
 use iglu_api::{
-    ActivityEntry, BuildStarted, CreateEnvironment, CreateWorkspace, EnvironmentView, ErrorBody,
-    PublishPort, PutSecret, RouteView, SecretView, SetDesiredState, WorkspaceView,
+    ActivityEntry, BuildStarted, ColumnStatus, CreateEnvironment, CreateProject, CreateWorkspace,
+    EnvironmentView, ErrorBody, LiveView, ProjectView, PublishPort, PutSecret, RenameWorkspace,
+    RouteView, SecretView, SetDesiredState, WorkspaceView,
 };
 use iglu_domain::env::EnvName;
-use iglu_domain::id::WorkspaceId;
+use iglu_domain::id::{ProjectId, WorkspaceId};
 use iglu_domain::secret::SecretName;
+use iglu_domain::terminal::SessionName;
 use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::de::DeserializeOwned;
 
@@ -80,6 +82,15 @@ impl Client {
         self.json(self.http.put(url).json(request)).await
     }
 
+    pub async fn rename(
+        &self,
+        id: WorkspaceId,
+        request: &RenameWorkspace,
+    ) -> anyhow::Result<WorkspaceView> {
+        let url = self.url(&format!("/v1/workspaces/{id}/name"))?;
+        self.json(self.http.put(url).json(request)).await
+    }
+
     pub async fn publish(
         &self,
         id: WorkspaceId,
@@ -97,6 +108,30 @@ impl Client {
     pub async fn activity(&self, id: WorkspaceId) -> anyhow::Result<Vec<ActivityEntry>> {
         let url = self.url(&format!("/v1/workspaces/{id}/activity"))?;
         self.json(self.http.get(url)).await
+    }
+
+    pub async fn projects(&self) -> anyhow::Result<Vec<ProjectView>> {
+        self.json(self.http.get(self.url("/v1/projects")?)).await
+    }
+
+    /// Finds a project by name or ID.
+    pub async fn resolve_project(&self, reference: &str) -> anyhow::Result<ProjectView> {
+        self.projects()
+            .await?
+            .into_iter()
+            .find(|p| p.name.as_str() == reference || p.id.to_string() == reference)
+            .with_context(|| format!("no project named {reference}; see `iglu project ls`"))
+    }
+
+    pub async fn create_project(&self, request: &CreateProject) -> anyhow::Result<ProjectView> {
+        let url = self.url("/v1/projects")?;
+        self.json(self.http.post(url).json(request)).await
+    }
+
+    pub async fn delete_project(&self, id: ProjectId) -> anyhow::Result<()> {
+        let url = self.url(&format!("/v1/projects/{id}"))?;
+        check(self.start(self.http.delete(url)).await?).await?;
+        Ok(())
     }
 
     pub async fn environments(&self) -> anyhow::Result<Vec<EnvironmentView>> {
@@ -131,6 +166,28 @@ impl Client {
         let url = self.url(&format!("/v1/secrets/{name}"))?;
         check(self.start(self.http.delete(url)).await?).await?;
         Ok(())
+    }
+
+    pub async fn live(&self, id: WorkspaceId) -> anyhow::Result<LiveView> {
+        let url = self.url(&format!("/v1/workspaces/{id}/live"))?;
+        self.json(self.http.get(url)).await
+    }
+
+    pub async fn columns(&self, id: WorkspaceId) -> anyhow::Result<Vec<ColumnStatus>> {
+        let url = self.url(&format!("/v1/workspaces/{id}/columns"))?;
+        self.json(self.http.get(url)).await
+    }
+
+    /// Where a column is attached, and the token that may.
+    pub fn attach_target(
+        &self,
+        id: WorkspaceId,
+        column: &SessionName,
+    ) -> anyhow::Result<(url::Url, &str)> {
+        Ok((
+            self.url(&format!("/v1/workspaces/{id}/columns/{column}/attach"))?,
+            &self.token,
+        ))
     }
 
     fn url(&self, path: &str) -> anyhow::Result<url::Url> {

@@ -4,14 +4,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iglu_domain::env::EnvSource;
+use iglu_domain::git::GitState;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::HostId;
+use iglu_domain::listener::Listener;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
     BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode, Inventory,
-    PROTOCOL_VERSION, TUNNEL_UPGRADE, TerminalInfo, path,
+    PROTOCOL_VERSION, SessionSpec, TUNNEL_UPGRADE, TerminalInfo, path,
 };
 use serde::de::DeserializeOwned;
 use tokio::net::TcpStream;
@@ -131,6 +133,7 @@ impl HostClient {
             Command::Create(_)
             | Command::Start
             | Command::DeliverSecrets(_)
+            | Command::OpenColumns { .. }
             | Command::Freeze
             | Command::Thaw
             | Command::Stop
@@ -152,6 +155,49 @@ impl HostClient {
                 .timeout(Duration::from_secs(60)),
         )
         .await
+    }
+
+    pub async fn git_state(&self, workspace: WorkspaceId) -> Result<Option<GitState>, HostError> {
+        self.json(
+            self.http
+                .get(self.url(&path::git(workspace))?)
+                .timeout(Duration::from_secs(60)),
+        )
+        .await
+    }
+
+    pub async fn listeners(&self, workspace: WorkspaceId) -> Result<Vec<Listener>, HostError> {
+        self.json(
+            self.http
+                .get(self.url(&path::listeners(workspace))?)
+                .timeout(Duration::from_secs(60)),
+        )
+        .await
+    }
+
+    /// Opens one more terminal session in a running workspace.
+    pub async fn open_terminal(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionSpec,
+    ) -> Result<(), HostError> {
+        let response = self
+            .http
+            .post(self.url(&path::terminals(workspace))?)
+            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
+            .json(session)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await
+            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(match response.json::<CommandError>().await {
+                Ok(error) => HostError::Command(error),
+                Err(e) => HostError::Unreachable(e.to_string()),
+            })
+        }
     }
 
     pub async fn close_terminal(

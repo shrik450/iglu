@@ -3,6 +3,7 @@
 //! Every command accepts `--json` for machine-readable output and exits
 //! nonzero on failure, so agents can drive it.
 
+mod attach;
 mod client;
 mod login;
 
@@ -12,18 +13,22 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use iglu_api::{
-    Condition, CreateEnvironment, CreateWorkspace, PublishPort, PutSecret, RevisionStatus,
-    RouteView, SetDesiredState, WorkspaceView,
+    Condition, CreateEnvironment, CreateProject, CreateWorkspace, ProjectView, PublishPort,
+    PutSecret, RenameWorkspace, RevisionStatus, RouteView, SetDesiredState, WorkspaceView,
 };
+use iglu_domain::agent::Prompt;
 use iglu_domain::env::{EnvName, EnvSource};
+use iglu_domain::git::{Unpushed, Unsaved};
 use iglu_domain::id::WorkspaceId;
-use iglu_domain::label::WorkspaceName;
-use iglu_domain::lifecycle::DesiredState;
+use iglu_domain::label::{AgentName, ProjectName, WorkspaceName};
+use iglu_domain::lifecycle::{DesiredState, Phase};
 use iglu_domain::port::GuestPort;
+use iglu_domain::project::Origin;
 use iglu_domain::repo::{BranchName, GitHost, RepoUrl};
 use iglu_domain::secret::{
     EnvVarName, GitUsername, HomePath, SecretName, SecretTarget, SecretValue,
 };
+use iglu_domain::terminal::SessionName;
 use serde::Serialize;
 use serde_json::json;
 
@@ -50,6 +55,9 @@ enum Command {
     Logout,
     #[command(flatten)]
     Workspace(WorkspaceCommand),
+    /// Manage projects: what workspaces clone and how they start.
+    #[command(subcommand)]
+    Project(ProjectCommand),
     /// Manage environments.
     #[command(subcommand)]
     Env(EnvCommand),
@@ -62,11 +70,15 @@ enum Command {
 enum WorkspaceCommand {
     /// List workspaces.
     Ls,
-    /// Create a workspace from a repository.
+    /// Create a workspace in a project.
     New {
-        repo: RepoUrl,
-        #[arg(long, default_value = "default")]
-        env: EnvName,
+        /// The project's name; `general` has no repository.
+        project: String,
+        /// What to work on. Starts an agent with it and names the workspace.
+        prompt: Option<Prompt>,
+        /// The agent to start, if not the project's or the environment's first.
+        #[arg(long)]
+        agent: Option<AgentName>,
         /// The branch to work on. Defaults to the workspace name.
         #[arg(long)]
         branch: Option<BranchName>,
@@ -81,6 +93,17 @@ enum WorkspaceCommand {
     },
     /// Show one workspace.
     Show { workspace: String },
+    /// Open one of a workspace's columns in this terminal; Ctrl-] detaches.
+    Attach {
+        workspace: String,
+        /// Defaults to the first open column.
+        column: Option<SessionName>,
+    },
+    /// Rename a workspace. Its branch, files and previews stay as they are.
+    Rename {
+        workspace: String,
+        name: WorkspaceName,
+    },
     /// Start or thaw a workspace.
     Start {
         workspace: String,
@@ -99,11 +122,15 @@ enum WorkspaceCommand {
         #[arg(long)]
         wait: bool,
     },
-    /// Delete a workspace and everything in it.
+    /// Delete a workspace and everything in it. Refuses while it has
+    /// uncommitted or unpushed work, or can't be checked, unless forced.
     Rm {
         workspace: String,
         #[arg(long)]
         wait: bool,
+        /// Delete even if work would be lost.
+        #[arg(long)]
+        force: bool,
     },
     /// Publish a guest port at its own preview URL.
     Port { workspace: String, port: GuestPort },
@@ -111,6 +138,23 @@ enum WorkspaceCommand {
     Ports { workspace: String },
     /// Show what happened to a workspace.
     Log { workspace: String },
+}
+
+#[derive(Subcommand)]
+enum ProjectCommand {
+    /// List projects.
+    Ls,
+    /// Add a project. Its name defaults to the repository's.
+    Add {
+        name: Option<ProjectName>,
+        /// The repository its workspaces clone. Without one they start empty.
+        #[arg(long)]
+        repo: Option<RepoUrl>,
+        #[arg(long, default_value = "default")]
+        env: EnvName,
+    },
+    /// Remove a project without workspaces.
+    Rm { project: String },
 }
 
 #[derive(Subcommand)]
@@ -158,10 +202,11 @@ fn print<T: Serialize + ?Sized>(json_mode: bool, value: &T, text: impl FnOnce(&T
 }
 
 fn describe(ws: &WorkspaceView) -> String {
-    let mut lines = vec![format!(
-        "{:<24} {:<10} {}  {}",
-        ws.name, ws.phase, ws.branch, ws.repo
-    )];
+    let branch = ws
+        .checkout
+        .as_ref()
+        .map_or_else(String::new, |checkout| checkout.branch.to_string());
+    let mut lines = vec![format!("{:<24} {:<10} {branch}", ws.name, ws.phase)];
     if let Some(attention) = &ws.attention {
         lines.push(format!(
             "  {}: {} {}",
@@ -272,6 +317,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Workspace(command) => {
             workspace(&Client::from_stored()?, json_mode, command).await?;
         }
+        Command::Project(command) => project(&Client::from_stored()?, json_mode, command).await?,
         Command::Env(command) => env(&Client::from_stored()?, json_mode, command).await?,
         Command::Secret(command) => secret(&Client::from_stored()?, json_mode, command).await?,
     }
@@ -290,25 +336,29 @@ async fn workspace(
     match command {
         WorkspaceCommand::Ls => {
             let list = client.workspaces().await?;
+            let projects = if json_mode {
+                Vec::new()
+            } else {
+                client.projects().await?
+            };
             print(json_mode, list.as_slice(), |list| {
-                if list.is_empty() {
-                    "no workspaces".into()
-                } else {
-                    lines(list, describe)
-                }
+                by_project(list, &projects)
             });
         }
         WorkspaceCommand::New {
-            repo,
-            env,
+            project,
+            prompt,
+            agent,
             branch,
             base,
             name,
             wait,
         } => {
+            let project = client.resolve_project(&project).await?;
             let request = CreateWorkspace {
-                environment: env,
-                repo,
+                project: project.id,
+                prompt,
+                agent,
                 branch,
                 base,
                 name,
@@ -328,6 +378,14 @@ async fn workspace(
             let ws = client.resolve(&workspace).await?;
             print(json_mode, &ws, describe);
         }
+        WorkspaceCommand::Attach { workspace, column } => {
+            attach::run(client, &workspace, column).await?;
+        }
+        WorkspaceCommand::Rename { workspace, name } => {
+            let ws = client.resolve(&workspace).await?;
+            let ws = client.rename(ws.id, &RenameWorkspace { name }).await?;
+            print(json_mode, &ws, describe);
+        }
         WorkspaceCommand::Start { workspace, wait } => {
             transition(client, json_mode, &workspace, DesiredState::Running, wait).await?;
         }
@@ -337,7 +395,15 @@ async fn workspace(
         WorkspaceCommand::Stop { workspace, wait } => {
             transition(client, json_mode, &workspace, DesiredState::Stopped, wait).await?;
         }
-        WorkspaceCommand::Rm { workspace, wait } => {
+        WorkspaceCommand::Rm {
+            workspace,
+            wait,
+            force,
+        } => {
+            if !force {
+                let ws = client.resolve(&workspace).await?;
+                check_nothing_lost(client, &ws).await?;
+            }
             transition(client, json_mode, &workspace, DesiredState::Deleted, wait).await?;
         }
         WorkspaceCommand::Port { workspace, port } => {
@@ -357,6 +423,126 @@ async fn workspace(
             let log = client.activity(ws.id).await?;
             print(json_mode, log.as_slice(), |log| {
                 lines(log, |entry| format!("{:<18} {}", entry.kind, entry.detail))
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Refuses when deleting would lose work, or when that can't be told.
+async fn check_nothing_lost(client: &Client, ws: &WorkspaceView) -> anyhow::Result<()> {
+    if ws.checkout.is_none() {
+        return Ok(());
+    }
+    if ws.phase != Phase::Running {
+        bail!(
+            "{} is {}, so its Git state can't be checked; start it to check, or pass --force",
+            ws.name,
+            ws.phase
+        );
+    }
+    let live = client
+        .live(ws.id)
+        .await
+        .context("couldn't check for unsaved work; pass --force to delete anyway")?;
+    if let Some(unsaved) = live.unsaved {
+        bail!(
+            "{} has {}; push it first, or pass --force",
+            ws.name,
+            unsaved_text(unsaved)
+        );
+    }
+    Ok(())
+}
+
+fn unsaved_text(unsaved: Unsaved) -> String {
+    let files = match unsaved.uncommitted {
+        0 => None,
+        1 => Some("1 uncommitted file".to_owned()),
+        n => Some(format!("{n} uncommitted files")),
+    };
+    let commits = match unsaved.unpushed {
+        Unpushed::None => None,
+        Unpushed::Commits { count: 1 } => Some("1 unpushed commit".to_owned()),
+        Unpushed::Commits { count } => Some(format!("{count} unpushed commits")),
+        Unpushed::NoUpstream => Some("a branch that was never pushed".to_owned()),
+    };
+    [files, commits]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+/// Workspaces under their projects' names.
+fn by_project(list: &[WorkspaceView], projects: &[ProjectView]) -> String {
+    if list.is_empty() {
+        return "no workspaces".into();
+    }
+    projects
+        .iter()
+        .filter_map(|project| {
+            let inside: Vec<&WorkspaceView> =
+                list.iter().filter(|ws| ws.project == project.id).collect();
+            (!inside.is_empty()).then(|| {
+                let mut block = vec![project.name.to_string()];
+                block.extend(inside.iter().map(|ws| indent(&describe(ws))));
+                block.join("\n")
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn indent(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("  {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn describe_project(project: &ProjectView) -> String {
+    let repo = project
+        .repo
+        .as_ref()
+        .map_or_else(|| "no repository".to_owned(), ToString::to_string);
+    let builtin = match project.origin {
+        Origin::Builtin => "  (built in)",
+        Origin::Added => "",
+    };
+    format!(
+        "{:<20} {:<12} {repo}{builtin}",
+        project.name, project.environment
+    )
+}
+
+async fn project(client: &Client, json_mode: bool, command: ProjectCommand) -> anyhow::Result<()> {
+    match command {
+        ProjectCommand::Ls => {
+            let projects = client.projects().await?;
+            print(json_mode, projects.as_slice(), |projects| {
+                if projects.is_empty() {
+                    "no projects; add an environment first with `iglu env add`".into()
+                } else {
+                    lines(projects, describe_project)
+                }
+            });
+        }
+        ProjectCommand::Add { name, repo, env } => {
+            let added = client
+                .create_project(&CreateProject {
+                    name,
+                    repo,
+                    environment: env,
+                })
+                .await?;
+            print(json_mode, &added, describe_project);
+        }
+        ProjectCommand::Rm { project } => {
+            let found = client.resolve_project(&project).await?;
+            client.delete_project(found.id).await?;
+            print(json_mode, &json!({ "removed": found.name }), |_| {
+                format!("removed {}", found.name)
             });
         }
     }

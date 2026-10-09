@@ -50,21 +50,6 @@ impl fmt::Display for SessionName {
 
 text_type!(SessionName);
 
-/// The first `t<n>` name not already taken.
-///
-/// # Panics
-///
-/// Only if every name from `t1` to `t4294967295` is taken.
-pub fn next_session_name<'a>(existing: impl IntoIterator<Item = &'a SessionName>) -> SessionName {
-    let taken: std::collections::HashSet<&str> =
-        existing.into_iter().map(SessionName::as_str).collect();
-    (1..=u32::MAX)
-        .map(|n| format!("t{n}"))
-        .find(|name| !taken.contains(name.as_str()))
-        .and_then(|name| name.parse().ok())
-        .expect("some t<n> is always free and well-formed")
-}
-
 /// A terminal size in character cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawSize")]
@@ -115,22 +100,16 @@ impl TryFrom<RawSize> for TerminalSize {
     }
 }
 
+/// Text frames a terminal client sends. Binary frames are input bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminalControl {
+    Resize(TerminalSize),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn names(list: &[&str]) -> Vec<SessionName> {
-        list.iter()
-            .map(|n| n.parse().expect("valid session name"))
-            .collect()
-    }
-
-    #[test]
-    fn next_session_name_fills_gaps() {
-        assert_eq!(next_session_name(&names(&[])).as_str(), "t1");
-        assert_eq!(next_session_name(&names(&["t1", "t2"])).as_str(), "t3");
-        assert_eq!(next_session_name(&names(&["t2", "build"])).as_str(), "t1");
-    }
 
     #[test]
     fn session_names_are_bounded() {

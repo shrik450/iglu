@@ -206,6 +206,7 @@ pub enum Action {
     UsePreview,
     ManageSecrets,
     ManageEnvironment,
+    ManageProject,
 }
 
 /// The facts about a resource that authorization depends on.
@@ -248,7 +249,8 @@ pub fn authorize(principal: Principal, action: Action, resource: Resource) -> De
         | Action::PublishRoute
         | Action::UsePreview
         | Action::ManageSecrets
-        | Action::ManageEnvironment => Decision::Allow,
+        | Action::ManageEnvironment
+        | Action::ManageProject => Decision::Allow,
     }
 }
 
@@ -270,7 +272,7 @@ mod tests {
         }
     }
 
-    const ACTIONS: [Action; 7] = [
+    const ACTIONS: [Action; 8] = [
         Action::ViewWorkspace,
         Action::OperateWorkspace,
         Action::DeleteWorkspace,
@@ -278,6 +280,7 @@ mod tests {
         Action::UsePreview,
         Action::ManageSecrets,
         Action::ManageEnvironment,
+        Action::ManageProject,
     ];
 
     #[test]

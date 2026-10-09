@@ -40,6 +40,10 @@ pub struct Settings {
     /// The shell terminal sessions run; your account's login shell when unset.
     #[serde(default)]
     pub shell: Option<AbsolutePath>,
+    /// The agents every environment gets here. Local workspaces use this
+    /// machine's tools, so agents are this machine's, not the flake's.
+    #[serde(default)]
+    pub agents: Vec<iglu_domain::agent::AgentSpec>,
 }
 
 /// An absolute path in UTF-8, so it can become a guest path.

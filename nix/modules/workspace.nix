@@ -35,6 +35,10 @@ let
             gid = group.gid;
             home = account.home;
           };
+          agents = lib.mapAttrsToList (name: agent: {
+            inherit name;
+            inherit (agent) command prompt attention;
+          }) cfg.agents;
         };
       }
       ''
@@ -76,7 +80,54 @@ in
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.iglu-guest;
       defaultText = lib.literalExpression "iglu.packages.\${system}.iglu-guest";
-      description = "The guest tools: `iglu-guest` and `iglu-status`.";
+      description = "The guest tools: `iglu-guest`, `iglu-status` and `caffeinate`.";
+    };
+
+    agents = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            command = lib.mkOption {
+              type = lib.types.nonEmptyListOf lib.types.str;
+              example = [ "claude" ];
+              description = "The program and its arguments. Run as given, never through a shell.";
+            };
+            prompt = lib.mkOption {
+              type = lib.types.enum [
+                "argument"
+                "none"
+              ];
+              default = "argument";
+              description = ''
+                How the agent takes the prompt a workspace starts it with:
+                as one more argument, or not at all.
+              '';
+            };
+            attention = lib.mkOption {
+              type = lib.types.enum [
+                "claude-hooks"
+                "status-command"
+              ];
+              default = "status-command";
+              description = ''
+                How the agent reports whether it needs you: Claude Code's
+                hooks (see `iglu.claudeCode.hooks`), or `iglu-status set`
+                from the agent or a wrapper.
+              '';
+            };
+          };
+        }
+      );
+      default = { };
+      example = lib.literalExpression ''
+        {
+          claude = { command = [ "claude" ]; attention = "claude-hooks"; };
+        }
+      '';
+      description = ''
+        The agents this environment's workspaces can run in a column. Their
+        programs must be installed in the environment.
+      '';
     };
 
     claudeCode.hooks = lib.mkOption {
@@ -94,6 +145,12 @@ in
   config = lib.mkMerge [
     {
       assertions = [
+        {
+          assertion = lib.all (name: builtins.match "[a-z][a-z0-9-]{0,23}" name != null) (
+            lib.attrNames cfg.agents
+          );
+          message = "iglu.agents names must be 1-24 of a-z, 0-9 and '-', starting with a letter.";
+        }
         {
           assertion = cfg.user != "root";
           message = "iglu.user must be an unprivileged account.";

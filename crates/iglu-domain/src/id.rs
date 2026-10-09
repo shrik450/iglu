@@ -66,6 +66,10 @@ uuid_id!(
     /// One stored secret.
     SecretId
 );
+uuid_id!(
+    /// One project.
+    ProjectId
+);
 
 impl WorkspaceId {
     /// The Incus instance that realizes this workspace. Deterministic, so a

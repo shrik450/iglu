@@ -15,13 +15,15 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use hyper_util::rt::TokioIo;
 use iglu_domain::env::Arch;
+use iglu_domain::git::GitState;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::HostId;
+use iglu_domain::listener::Listener;
 use iglu_domain::port::GuestPort;
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
     AttachParams, BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode,
-    HostReport, Inventory, PROTOCOL_VERSION, TUNNEL_UPGRADE, TerminalInfo, path,
+    HostReport, Inventory, PROTOCOL_VERSION, SessionSpec, TUNNEL_UPGRADE, TerminalInfo, path,
 };
 
 use crate::auth::Verifier;
@@ -103,7 +105,12 @@ fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
         .route(path::INVENTORY, get(inventory::<R>))
         .route(path::BUILDS, post(build::<R>))
         .route("/v1/workspaces/{workspace}/commands", post(command::<R>))
-        .route("/v1/workspaces/{workspace}/terminals", get(terminals::<R>))
+        .route("/v1/workspaces/{workspace}/listeners", get(listeners::<R>))
+        .route("/v1/workspaces/{workspace}/git", get(git_state::<R>))
+        .route(
+            "/v1/workspaces/{workspace}/terminals",
+            get(terminals::<R>).post(open_terminal::<R>),
+        )
         .route(
             "/v1/workspaces/{workspace}/terminals/{session}",
             delete(close_terminal::<R>),
@@ -196,6 +203,40 @@ async fn terminals<R: Runtime>(
         .terminals(workspace)
         .await
         .map(Json)
+        .map_err(Failure)
+}
+
+async fn listeners<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path(workspace): Path<WorkspaceId>,
+) -> Result<Json<Vec<Listener>>, Failure> {
+    app.host
+        .listeners(workspace)
+        .await
+        .map(Json)
+        .map_err(Failure)
+}
+
+async fn git_state<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path(workspace): Path<WorkspaceId>,
+) -> Result<Json<Option<GitState>>, Failure> {
+    app.host
+        .git_state(workspace)
+        .await
+        .map(Json)
+        .map_err(Failure)
+}
+
+async fn open_terminal<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path(workspace): Path<WorkspaceId>,
+    Json(session): Json<SessionSpec>,
+) -> Result<StatusCode, Failure> {
+    app.host
+        .open_terminal(workspace, &session)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
         .map_err(Failure)
 }
 

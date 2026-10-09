@@ -1,5 +1,7 @@
-//! Which workspaces need the user. Guests report per-session status; the
-//! console shows each workspace's most urgent one.
+//! Which workspaces need the user. Guests report status per thread: one
+//! conversation of the agent in a session, or the session itself for agents
+//! that don't have conversations. The console shows each workspace's most
+//! urgent thread.
 
 use std::fmt;
 use std::str::FromStr;
@@ -107,10 +109,115 @@ impl fmt::Display for Summary {
 
 text_type!(Summary);
 
-/// The latest status one session reported.
+/// One conversation in a session, as its agent identifies it, such as Claude
+/// Code's session ID. Untrusted: a bounded word.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
+#[serde(try_from = "String", into = "String")]
+pub struct ThreadKey(String);
+
+impl ThreadKey {
+    pub const MAX_LEN: usize = 64;
+
+    /// The thread of a session whose agent doesn't name its conversations.
+    ///
+    /// # Panics
+    ///
+    /// Never: the name is a valid key.
+    #[must_use]
+    pub fn session() -> Self {
+        "session".parse().expect("'session' is a thread key")
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for ThreadKey {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty()
+            || s.len() > Self::MAX_LEN
+            || !s
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        {
+            return Err(ParseError::new(
+                "thread key",
+                "must be 1 to 64 of A-Z, a-z, 0-9, '-' and '_'",
+            ));
+        }
+        Ok(Self(s.to_owned()))
+    }
+}
+
+impl fmt::Display for ThreadKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+text_type!(ThreadKey);
+
+/// The most threads one session keeps, and how many of them may have exited.
+pub const MAX_THREADS: usize = 16;
+pub const KEPT_EXITED: usize = 5;
+
+/// Which statuses go first when there are too many: those waiting on the
+/// person, then working ones, then the rest; newest first within each.
+const fn rank(state: AttentionState) -> u8 {
+    match state {
+        AttentionState::Waiting => 0,
+        AttentionState::Working => 1,
+        AttentionState::Done => 2,
+        AttentionState::Idle => 3,
+        AttentionState::Exited => 4,
+    }
+}
+
+/// Which of a session's threads to keep, given each one's state and when it
+/// last changed: waiting and working ones first, then the rest, newest
+/// first, with at most [`KEPT_EXITED`] exited and [`MAX_THREADS`] in all.
+#[must_use]
+pub fn keep<K: Clone>(threads: &[(K, AttentionState, Timestamp)]) -> Vec<K> {
+    let mut newest: Vec<&(K, AttentionState, Timestamp)> = threads.iter().collect();
+    newest.sort_by_key(|(_, state, at)| (rank(*state), std::cmp::Reverse(*at)));
+    let mut exited = 0;
+    newest
+        .into_iter()
+        .filter(|(_, state, _)| match state {
+            AttentionState::Exited => {
+                exited += 1;
+                exited <= KEPT_EXITED
+            }
+            AttentionState::Working
+            | AttentionState::Waiting
+            | AttentionState::Done
+            | AttentionState::Idle => true,
+        })
+        .take(MAX_THREADS)
+        .map(|(key, _, _)| key.clone())
+        .collect()
+}
+
+/// At most `limit` statuses, keeping the same ones [`keep`] would first.
+#[must_use]
+pub fn cap(mut statuses: Vec<SessionStatus>, limit: usize) -> Vec<SessionStatus> {
+    statuses.sort_by_key(|s| (rank(s.state), std::cmp::Reverse(s.updated_at)));
+    statuses.truncate(limit);
+    statuses
+}
+
+/// The latest status one thread reported.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionStatus {
     pub session: SessionName,
+    pub thread: ThreadKey,
+    /// What the thread was started to do: its first prompt, or empty.
+    pub title: Summary,
     pub state: AttentionState,
     pub summary: Summary,
     pub updated_at: Timestamp,
@@ -164,6 +271,8 @@ mod tests {
     fn status(session: &str, state: AttentionState, at: i64) -> SessionStatus {
         SessionStatus {
             session: session.parse().expect("valid session"),
+            thread: ThreadKey::session(),
+            title: Summary::sanitize(""),
             state,
             summary: Summary::sanitize(""),
             updated_at: Timestamp::from_unix_millis(at),
@@ -195,6 +304,59 @@ mod tests {
         let new = status("t2", AttentionState::Working, 2);
         let top = most_urgent([(&old, Seen::Seen), (&new, Seen::Seen)]);
         assert_eq!(top.map(|(s, _)| s.session.as_str()), Some("t2"));
+    }
+
+    #[test]
+    fn live_threads_stay_and_old_exited_ones_go() {
+        let at = Timestamp::from_unix_millis;
+        let mut threads: Vec<(u32, AttentionState, Timestamp)> = (0..8)
+            .map(|n| (n, AttentionState::Exited, at(i64::from(n))))
+            .collect();
+        threads.push((100, AttentionState::Waiting, at(-5)));
+        let kept = keep(&threads);
+        assert_eq!(kept, [100, 7, 6, 5, 4, 3]);
+        let many: Vec<(u32, AttentionState, Timestamp)> = (0..40)
+            .map(|n| (n, AttentionState::Working, at(i64::from(n))))
+            .collect();
+        assert_eq!(keep(&many).len(), MAX_THREADS);
+    }
+
+    #[test]
+    fn a_waiting_thread_outlasts_newer_finished_ones() {
+        let at = Timestamp::from_unix_millis;
+        let mut threads: Vec<(u32, AttentionState, Timestamp)> = (1..=20)
+            .map(|n| (n, AttentionState::Done, at(i64::from(n))))
+            .collect();
+        threads.push((0, AttentionState::Waiting, at(0)));
+        let kept = keep(&threads);
+        assert_eq!(kept.len(), MAX_THREADS);
+        assert_eq!(kept.first(), Some(&0));
+        let statuses: Vec<SessionStatus> = threads
+            .iter()
+            .map(|(n, state, when)| SessionStatus {
+                session: "claude".parse().expect("valid session"),
+                thread: format!("t{n}").parse().expect("valid thread"),
+                title: Summary::sanitize(""),
+                state: *state,
+                summary: Summary::sanitize(""),
+                updated_at: *when,
+            })
+            .collect();
+        let capped = cap(statuses, 4);
+        assert_eq!(capped.len(), 4);
+        assert_eq!(capped[0].state, AttentionState::Waiting);
+    }
+
+    #[test]
+    fn thread_keys_are_bounded_words() {
+        assert!(
+            "6f2c3c7e-2f7b-4a8e-9c0a-1c9f4f2b1d11"
+                .parse::<ThreadKey>()
+                .is_ok()
+        );
+        assert!("".parse::<ThreadKey>().is_err());
+        assert!("../x".parse::<ThreadKey>().is_err());
+        assert!("x".repeat(65).parse::<ThreadKey>().is_err());
     }
 
     #[test]

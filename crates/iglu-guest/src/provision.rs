@@ -174,6 +174,22 @@ pub fn run(dirs: &Dirs, spec: &Spec) -> Result<(), ProvisionError> {
     Ok(())
 }
 
+/// Records the home directory as where sessions start, for a workspace
+/// without a repository.
+///
+/// # Errors
+///
+/// When the record can't be written.
+pub fn without_repository(dirs: &Dirs) -> Result<(), ProvisionError> {
+    fs::create_dir_all(dirs.state())?;
+    let record = serde_json::to_vec(&WorkspaceRecord {
+        checkout: dirs.home().to_owned(),
+    })
+    .map_err(std::io::Error::other)?;
+    write_atomic(&dirs.workspace_file(), &record)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

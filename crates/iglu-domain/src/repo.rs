@@ -203,6 +203,16 @@ impl fmt::Display for CheckoutDir {
 
 text_type!(CheckoutDir);
 
+/// What a workspace clones and the branch it works on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Checkout {
+    pub repo: RepoUrl,
+    pub branch: BranchName,
+    /// Where a new branch starts. `None` means the remote's default branch.
+    pub base: Option<BranchName>,
+}
+
 /// A Git branch name, following the rules of `git check-ref-format --branch`
 /// closely enough to never be interpreted as an option or a revision expression.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

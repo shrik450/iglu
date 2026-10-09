@@ -9,6 +9,7 @@ mod crypto;
 mod db;
 mod gateway;
 mod hosts;
+mod idle;
 mod login;
 mod model;
 mod oidc;
@@ -152,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
         host_seen: Mutex::default(),
         reconciler: Arc::default(),
         pool: gateway::Pool::default(),
+        usage: idle::Usage::new(app::now()),
     });
     tokio::spawn(reconcile::run(app.clone()));
     if let Some(policy) = app.config.backups.clone() {

@@ -6,18 +6,20 @@ use std::sync::Mutex;
 
 use iglu_domain::capacity::Bytes;
 use iglu_domain::env::EnvSource;
+use iglu_domain::git::GitState;
 use iglu_domain::id::{InstanceName, WorkspaceId};
 use iglu_domain::lifecycle::{Instance, SecretsGeneration};
+use iglu_domain::listener::Listener;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::{FetchTokens, SecretBundle};
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
     BuildOutcome, Command, CommandError, CommandOutcome, ErrorCode, InstanceReport, ProvisionSpec,
-    TerminalInfo,
+    SessionSpec, TerminalInfo,
 };
 
 use crate::config::Timeouts;
-use crate::guest::{self, GuestCommand};
+use crate::guest::{self, GuestCommand, Opening};
 use crate::rules::{self, BootFacts, Step};
 use crate::runtime::{
     BootId, Guest, GuestFile, Observed, Output, Ownership, Runtime, RuntimeError, Terminal, tail,
@@ -66,6 +68,7 @@ impl<R: Runtime> Host<R> {
             Command::Start => self.lifecycle(name, Step::Start).await,
             Command::DeliverSecrets(bundle) => self.deliver_secrets(name, bundle).await,
             Command::Provision(spec) => self.provision(name, spec).await,
+            Command::OpenColumns { sessions } => self.open_columns(name, sessions).await,
             Command::Freeze => self.lifecycle(name, Step::Freeze).await,
             Command::Thaw => self.lifecycle(name, Step::Thaw).await,
             Command::Stop => self.lifecycle(name, Step::Stop).await,
@@ -125,9 +128,12 @@ impl<R: Runtime> Host<R> {
     ) -> Result<Output, CommandError> {
         let timeout = match command {
             GuestCommand::Provision(_) => self.timeouts.provision(),
-            GuestCommand::InstallSecrets(_) | GuestCommand::Sessions | GuestCommand::Close(_) => {
-                self.timeouts.operation()
-            }
+            GuestCommand::InstallSecrets(_)
+            | GuestCommand::Open(..)
+            | GuestCommand::Sessions
+            | GuestCommand::Listeners
+            | GuestCommand::GitState
+            | GuestCommand::Close(_) => self.timeouts.operation(),
         };
         let output = self.runtime.run(guest, command, timeout).await?;
         if output.success {
@@ -171,6 +177,45 @@ impl<R: Runtime> Host<R> {
         Ok(self.runtime.mark_provisioned(name).await?)
     }
 
+    /// Opens the workspace's columns for this boot. A column whose program
+    /// fails to start still counts as opened: it shows as ended, and a
+    /// broken dev server mustn't keep the workspace from coming up.
+    async fn open_columns(
+        &self,
+        name: InstanceName,
+        sessions: &[SessionSpec],
+    ) -> Result<(), CommandError> {
+        let guest = self.tools_guest(name).await?;
+        self.run(
+            &guest,
+            &GuestCommand::Open(sessions, Opening::Boot),
+            "opening the columns failed",
+        )
+        .await?;
+        self.boots.columns_opened(name, guest.boot);
+        Ok(())
+    }
+
+    /// Opens one more terminal session in a running workspace.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, or the guest tool fails.
+    pub async fn open_terminal(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionSpec,
+    ) -> Result<(), CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        self.run(
+            &guest,
+            &GuestCommand::Open(std::slice::from_ref(session), Opening::Column),
+            "opening the session failed",
+        )
+        .await?;
+        Ok(())
+    }
+
     /// What the control plane sees of an instance.
     ///
     /// # Errors
@@ -198,6 +243,12 @@ impl<R: Runtime> Host<R> {
         if !facts.ready {
             facts.ready = matches!(
                 self.runtime.read(&guest, GuestFile::Ready).await,
+                Ok(Some(_))
+            );
+        }
+        if facts.ready && !facts.columns_opened {
+            facts.columns_opened = matches!(
+                self.runtime.read(&guest, GuestFile::ColumnsOpened).await,
                 Ok(Some(_))
             );
         }
@@ -272,6 +323,39 @@ impl<R: Runtime> Host<R> {
         })
     }
 
+    /// What the workspace user has listening.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, or the guest tool fails.
+    pub async fn listeners(&self, workspace: WorkspaceId) -> Result<Vec<Listener>, CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        let output = self
+            .run(&guest, &GuestCommand::Listeners, "listing listeners failed")
+            .await?;
+        Ok(guest::parse_listeners(&output.stdout))
+    }
+
+    /// Where the workspace's checkout stands; `None` without a repository.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, or the guest tool fails.
+    pub async fn git_state(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<Option<GitState>, CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        let output = self
+            .run(
+                &guest,
+                &GuestCommand::GitState,
+                "reading the Git state failed",
+            )
+            .await?;
+        Ok(guest::parse_git_state(&output.stdout))
+    }
+
     /// Ends a terminal session and everything running in it.
     ///
     /// # Errors
@@ -292,7 +376,7 @@ impl<R: Runtime> Host<R> {
         Ok(())
     }
 
-    /// Attaches to a terminal session, creating it on first attach.
+    /// Attaches to an open terminal session.
     ///
     /// # Errors
     ///
@@ -376,6 +460,20 @@ impl BootCache {
             BootFacts {
                 ready: true,
                 secrets: Some(generation),
+                columns_opened: false,
+            },
+        );
+    }
+
+    /// Records that a boot opened its columns.
+    fn columns_opened(&self, name: InstanceName, boot: BootId) {
+        self.learn(
+            name,
+            boot,
+            BootFacts {
+                ready: true,
+                secrets: None,
+                columns_opened: true,
             },
         );
     }

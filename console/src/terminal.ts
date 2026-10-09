@@ -1,29 +1,72 @@
 // One ghostty-web terminal attached to one zmx session over a WebSocket.
 // Closing the pane only detaches; the session keeps running in the guest.
+// A dropped connection reconnects on its own, after telling the owner, which
+// may find the session ended and dispose the pane instead.
 
-import { FitAddon, type Ghostty, Terminal } from "ghostty-web";
+import { FitAddon, Ghostty, Terminal } from "ghostty-web";
+
+let ghostty: Promise<Ghostty> | null = null;
+
+/** ghostty's WebAssembly, loaded once for every pane. */
+export function loadGhostty(): Promise<Ghostty> {
+  ghostty ??= Ghostty.load("/ghostty-vt.wasm");
+  return ghostty;
+}
 
 const theme = {
-  background: "#11161a",
-  foreground: "#dde5e1",
-  cursor: "#89d8bd",
-  selectionBackground: "#285347",
+  background: "#070c18",
+  foreground: "#d4e0f4",
+  cursor: "#8fd8ff",
+  selectionBackground: "#22315a",
 };
+
+/** Mounted panes by `workspace/session`, so keyboard actions can focus one. */
+export const panes = new Map<string, TerminalPane>();
+
+/** The pane the person last focused, for `globalThis.iglu.screen()`. */
+let lastFocused: TerminalPane | null = null;
+
+export function activeScreen(): string {
+  return lastFocused?.screen() ?? "";
+}
 
 export class TerminalPane {
   private readonly term: Terminal;
   private readonly fit: FitAddon;
+  private readonly encoder = new TextEncoder();
   private socket: WebSocket | null = null;
   private focused = false;
-  private readonly encoder = new TextEncoder();
+  private closed = false;
+  private retries = 0;
+  private retryTimer = 0;
 
-  constructor(
-    private readonly container: HTMLElement,
-    ghostty: Ghostty,
-    shortcuts: (event: KeyboardEvent) => boolean,
-    private readonly onStatus: (status: string) => void,
-  ) {
-    this.term = new Terminal({ ghostty, fontSize: 14, scrollback: 10000, theme, cursorBlink: true });
+  private readonly key: string;
+  private readonly container: HTMLElement;
+  private readonly workspace: string;
+  private readonly session: string;
+  private readonly onFocus: () => void;
+  private readonly onStatus: (status: string) => void;
+  private readonly onDrop: () => void;
+
+  constructor(options: {
+    container: HTMLElement;
+    ghostty: Ghostty;
+    workspace: string;
+    session: string;
+    shortcuts: (event: KeyboardEvent) => boolean;
+    onFocus: () => void;
+    onStatus: (status: string) => void;
+    onDrop: () => void;
+  }) {
+    const { container, ghostty, workspace, session, shortcuts } = options;
+    this.key = `${workspace}/${session}`;
+    this.container = container;
+    this.workspace = workspace;
+    this.session = session;
+    this.onFocus = options.onFocus;
+    this.onStatus = options.onStatus;
+    this.onDrop = options.onDrop;
+    this.term = new Terminal({ ghostty, fontSize: 13, scrollback: 10000, theme, cursorBlink: true });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
     this.term.open(container);
@@ -37,46 +80,54 @@ export class TerminalPane {
     this.term.onResize(({ cols, rows }) => {
       if (this.focused) this.sendResize(cols, rows);
     });
-    container.addEventListener("focusin", () => {
-      this.focused = true;
-      this.sendResize(this.term.cols, this.term.rows);
-    });
-    container.addEventListener("focusout", () => {
-      this.focused = false;
-    });
+    container.addEventListener("focusin", this.focusIn);
+    container.addEventListener("focusout", this.focusOut);
+    panes.set(this.key, this);
+    this.connect();
   }
 
-  attach(workspace: string, session: string): void {
-    this.detach();
+  private readonly focusIn = () => {
+    this.focused = true;
+    lastFocused = this;
+    this.sendResize(this.term.cols, this.term.rows);
+    this.onFocus();
+  };
+
+  private readonly focusOut = () => {
+    this.focused = false;
+  };
+
+  private connect(): void {
     this.fit.fit();
-    const url = new URL(`/v1/workspaces/${workspace}/terminals/${session}/attach`, location.href);
+    const url = new URL(`/v1/workspaces/${this.workspace}/columns/${this.session}/attach`, location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("cols", String(this.term.cols));
     url.searchParams.set("rows", String(this.term.rows));
     const socket = new WebSocket(url);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
-    this.onStatus("connecting…");
     socket.onopen = () => {
+      this.retries = 0;
       this.onStatus("");
-      this.term.focus();
+      if (this.focused) this.sendResize(this.term.cols, this.term.rows);
     };
     socket.onmessage = (event: MessageEvent<ArrayBuffer | string>) => {
       if (event.data instanceof ArrayBuffer) this.term.write(new Uint8Array(event.data));
     };
     socket.onclose = (event) => {
-      if (this.socket === socket) {
-        this.socket = null;
-        this.onStatus(event.code === 1000 ? "detached" : "disconnected; select the tab to reconnect");
-      }
+      if (this.socket !== socket || this.closed) return;
+      this.socket = null;
+      this.onDrop();
+      const delay = Math.min(10_000, 500 * 2 ** this.retries);
+      this.retries += 1;
+      this.onStatus("Reconnecting…");
+      this.retryTimer = window.setTimeout(() => {
+        if (!this.closed) {
+          this.term.reset();
+          this.connect();
+        }
+      }, delay);
     };
-  }
-
-  detach(): void {
-    const socket = this.socket;
-    this.socket = null;
-    socket?.close(1000);
-    this.term.reset();
   }
 
   /** The visible screen as text, one line per row. The canvas has no text to read. */
@@ -93,7 +144,14 @@ export class TerminalPane {
   }
 
   dispose(): void {
-    this.detach();
+    this.closed = true;
+    clearTimeout(this.retryTimer);
+    this.socket?.close(1000);
+    this.socket = null;
+    panes.delete(this.key);
+    if (lastFocused === this) lastFocused = null;
+    this.container.removeEventListener("focusin", this.focusIn);
+    this.container.removeEventListener("focusout", this.focusOut);
     this.fit.dispose();
     this.term.dispose();
     this.container.replaceChildren();

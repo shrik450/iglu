@@ -17,12 +17,18 @@ const staticEntries = [
     .filter((file) => statSync(join("public", file)).isFile())
     .map((file) => copied(join("public", file), file)),
   copied("node_modules/ghostty-web/ghostty-vt.wasm", "ghostty-vt.wasm"),
+  // Served by iglud itself: its content security policy allows no other origin.
+  ...["unbounded", "geist", "jetbrains-mono"].map((font) =>
+    copied(`node_modules/@fontsource-variable/${font}/files/${font}-latin-wght-normal.woff2`, `fonts/${font}.woff2`),
+  ),
 ];
 
 const options = {
-  entryPoints: [{ in: "src/app.ts", out: "app" }, ...staticEntries],
+  entryPoints: [{ in: "src/main.tsx", out: "app" }, ...staticEntries],
   loader: Object.fromEntries(staticEntries.map((entry) => [extname(entry.in), "copy"])),
   bundle: true,
+  jsx: "automatic",
+  jsxImportSource: "preact",
   format: "esm",
   target: "es2022",
   minify: !watching,

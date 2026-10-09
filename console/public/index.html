@@ -3,35 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a1020" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#edf2f8" media="(prefers-color-scheme: light)">
   <title>iglu</title>
   <link rel="stylesheet" href="/app.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <aside id="sidebar" aria-label="Workspaces"></aside>
-  <main>
-    <header id="workspace-header"></header>
-    <div id="tabs" role="tablist" aria-label="Terminals"></div>
-    <div id="terminal" aria-label="Terminal"></div>
-    <footer>
-      <div id="ports" aria-label="Published ports"></div>
-      <p id="status" role="status" aria-live="polite"></p>
-    </footer>
-  </main>
-  <dialog id="create" aria-labelledby="create-title">
-    <form method="dialog">
-      <h2 id="create-title">New workspace</h2>
-      <label>Repository <input name="repo" required placeholder="https://github.com/acme/app.git" autocomplete="off"></label>
-      <label>Environment <select name="environment" required></select></label>
-      <label>Branch <input name="branch" placeholder="defaults to the workspace name" autocomplete="off"></label>
-      <label>Start from <input name="base" placeholder="the remote's default branch" autocomplete="off"></label>
-      <label>Name <input name="name" placeholder="generated if empty" autocomplete="off"></label>
-      <div class="buttons">
-        <button value="cancel">Cancel</button>
-        <button type="submit">Create</button>
-      </div>
-    </form>
-  </dialog>
+  <div id="app"></div>
 </body>
 </html>

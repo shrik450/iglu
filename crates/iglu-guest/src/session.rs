@@ -1,15 +1,20 @@
 //! Terminal sessions as zmx sessions.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
+use iglu_domain::column::{Arg, Argv};
 use iglu_domain::terminal::SessionName;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::paths::Dirs;
 use crate::provision::WorkspaceRecord;
+use crate::status::write_atomic;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Info {
@@ -81,9 +86,10 @@ pub fn close(dirs: &Dirs, name: &SessionName) -> std::io::Result<()> {
     }
 }
 
-/// Replaces this process with `zmx attach`, creating the session in the
-/// repository checkout on first attach.
-pub fn attach(dirs: &Dirs, name: &SessionName) -> std::io::Error {
+/// `zmx attach` for a session, in the checkout, with the delivered secrets.
+/// With a command, a new session runs it as given, argument by argument;
+/// without one, it runs the login shell.
+fn zmx_attach(dirs: &Dirs, name: &SessionName, command: Option<&Argv>) -> Command {
     let secrets: BTreeMap<String, String> = std::fs::read(dirs.secrets_env())
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -98,13 +104,181 @@ pub fn attach(dirs: &Dirs, name: &SessionName) -> std::io::Error {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(login_shell);
-    Command::new("zmx")
-        .arg("attach")
-        .arg(name.as_str())
-        .envs(session_env(secrets, &zmx_dir(dirs)))
+    let mut zmx = Command::new("zmx");
+    zmx.arg("attach").arg(name.as_str());
+    if let Some(command) = command {
+        zmx.args(command.args().iter().map(Arg::as_str));
+    }
+    zmx.envs(session_env(secrets, &zmx_dir(dirs)))
         .env("SHELL", shell)
-        .current_dir(checkout)
-        .exec()
+        .current_dir(checkout);
+    zmx
+}
+
+/// Replaces this process with `zmx attach` to a session that's open.
+/// Attaching never opens one: a column whose program ended stays ended
+/// rather than quietly becoming a shell.
+#[must_use]
+pub fn attach(dirs: &Dirs, name: &SessionName) -> std::io::Error {
+    match list(dirs) {
+        Ok(open) if open.iter().any(|info| &info.name == name) => {
+            zmx_attach(dirs, name, None).exec()
+        }
+        Ok(_) => std::io::Error::other(format!("no session called {name} is open")),
+        Err(error) => error,
+    }
+}
+
+/// A session to open, as hostd sends it.
+#[derive(Debug, Deserialize)]
+pub struct OpenSpec {
+    pub name: SessionName,
+    pub command: Option<Argv>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRequest {
+    sessions: Vec<OpenSpec>,
+}
+
+/// Whether an open is a boot's opening of its columns, which gets recorded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Opening {
+    Boot,
+    Column,
+}
+
+/// A session that didn't open, and why.
+#[derive(Debug, Serialize)]
+pub struct Failure {
+    pub name: SessionName,
+    pub reason: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    #[error("unreadable request: {0}")]
+    Request(#[from] serde_json::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Opens every requested session that isn't open yet. A session whose
+/// program fails is reported and skipped, not fatal. A boot's opening is
+/// recorded either way, so the workspace comes up with what did open.
+///
+/// # Errors
+///
+/// When the request is unreadable or zmx can't list sessions.
+pub fn open(dirs: &Dirs, request: &[u8], opening: Opening) -> Result<Vec<Failure>, OpenError> {
+    let request: OpenRequest = serde_json::from_slice(request)?;
+    let already = list(dirs)?;
+    let mut failures = Vec::new();
+    for spec in request.sessions {
+        if already.iter().any(|info| info.name == spec.name) {
+            continue;
+        }
+        if let Err(error) = start(dirs, &spec) {
+            failures.push(Failure {
+                name: spec.name,
+                reason: error.to_string(),
+            });
+        }
+    }
+    if opening == Opening::Boot {
+        let marker = dirs.columns_opened();
+        if let Some(parent) = marker.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        write_atomic(&marker, b"opened\n")?;
+    }
+    Ok(failures)
+}
+
+/// zmx only creates a session from a client attached to a terminal, so this
+/// attaches one on a pseudo-terminal of its own and has it detach.
+///
+/// The client has to detach rather than be killed: the daemon replays a
+/// session's screen to later clients only once some client's `Init` has
+/// reached it, and a killed client may not have sent one. The client clears
+/// its screen just before its loop, which sends `Init` first and then
+/// anything typed, so the detach key typed after the clear reaches the daemon
+/// behind `Init`.
+fn start(dirs: &Dirs, spec: &OpenSpec) -> std::io::Result<()> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
+
+    const CLEARED: &[u8] = b"\x1b[2J\x1b[H";
+    const DETACH_KEY: u8 = 0x1c;
+
+    let controller = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
+    grantpt(&controller)?;
+    unlockpt(&controller)?;
+    let path = ptsname(&controller, Vec::new())?;
+    let terminal = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(OsStr::from_bytes(path.as_bytes()))?;
+    rustix::termios::tcsetwinsize(
+        &terminal,
+        rustix::termios::Winsize {
+            ws_row: 40,
+            ws_col: 120,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        },
+    )?;
+    let mut client = zmx_attach(dirs, &spec.name, spec.command.as_ref())
+        .env_remove("ZMX_NO_DETACH_KEY")
+        .stdin(terminal.try_clone()?)
+        .stdout(terminal.try_clone()?)
+        .stderr(terminal)
+        .process_group(0)
+        .spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut seen = Vec::new();
+    let mut detached = false;
+    let left = loop {
+        if client.try_wait()?.is_some() {
+            break true;
+        }
+        if Instant::now() > deadline {
+            break false;
+        }
+        // Drained the whole time, so a chatty program can't block the client.
+        let mut ready = [PollFd::new(&controller, PollFlags::IN)];
+        let tick = Timespec {
+            tv_sec: 0,
+            tv_nsec: 50_000_000,
+        };
+        if poll(&mut ready, Some(&tick))? == 0 {
+            continue;
+        }
+        let mut buffer = [0; 4096];
+        let Ok(read) = rustix::io::read(&controller, &mut buffer) else {
+            continue;
+        };
+        if !detached {
+            seen.extend_from_slice(&buffer[..read]);
+            if seen.windows(CLEARED.len()).any(|w| w == CLEARED) {
+                rustix::io::write(&controller, &[DETACH_KEY])?;
+                detached = true;
+            }
+        }
+    };
+    if !left {
+        let _ = client.kill();
+        let _ = client.wait();
+        return Err(std::io::Error::other("its client never detached"));
+    }
+    drop(controller);
+    if list(dirs)?.iter().any(|info| info.name == spec.name) {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "its program ended before the session opened",
+        ))
+    }
 }
 
 /// The user's login shell from the passwd database.

@@ -174,6 +174,17 @@ pub struct Running {
     /// The secrets delivery the guest currently holds, if any. Secrets live on
     /// a tmpfs, so every boot starts with none.
     pub secrets: Option<SecretsGeneration>,
+    /// Whether this boot has opened the workspace's columns.
+    pub columns: Columns,
+}
+
+/// Whether a boot has opened the workspace's columns. Once per boot: a
+/// column someone closes, or whose program ends, isn't reopened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Columns {
+    Pending,
+    Opened,
 }
 
 /// How far a running guest has come up. Ordered: each step implies the ones before it.
@@ -206,6 +217,8 @@ pub enum Effect {
     DeliverSecrets,
     /// Clone the repository and check out the branch.
     Provision,
+    /// Open the workspace's columns for this boot.
+    OpenColumns,
     /// Pause the instance and reclaim its memory to swap.
     Freeze,
     Thaw,
@@ -221,6 +234,7 @@ impl Effect {
             Self::Create
             | Self::DeliverSecrets
             | Self::Provision
+            | Self::OpenColumns
             | Self::Freeze
             | Self::Stop
             | Self::Delete => false,
@@ -332,7 +346,8 @@ fn plan_live(live: Live, secrets: SecretsGeneration, present: Present, capacity:
 }
 
 /// The steps every running workspace needs before it's usable: finish
-/// booting, hold the current secrets, and have its repository.
+/// booting, hold the current secrets, have its repository, and open its
+/// columns.
 fn bring_up(
     secrets: SecretsGeneration,
     running: Running,
@@ -344,12 +359,13 @@ fn bring_up(
     if running.secrets != Some(secrets) {
         return Some(Plan::Perform(Effect::DeliverSecrets));
     }
-    match provisioning {
-        Provisioning::Complete => None,
-        Provisioning::Pending if running.readiness < Readiness::Network => {
+    match (provisioning, running.columns) {
+        (Provisioning::Complete, Columns::Opened) => None,
+        (Provisioning::Complete, Columns::Pending) => Some(Plan::Perform(Effect::OpenColumns)),
+        (Provisioning::Pending, _) if running.readiness < Readiness::Network => {
             Some(Plan::Wait(Wait::Booting))
         }
-        Provisioning::Pending => Some(Plan::Perform(Effect::Provision)),
+        (Provisioning::Pending, _) => Some(Plan::Perform(Effect::Provision)),
     }
 }
 
@@ -414,7 +430,10 @@ fn live_phase(live: Live, present: Present) -> Phase {
         (Live::Running, _, Provisioning::Pending) => Phase::Creating,
 
         (Live::Running, Runtime::Running(running), Provisioning::Complete) => {
-            if running.readiness < Readiness::System || running.secrets.is_none() {
+            if running.readiness < Readiness::System
+                || running.secrets.is_none()
+                || running.columns == Columns::Pending
+            {
                 Phase::Starting
             } else {
                 Phase::Running
@@ -489,7 +508,11 @@ mod tests {
     }
 
     fn running(readiness: Readiness, secrets: Option<SecretsGeneration>) -> Runtime {
-        Runtime::Running(Running { readiness, secrets })
+        Runtime::Running(Running {
+            readiness,
+            secrets,
+            columns: Columns::Opened,
+        })
     }
 
     fn ready() -> Runtime {
@@ -593,6 +616,46 @@ mod tests {
                 Capacity::Fits
             ),
             Plan::Stable
+        );
+    }
+
+    #[test]
+    fn each_boot_opens_its_columns_once_after_provisioning() {
+        let want = desired(DesiredState::Running);
+        let unopened = Runtime::Running(Running {
+            readiness: Readiness::Network,
+            secrets: Some(GEN),
+            columns: Columns::Pending,
+        });
+        assert_eq!(
+            plan(
+                want,
+                present(unopened, Provisioning::Pending),
+                Capacity::Fits
+            ),
+            Plan::Perform(Effect::Provision)
+        );
+        assert_eq!(
+            plan(
+                want,
+                present(unopened, Provisioning::Complete),
+                Capacity::Fits
+            ),
+            Plan::Perform(Effect::OpenColumns)
+        );
+        assert_eq!(
+            phase(
+                DesiredState::Running,
+                present(unopened, Provisioning::Complete)
+            ),
+            Phase::Starting
+        );
+        assert_eq!(
+            phase(
+                DesiredState::Running,
+                present(ready(), Provisioning::Complete)
+            ),
+            Phase::Running
         );
     }
 

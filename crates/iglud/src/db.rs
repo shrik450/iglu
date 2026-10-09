@@ -4,20 +4,27 @@
 //! One connection, used from blocking threads: iglud is a single process and
 //! SQLite serializes writes anyway.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
+use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::VerifiedIdentity;
 use iglu_domain::capacity::Bytes;
+use iglu_domain::column::ColumnSpec;
 use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
-use iglu_domain::id::{EnvRevisionId, PrincipalId, RouteId, SecretId, WorkspaceId};
-use iglu_domain::label::RouteName;
+use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
+use iglu_domain::idle::IdleRule;
+use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Instance, Revision, SecretsGeneration};
 use iglu_domain::port::GuestPort;
+use iglu_domain::project::{self, Opening, Origin, PreviewPorts};
+use iglu_domain::repo::{BranchName, Checkout, RepoUrl};
 use iglu_domain::secret::{SecretName, SecretTarget};
+use iglu_domain::terminal::SessionName;
 use iglu_domain::time::Timestamp;
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -26,12 +33,26 @@ use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 use crate::model::{
-    AttentionRecord, Condition, EnvironmentRecord, PrincipalRecord, RouteRecord, WorkspaceRecord,
+    AttentionRecord, ColumnRecord, Condition, EnvironmentRecord, PrincipalRecord, ProjectRecord,
+    RouteRecord, WorkspaceRecord,
 };
+
+/// One step of the schema's history: SQL, or a data change SQL can't express.
+enum Migration {
+    Sql(&'static str),
+    Data(fn(&Connection) -> Result<(), DbError>),
+}
 
 /// The schema's history, oldest first. `user_version` records how many have
 /// been applied. Never edit one that has shipped; add another.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_initial.sql")];
+const MIGRATIONS: &[Migration] = &[
+    Migration::Sql(include_str!("migrations/0001_initial.sql")),
+    Migration::Sql(include_str!("migrations/0002_columns.sql")),
+    Migration::Sql(include_str!("migrations/0003_projects.sql")),
+    Migration::Data(projects_for_existing_workspaces),
+    Migration::Sql(include_str!("migrations/0005_threads.sql")),
+    Migration::Sql(include_str!("migrations/0006_stored_shapes.sql")),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -53,14 +74,22 @@ pub struct Db(Arc<Mutex<Connection>>);
 
 /// Brings the schema up to date, one migration per transaction.
 fn migrate(conn: &mut Connection) -> Result<(), DbError> {
+    migrate_until(conn, MIGRATIONS.len())
+}
+
+/// Applies the migrations up to version `until`.
+fn migrate_until(conn: &mut Connection, until: usize) -> Result<(), DbError> {
     let raw: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     let applied = usize::try_from(raw).unwrap_or(usize::MAX);
     if applied > MIGRATIONS.len() {
         return Err(DbError::TooNew { found: applied });
     }
-    for (index, migration) in MIGRATIONS.iter().enumerate().skip(applied) {
+    for (index, migration) in MIGRATIONS.iter().enumerate().take(until).skip(applied) {
         let tx = conn.transaction()?;
-        tx.execute_batch(migration)?;
+        match migration {
+            Migration::Sql(sql) => tx.execute_batch(sql)?,
+            Migration::Data(change) => change(&tx)?,
+        }
         let version = i64::try_from(index + 1).expect("there are fewer migrations than i64::MAX");
         tx.pragma_update(None, "user_version", version)?;
         tx.commit()?;
@@ -126,6 +155,11 @@ where
     let raw: Option<String> = row.get(index)?;
     raw.map(|r| r.parse().map_err(|e| conversion(index, e)))
         .transpose()
+}
+
+fn json<T: DeserializeOwned>(row: &Row<'_>, index: usize) -> rusqlite::Result<T> {
+    let raw: String = row.get(index)?;
+    serde_json::from_str(&raw).map_err(|e| conversion(index, e))
 }
 
 fn opt_json<T: DeserializeOwned>(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<T>> {
@@ -580,9 +614,13 @@ pub fn environment_name_of_revision(
 
 // ---- workspaces ----
 
+// The checkout's columns are named apart from the workspace's, so queries can
+// name either without qualifying.
 const WORKSPACE_COLUMNS: &str =
     "id, owner_id, host_id, env_revision_id, name, repo, branch, base, desired, revision,
-    observed, observed_at, memory, condition, created_at";
+    observed, observed_at, memory, condition, created_at, project_id";
+const WORKSPACE_FROM: &str =
+    "workspace LEFT JOIN workspace_checkout ON workspace_checkout.workspace_id = workspace.id";
 
 fn workspace_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceRecord> {
     let memory: Option<i64> = row.get(12)?;
@@ -592,9 +630,15 @@ fn workspace_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceRecord> {
         host: text(row, 2)?,
         env_revision: text(row, 3)?,
         name: text(row, 4)?,
-        repo: text(row, 5)?,
-        branch: text(row, 6)?,
-        base: opt_text(row, 7)?,
+        project: text(row, 15)?,
+        checkout: match opt_text(row, 5)? {
+            Some(repo) => Some(Checkout {
+                repo,
+                branch: text(row, 6)?,
+                base: opt_text(row, 7)?,
+            }),
+            None => None,
+        },
         desired: text(row, 8)?,
         revision: Revision::from_u64(u64_col(row, 9)?),
         observed: opt_json::<Instance>(row, 10)?,
@@ -614,18 +658,16 @@ pub fn insert_workspace(
     create_hash: &str,
 ) -> Result<(), DbError> {
     tx.execute(
-        "INSERT INTO workspace (id, owner_id, host_id, env_revision_id, name, repo, branch, base, desired, revision,
+        "INSERT INTO workspace (id, owner_id, host_id, env_revision_id, name, project_id, desired, revision,
                                 create_key, create_hash, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             ws.id.to_string(),
             ws.owner.to_string(),
             ws.host.as_str(),
             ws.env_revision.to_string(),
             ws.name.as_str(),
-            ws.repo.as_str(),
-            ws.branch.as_str(),
-            ws.base.as_ref().map(iglu_domain::repo::BranchName::as_str),
+            ws.project.to_string(),
             ws.desired.as_str(),
             i64_of(ws.revision.get()),
             create_key,
@@ -633,6 +675,17 @@ pub fn insert_workspace(
             ws.created_at.unix_millis(),
         ],
     )?;
+    if let Some(checkout) = &ws.checkout {
+        tx.execute(
+            "INSERT INTO workspace_checkout (workspace_id, repo, branch, base) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                ws.id.to_string(),
+                checkout.repo.as_str(),
+                checkout.branch.as_str(),
+                checkout.base.as_ref().map(BranchName::as_str),
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -643,9 +696,9 @@ pub fn workspace_by_create_key(
 ) -> Result<Option<(WorkspaceRecord, String)>, DbError> {
     Ok(tx
         .query_row(
-            &format!("SELECT {WORKSPACE_COLUMNS}, create_hash FROM workspace WHERE owner_id = ?1 AND create_key = ?2"),
+            &format!("SELECT {WORKSPACE_COLUMNS}, create_hash FROM {WORKSPACE_FROM} WHERE owner_id = ?1 AND create_key = ?2"),
             params![owner.to_string(), key],
-            |row| Ok((workspace_row(row)?, row.get::<_, Option<String>>(15)?.unwrap_or_default())),
+            |row| Ok((workspace_row(row)?, row.get::<_, Option<String>>(16)?.unwrap_or_default())),
         )
         .optional()?)
 }
@@ -665,11 +718,49 @@ pub fn workspace_name_taken(
         .is_some())
 }
 
+/// What happened to a rename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenameOutcome {
+    Done,
+    /// Another live workspace of the same owner already has the name.
+    NameTaken,
+    Missing,
+}
+
+/// Renames a live workspace. Names are unique per owner among live
+/// workspaces; the instance keeps its ID-derived name, so nothing else moves.
+pub fn rename_workspace(
+    tx: &Connection,
+    id: WorkspaceId,
+    owner: PrincipalId,
+    name: &WorkspaceName,
+) -> Result<RenameOutcome, DbError> {
+    let holder: Option<String> = tx
+        .query_row(
+            "SELECT id FROM workspace WHERE owner_id = ?1 AND name = ?2 AND deleted_at IS NULL",
+            params![owner.to_string(), name.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if holder.is_some_and(|other| other != id.to_string()) {
+        return Ok(RenameOutcome::NameTaken);
+    }
+    let changed = tx.execute(
+        "UPDATE workspace SET name = ?2 WHERE id = ?1 AND deleted_at IS NULL",
+        params![id.to_string(), name.as_str()],
+    )?;
+    Ok(if changed == 0 {
+        RenameOutcome::Missing
+    } else {
+        RenameOutcome::Done
+    })
+}
+
 pub fn workspace(tx: &Connection, id: WorkspaceId) -> Result<Option<WorkspaceRecord>, DbError> {
     Ok(tx
         .query_row(
             &format!(
-                "SELECT {WORKSPACE_COLUMNS} FROM workspace WHERE id = ?1 AND deleted_at IS NULL"
+                "SELECT {WORKSPACE_COLUMNS} FROM {WORKSPACE_FROM} WHERE id = ?1 AND deleted_at IS NULL"
             ),
             [id.to_string()],
             workspace_row,
@@ -679,7 +770,7 @@ pub fn workspace(tx: &Connection, id: WorkspaceId) -> Result<Option<WorkspaceRec
 
 pub fn workspaces(tx: &Connection, owner: PrincipalId) -> Result<Vec<WorkspaceRecord>, DbError> {
     let mut statement = tx.prepare(&format!(
-        "SELECT {WORKSPACE_COLUMNS} FROM workspace WHERE owner_id = ?1 AND deleted_at IS NULL ORDER BY created_at"
+        "SELECT {WORKSPACE_COLUMNS} FROM {WORKSPACE_FROM} WHERE owner_id = ?1 AND deleted_at IS NULL ORDER BY created_at"
     ))?;
     Ok(statement
         .query_map([owner.to_string()], workspace_row)?
@@ -688,11 +779,334 @@ pub fn workspaces(tx: &Connection, owner: PrincipalId) -> Result<Vec<WorkspaceRe
 
 pub fn live_workspaces(tx: &Connection) -> Result<Vec<WorkspaceRecord>, DbError> {
     let mut statement = tx.prepare(&format!(
-        "SELECT {WORKSPACE_COLUMNS} FROM workspace WHERE deleted_at IS NULL ORDER BY created_at"
+        "SELECT {WORKSPACE_COLUMNS} FROM {WORKSPACE_FROM} WHERE deleted_at IS NULL ORDER BY created_at"
     ))?;
     Ok(statement
         .query_map([], workspace_row)?
         .collect::<Result<_, _>>()?)
+}
+
+// ---- projects ----
+
+const PROJECT_COLUMNS: &str = "project.id, project.name, project.origin, project.repo,
+    project.environment_id, environment.name, project.opening, project.revision, project.created_at,
+    project.agent, project.ports, project.idle";
+const PROJECT_FROM: &str = "project JOIN environment ON environment.id = project.environment_id";
+
+fn project_row(row: &Row<'_>) -> rusqlite::Result<ProjectRecord> {
+    Ok(ProjectRecord {
+        id: text(row, 0)?,
+        name: text(row, 1)?,
+        origin: text(row, 2)?,
+        repo: opt_text(row, 3)?,
+        environment_id: text(row, 4)?,
+        environment: text(row, 5)?,
+        opening: json(row, 6)?,
+        revision: Revision::from_u64(u64_col(row, 7)?),
+        created_at: timestamp(row, 8)?,
+        agent: opt_text(row, 9)?,
+        ports: json(row, 10)?,
+        idle: json(row, 11)?,
+    })
+}
+
+/// A person's projects, by name.
+pub fn projects(tx: &Connection, owner: PrincipalId) -> Result<Vec<ProjectRecord>, DbError> {
+    let mut statement = tx.prepare(&format!(
+        "SELECT {PROJECT_COLUMNS} FROM {PROJECT_FROM} WHERE project.owner_id = ?1 ORDER BY project.name"
+    ))?;
+    Ok(statement
+        .query_map([owner.to_string()], project_row)?
+        .collect::<Result<_, _>>()?)
+}
+
+pub fn project(
+    tx: &Connection,
+    owner: PrincipalId,
+    id: ProjectId,
+) -> Result<Option<ProjectRecord>, DbError> {
+    Ok(tx
+        .query_row(
+            &format!(
+                "SELECT {PROJECT_COLUMNS} FROM {PROJECT_FROM} WHERE project.owner_id = ?1 AND project.id = ?2"
+            ),
+            params![owner.to_string(), id.to_string()],
+            project_row,
+        )
+        .optional()?)
+}
+
+/// How a project's workspaces idle; `None` if it's gone.
+pub fn project_idle(tx: &Connection, id: ProjectId) -> Result<Option<IdleRule>, DbError> {
+    Ok(tx
+        .query_row(
+            "SELECT idle FROM project WHERE id = ?1",
+            [id.to_string()],
+            |row| json(row, 0),
+        )
+        .optional()?)
+}
+
+fn project_names(tx: &Connection, owner: PrincipalId) -> Result<Vec<ProjectName>, DbError> {
+    let mut statement = tx.prepare("SELECT name FROM project WHERE owner_id = ?1")?;
+    Ok(statement
+        .query_map([owner.to_string()], |row| text(row, 0))?
+        .collect::<Result<_, _>>()?)
+}
+
+/// A project as it's added: the name is decided, or suggested from the repository.
+pub struct NewProject {
+    pub id: ProjectId,
+    pub owner: PrincipalId,
+    pub name: Option<ProjectName>,
+    pub origin: Origin,
+    pub repo: Option<RepoUrl>,
+    pub environment_id: Uuid,
+    pub created_at: Timestamp,
+}
+
+#[derive(Debug)]
+pub enum AddOutcome {
+    Added,
+    NameTaken,
+}
+
+/// Adds a project that opens one shell. Without a name, it's named after
+/// its repository, or after the built-in project's name.
+pub fn add_project(tx: &Connection, new: &NewProject) -> Result<AddOutcome, DbError> {
+    let taken = project_names(tx, new.owner)?;
+    let name = match (&new.name, &new.repo) {
+        (Some(name), _) if taken.contains(name) => return Ok(AddOutcome::NameTaken),
+        (Some(name), _) => name.clone(),
+        (None, Some(repo)) => project::suggest_name(repo, &taken),
+        (None, None) => project::unique(&project::general(), &taken),
+    };
+    tx.execute(
+        "INSERT INTO project (id, owner_id, name, origin, repo, environment_id, opening, revision, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            new.id.to_string(),
+            new.owner.to_string(),
+            name.as_str(),
+            new.origin.as_str(),
+            new.repo.as_ref().map(RepoUrl::as_str),
+            uuid_text(new.environment_id),
+            to_json(&Opening::shell())?,
+            i64_of(Revision::INITIAL.get()),
+            new.created_at.unix_millis(),
+        ],
+    )?;
+    Ok(AddOutcome::Added)
+}
+
+/// Gives a person their built-in project, on the environment given, unless
+/// they have one.
+pub fn ensure_builtin(
+    tx: &Connection,
+    owner: PrincipalId,
+    environment_id: Uuid,
+    id: ProjectId,
+    now: Timestamp,
+) -> Result<(), DbError> {
+    let has: Option<i64> = tx
+        .query_row(
+            "SELECT 1 FROM project WHERE owner_id = ?1 AND origin = 'builtin'",
+            [owner.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if has.is_none() {
+        add_project(
+            tx,
+            &NewProject {
+                id,
+                owner,
+                name: None,
+                origin: Origin::Builtin,
+                repo: None,
+                environment_id,
+                created_at: now,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// A project's settings as a person changes them.
+pub struct ProjectChange {
+    pub name: ProjectName,
+    pub repo: Option<RepoUrl>,
+    pub environment_id: Uuid,
+    pub opening: Opening,
+    pub agent: Option<AgentName>,
+    pub ports: PreviewPorts,
+    pub idle: IdleRule,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeOutcome {
+    Done,
+    /// Someone changed it since the caller looked.
+    Stale,
+    NameTaken,
+    Missing,
+}
+
+pub fn change_project(
+    tx: &Connection,
+    owner: PrincipalId,
+    id: ProjectId,
+    expected: Revision,
+    change: &ProjectChange,
+) -> Result<ChangeOutcome, DbError> {
+    let Some(current) = project(tx, owner, id)? else {
+        return Ok(ChangeOutcome::Missing);
+    };
+    if current.revision != expected {
+        return Ok(ChangeOutcome::Stale);
+    }
+    if change.name != current.name && project_names(tx, owner)?.contains(&change.name) {
+        return Ok(ChangeOutcome::NameTaken);
+    }
+    tx.execute(
+        "UPDATE project SET name = ?3, repo = ?4, environment_id = ?5, opening = ?6, revision = ?7,
+                            agent = ?8, ports = ?9, idle = ?10
+         WHERE owner_id = ?1 AND id = ?2",
+        params![
+            owner.to_string(),
+            id.to_string(),
+            change.name.as_str(),
+            change.repo.as_ref().map(RepoUrl::as_str),
+            uuid_text(change.environment_id),
+            to_json(&change.opening)?,
+            i64_of(expected.next().get()),
+            change.agent.as_ref().map(AgentName::as_str),
+            to_json(&change.ports)?,
+            to_json(&change.idle)?,
+        ],
+    )?;
+    Ok(ChangeOutcome::Done)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoveOutcome {
+    Done,
+    Builtin,
+    /// Live workspaces are in it.
+    InUse,
+    Missing,
+}
+
+/// Removes a project without live workspaces. Deleted ones move to the
+/// built-in project, which nothing removes.
+pub fn remove_project(
+    tx: &Connection,
+    owner: PrincipalId,
+    id: ProjectId,
+) -> Result<RemoveOutcome, DbError> {
+    let Some(current) = project(tx, owner, id)? else {
+        return Ok(RemoveOutcome::Missing);
+    };
+    match current.origin {
+        Origin::Builtin => return Ok(RemoveOutcome::Builtin),
+        Origin::Added => {}
+    }
+    let live: Option<i64> = tx
+        .query_row(
+            "SELECT 1 FROM workspace WHERE project_id = ?1 AND deleted_at IS NULL LIMIT 1",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if live.is_some() {
+        return Ok(RemoveOutcome::InUse);
+    }
+    tx.execute(
+        "UPDATE workspace SET project_id = (SELECT id FROM project WHERE owner_id = ?1 AND origin = 'builtin')
+         WHERE project_id = ?2",
+        params![owner.to_string(), id.to_string()],
+    )?;
+    tx.execute("DELETE FROM project WHERE id = ?1", [id.to_string()])?;
+    Ok(RemoveOutcome::Done)
+}
+
+/// Migration 4: everyone with an environment gets the built-in project, and
+/// each repository and environment live workspaces use becomes a project.
+/// Deleted workspaces go to the built-in one.
+fn projects_for_existing_workspaces(tx: &Connection) -> Result<(), DbError> {
+    let mut statement = tx.prepare(
+        "SELECT owner_id, id FROM environment e
+         WHERE created_at = (SELECT MIN(created_at) FROM environment WHERE owner_id = e.owner_id)
+         GROUP BY owner_id",
+    )?;
+    let oldest: Vec<(PrincipalId, Uuid)> = statement
+        .query_map([], |row| Ok((text(row, 0)?, text(row, 1)?)))?
+        .collect::<Result<_, _>>()?;
+    let now = Timestamp::from_unix_millis(0);
+    for (owner, environment) in oldest {
+        ensure_builtin(
+            tx,
+            owner,
+            environment,
+            ProjectId::from_uuid(Uuid::new_v4()),
+            now,
+        )?;
+    }
+    let mut statement = tx.prepare(
+        "SELECT w.id, w.owner_id, r.environment_id, c.repo, w.deleted_at IS NOT NULL
+         FROM workspace w
+         JOIN env_revision r ON r.id = w.env_revision_id
+         LEFT JOIN workspace_checkout c ON c.workspace_id = w.id
+         ORDER BY w.created_at",
+    )?;
+    let workspaces: Vec<(WorkspaceId, PrincipalId, Uuid, Option<RepoUrl>, bool)> = statement
+        .query_map([], |row| {
+            Ok((
+                text(row, 0)?,
+                text(row, 1)?,
+                text(row, 2)?,
+                opt_text(row, 3)?,
+                row.get(4)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut made: HashMap<(PrincipalId, Uuid, String), ProjectId> = HashMap::new();
+    for (workspace, owner, environment, repo, deleted) in workspaces {
+        let project = match repo.filter(|_| !deleted) {
+            None => tx.query_row(
+                "SELECT id FROM project WHERE owner_id = ?1 AND origin = 'builtin'",
+                [owner.to_string()],
+                |row| text(row, 0),
+            )?,
+            Some(repo) => {
+                let key = (owner, environment, repo.as_str().to_owned());
+                if let Some(id) = made.get(&key) {
+                    *id
+                } else {
+                    let id = ProjectId::from_uuid(Uuid::new_v4());
+                    add_project(
+                        tx,
+                        &NewProject {
+                            id,
+                            owner,
+                            name: None,
+                            origin: Origin::Added,
+                            repo: Some(repo),
+                            environment_id: environment,
+                            created_at: now,
+                        },
+                    )?;
+                    made.insert(key, id);
+                    id
+                }
+            }
+        };
+        tx.execute(
+            "UPDATE workspace SET project_id = ?2 WHERE id = ?1",
+            params![workspace.to_string(), project.to_string()],
+        )?;
+    }
+    Ok(())
 }
 
 /// Whether a workspace existed and has been deleted, as opposed to one this
@@ -795,38 +1209,59 @@ pub fn mark_deleted(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<
 
 // ---- attention ----
 
-/// Replaces a workspace's session statuses with what the guest reports now.
+/// Replaces a workspace's thread statuses with what the guest reports now.
 /// A status whose timestamp changed becomes unseen again.
 pub fn sync_attention(
     tx: &Connection,
     id: WorkspaceId,
     statuses: &[SessionStatus],
 ) -> Result<bool, DbError> {
-    let before: Vec<(String, i64)> = {
-        let mut statement = tx.prepare(
-            "SELECT session, updated_at FROM attention WHERE workspace_id = ?1 ORDER BY session",
-        )?;
+    let before: Vec<(String, String, i64)> = {
+        let mut statement = tx
+            .prepare("SELECT session, thread, updated_at FROM attention WHERE workspace_id = ?1")?;
         statement
-            .query_map([id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map([id.to_string()], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
             .collect::<Result<_, _>>()?
     };
-    let mut after: Vec<(String, i64)> = statements_key(statuses).into_iter().collect();
+    let mut before = before;
+    before.sort();
+    let mut after: Vec<(String, String, i64)> = statuses
+        .iter()
+        .map(|s| {
+            (
+                s.session.to_string(),
+                s.thread.to_string(),
+                s.updated_at.unix_millis(),
+            )
+        })
+        .collect();
     after.sort();
     if before == after {
         return Ok(false);
     }
-    tx.execute("DELETE FROM attention WHERE workspace_id = ?1 AND session NOT IN (SELECT value FROM json_each(?2))", params![
-        id.to_string(),
-        to_json(&statuses.iter().map(|s| s.session.as_str()).collect::<Vec<_>>())?
-    ])?;
+    let current: Vec<(&str, &str)> = statuses
+        .iter()
+        .map(|s| (s.session.as_str(), s.thread.as_str()))
+        .collect();
+    tx.execute(
+        "DELETE FROM attention WHERE workspace_id = ?1 AND NOT EXISTS (
+           SELECT 1 FROM json_each(?2) WHERE json_extract(value, '$[0]') = session AND json_extract(value, '$[1]') = thread)",
+        params![id.to_string(), to_json(&current)?],
+    )?;
     for status in statuses {
         tx.execute(
-            "INSERT INTO attention (workspace_id, session, state, summary, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT (workspace_id, session) DO UPDATE SET
-               state = excluded.state, summary = excluded.summary, updated_at = excluded.updated_at",
+            "INSERT INTO attention (workspace_id, session, thread, title, state, summary, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (workspace_id, session, thread) DO UPDATE SET
+               title = excluded.title, state = excluded.state, summary = excluded.summary,
+               updated_at = excluded.updated_at",
             params![
                 id.to_string(),
                 status.session.as_str(),
+                status.thread.as_str(),
+                status.title.as_str(),
                 status.state.as_str(),
                 status.summary.as_str(),
                 status.updated_at.unix_millis()
@@ -836,26 +1271,22 @@ pub fn sync_attention(
     Ok(true)
 }
 
-fn statements_key(statuses: &[SessionStatus]) -> Vec<(String, i64)> {
-    statuses
-        .iter()
-        .map(|s| (s.session.to_string(), s.updated_at.unix_millis()))
-        .collect()
-}
-
 pub fn attention(tx: &Connection, id: WorkspaceId) -> Result<Vec<AttentionRecord>, DbError> {
     let mut statement = tx.prepare(
-        "SELECT session, state, summary, updated_at, seen_at FROM attention WHERE workspace_id = ?1 ORDER BY session",
+        "SELECT session, thread, title, state, summary, updated_at, seen_at FROM attention
+         WHERE workspace_id = ?1 ORDER BY session, thread",
     )?;
     Ok(statement
         .query_map([id.to_string()], |row| {
-            let updated_at = timestamp(row, 3)?;
-            let seen_at = timestamp(row, 4)?;
+            let updated_at = timestamp(row, 5)?;
+            let seen_at = timestamp(row, 6)?;
             Ok(AttentionRecord {
                 status: SessionStatus {
                     session: text(row, 0)?,
-                    state: text(row, 1)?,
-                    summary: text(row, 2)?,
+                    thread: text(row, 1)?,
+                    title: text(row, 2)?,
+                    state: text(row, 3)?,
+                    summary: text(row, 4)?,
                     updated_at,
                 },
                 seen: if seen_at >= updated_at {
@@ -872,6 +1303,73 @@ pub fn mark_seen(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<(),
     tx.execute(
         "UPDATE attention SET seen_at = ?2 WHERE workspace_id = ?1",
         params![id.to_string(), now.unix_millis()],
+    )?;
+    Ok(())
+}
+
+// ---- columns ----
+
+fn column_row(row: &Row<'_>) -> rusqlite::Result<ColumnRecord> {
+    Ok(ColumnRecord {
+        spec: ColumnSpec {
+            name: text(row, 0)?,
+            kind: json(row, 1)?,
+            width: text(row, 2)?,
+        },
+        prompt: opt_text(row, 3)?,
+    })
+}
+
+/// A workspace's columns, in order.
+pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnRecord>, DbError> {
+    let mut statement = tx.prepare(
+        "SELECT name, kind, width, prompt FROM workspace_column WHERE workspace_id = ?1 ORDER BY position",
+    )?;
+    Ok(statement
+        .query_map([workspace.to_string()], column_row)?
+        .collect::<Result<_, _>>()?)
+}
+
+/// Replaces a workspace's columns with `columns`, in that order.
+pub fn replace_columns(
+    tx: &Connection,
+    workspace: WorkspaceId,
+    columns: &[ColumnRecord],
+) -> Result<(), DbError> {
+    tx.execute(
+        "DELETE FROM workspace_column WHERE workspace_id = ?1",
+        [workspace.to_string()],
+    )?;
+    let mut insert = tx.prepare(
+        "INSERT INTO workspace_column (workspace_id, position, name, kind, width, prompt)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    for (position, column) in columns.iter().enumerate() {
+        insert.execute(params![
+            workspace.to_string(),
+            i64::try_from(position).unwrap_or(i64::MAX),
+            column.spec.name.as_str(),
+            to_json(&column.spec.kind)?,
+            column.spec.width.as_str(),
+            column.prompt.as_ref().map(Prompt::as_str),
+        ])?;
+    }
+    Ok(())
+}
+
+/// Forgets the prompts of the columns whose sessions opened: a restart
+/// mustn't hand an agent its task again. A column that didn't open keeps
+/// its prompt for the next try.
+pub fn clear_prompts(
+    tx: &Connection,
+    workspace: WorkspaceId,
+    opened: &[SessionName],
+) -> Result<(), DbError> {
+    let names: Vec<&str> = opened.iter().map(SessionName::as_str).collect();
+    tx.execute(
+        "UPDATE workspace_column SET prompt = NULL
+         WHERE workspace_id = ?1 AND name IN (SELECT value FROM json_each(?2))",
+        params![workspace.to_string(), to_json(&names)?],
     )?;
     Ok(())
 }
@@ -1143,21 +1641,37 @@ mod tests {
         let name: EnvName = "default".parse().expect("env name");
         let source: EnvSource = "github:acme/env#default".parse().expect("source");
         create_environment(conn, env, owner, &name, &source, at(1)).expect("environment");
+        ensure_builtin(
+            conn,
+            owner,
+            env,
+            ProjectId::from_uuid(Uuid::new_v4()),
+            at(1),
+        )
+        .expect("built-in project");
         let id = EnvRevisionId::from_uuid(Uuid::new_v4());
         insert_revision(conn, id, env, at(1)).expect("revision");
         id
     }
 
-    fn workspace_record(owner: PrincipalId, env: EnvRevisionId, name: &str) -> WorkspaceRecord {
+    fn workspace_record(
+        owner: PrincipalId,
+        env: EnvRevisionId,
+        project: ProjectId,
+        name: &str,
+    ) -> WorkspaceRecord {
         WorkspaceRecord {
             id: WorkspaceId::from_uuid(Uuid::new_v4()),
             owner,
             host: "host-1".parse().expect("host"),
             env_revision: env,
             name: name.parse().expect("workspace name"),
-            repo: "https://github.com/acme/app.git".parse().expect("repo"),
-            branch: name.parse().expect("branch"),
-            base: None,
+            project,
+            checkout: Some(Checkout {
+                repo: "https://github.com/acme/app.git".parse().expect("repo"),
+                branch: name.parse().expect("branch"),
+                base: None,
+            }),
             desired: DesiredState::Running,
             revision: Revision::from_u64(1),
             observed: None,
@@ -1169,7 +1683,9 @@ mod tests {
     }
 
     fn new_workspace(conn: &Connection, owner: PrincipalId, name: &str) -> WorkspaceRecord {
-        let ws = workspace_record(owner, revision(conn, owner), name);
+        let env = revision(conn, owner);
+        let project = projects(conn, owner).expect("projects")[0].id;
+        let ws = workspace_record(owner, env, project, name);
         insert_workspace(conn, &ws, None, "hash").expect("workspace");
         ws
     }
@@ -1249,7 +1765,7 @@ mod tests {
         let owner = principal(&conn, "alice");
         let ws = new_workspace(&conn, owner, "demo");
         assert!(workspace_name_taken(&conn, owner, "demo").expect("query"));
-        let duplicate = workspace_record(owner, ws.env_revision, "demo");
+        let duplicate = workspace_record(owner, ws.env_revision, ws.project, "demo");
         assert!(insert_workspace(&conn, &duplicate, None, "hash").is_err());
         let other = principal(&conn, "bob");
         assert!(!workspace_name_taken(&conn, other, "demo").expect("query"));
@@ -1305,7 +1821,7 @@ mod tests {
         ));
         assert!(delete_route(&conn, ws.id, created.id).expect("delete"));
 
-        let other = workspace_record(owner, ws.env_revision, "other");
+        let other = workspace_record(owner, ws.env_revision, ws.project, "other");
         insert_workspace(&conn, &other, None, "hash").expect("workspace");
         assert!(matches!(
             create_route(
@@ -1326,14 +1842,319 @@ mod tests {
         let conn = conn();
         let owner = principal(&conn, "alice");
         let ws = new_workspace(&conn, owner, "demo");
-        let statuses = vec![SessionStatus {
-            session: "t1".parse::<SessionName>().expect("session"),
-            state: AttentionState::Waiting,
+        let thread = |key: &str, state, ms| SessionStatus {
+            session: "claude".parse::<SessionName>().expect("session"),
+            thread: key.parse().expect("thread"),
+            title: Summary::sanitize("fix login"),
+            state,
             summary: Summary::sanitize("approve Bash?"),
-            updated_at: at(10),
-        }];
-        assert!(sync_attention(&conn, ws.id, &statuses).expect("sync"));
-        assert!(!sync_attention(&conn, ws.id, &statuses).expect("sync"));
+            updated_at: at(ms),
+        };
+        let both = vec![
+            thread("one", AttentionState::Waiting, 10),
+            thread("two", AttentionState::Working, 11),
+        ];
+        assert!(sync_attention(&conn, ws.id, &both).expect("sync"));
+        assert!(!sync_attention(&conn, ws.id, &both).expect("sync"));
+        assert_eq!(attention(&conn, ws.id).expect("read").len(), 2);
+        let one = vec![thread("two", AttentionState::Done, 12)];
+        assert!(sync_attention(&conn, ws.id, &one).expect("sync"));
+        let left = attention(&conn, ws.id).expect("read");
+        assert_eq!(
+            left.iter()
+                .map(|r| (r.status.thread.as_str(), r.status.state))
+                .collect::<Vec<_>>(),
+            [("two", AttentionState::Done)]
+        );
         assert!(sync_attention(&conn, ws.id, &[]).expect("sync"));
+    }
+
+    #[test]
+    fn existing_workspaces_move_into_projects() {
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate_until(&mut conn, 2).expect("the schema before projects");
+        let alice = principal(&conn, "alice");
+        let bob = principal(&conn, "bob");
+        let env = Uuid::new_v4();
+        let name: EnvName = "default".parse().expect("env name");
+        let source: EnvSource = "github:acme/env#default".parse().expect("source");
+        create_environment(&conn, env, alice, &name, &source, at(1)).expect("environment");
+        let revision = EnvRevisionId::from_uuid(Uuid::new_v4());
+        insert_revision(&conn, revision, env, at(1)).expect("revision");
+        let old = |name: &str, repo: &str, deleted: Option<i64>| {
+            let id = WorkspaceId::from_uuid(Uuid::new_v4());
+            conn.execute(
+                "INSERT INTO workspace (id, owner_id, host_id, env_revision_id, name, repo, branch, base,
+                                        desired, revision, created_at, deleted_at)
+                 VALUES (?1, ?2, 'host-1', ?3, ?4, ?5, ?4, 'main', 'running', 1, 1, ?6)",
+                params![id.to_string(), alice.to_string(), revision.to_string(), name, repo, deleted],
+            )
+            .expect("an old workspace");
+            id
+        };
+        let first = old("first", "https://github.com/acme/app.git", None);
+        let second = old("second", "https://github.com/acme/app.git", None);
+        let other = old("other", "git@github.com:acme/site.git", None);
+        let gone = old("gone", "https://github.com/acme/old.git", Some(5));
+        migrate(&mut conn).expect("the rest apply");
+
+        let projects = projects(&conn, alice).expect("projects");
+        let names: Vec<(&str, Origin)> = projects
+            .iter()
+            .map(|p| (p.name.as_str(), p.origin))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("app", Origin::Added),
+                ("general", Origin::Builtin),
+                ("site", Origin::Added)
+            ]
+        );
+        let id_of = |name: &str| {
+            projects
+                .iter()
+                .find(|p| p.name.as_str() == name)
+                .expect("the project")
+                .id
+        };
+        for (ws, project) in [(first, "app"), (second, "app"), (other, "site")] {
+            let ws = workspace(&conn, ws).expect("query").expect("still live");
+            assert_eq!(ws.project, id_of(project));
+            let checkout = ws.checkout.expect("the checkout carried over");
+            assert_eq!(
+                (
+                    checkout.branch.as_str(),
+                    checkout.base.map(|b| b.as_str().to_owned())
+                ),
+                (ws.name.as_str(), Some("main".into()))
+            );
+        }
+        let parked: String = conn
+            .query_row(
+                "SELECT project_id FROM workspace WHERE id = ?1",
+                [gone.to_string()],
+                |row| row.get(0),
+            )
+            .expect("the deleted workspace");
+        assert_eq!(parked, id_of("general").to_string());
+        assert!(
+            super::projects(&conn, bob).expect("projects").is_empty(),
+            "bob has no environment yet"
+        );
+    }
+
+    #[test]
+    fn only_added_projects_without_live_workspaces_can_be_removed() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let env = projects(&conn, owner).expect("projects")[0].environment_id;
+        assert_eq!(
+            remove_project(&conn, owner, ws.project).expect("query"),
+            RemoveOutcome::Builtin
+        );
+        let app = ProjectId::from_uuid(Uuid::new_v4());
+        let new = NewProject {
+            id: app,
+            owner,
+            name: None,
+            origin: Origin::Added,
+            repo: Some("https://github.com/acme/app.git".parse().expect("repo")),
+            environment_id: env,
+            created_at: at(2),
+        };
+        assert!(matches!(
+            add_project(&conn, &new).expect("added"),
+            AddOutcome::Added
+        ));
+        let again = NewProject {
+            id: ProjectId::from_uuid(Uuid::new_v4()),
+            name: Some("app".parse().expect("name")),
+            ..new
+        };
+        assert!(matches!(
+            add_project(&conn, &again).expect("query"),
+            AddOutcome::NameTaken
+        ));
+        let inside = WorkspaceRecord {
+            project: app,
+            ..workspace_record(owner, ws.env_revision, app, "inside")
+        };
+        insert_workspace(&conn, &inside, None, "hash").expect("a workspace in it");
+        assert_eq!(
+            remove_project(&conn, owner, app).expect("query"),
+            RemoveOutcome::InUse
+        );
+        conn.execute(
+            "UPDATE workspace SET deleted_at = 9 WHERE id = ?1",
+            [inside.id.to_string()],
+        )
+        .expect("deleted");
+        assert_eq!(
+            remove_project(&conn, owner, app).expect("query"),
+            RemoveOutcome::Done
+        );
+        assert_eq!(
+            remove_project(&conn, owner, app).expect("query"),
+            RemoveOutcome::Missing
+        );
+    }
+
+    #[test]
+    fn a_change_applies_only_to_the_revision_it_saw() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let general = project(&conn, owner, ws.project)
+            .expect("query")
+            .expect("the project");
+        let change = ProjectChange {
+            name: "notes".parse().expect("name"),
+            repo: None,
+            environment_id: general.environment_id,
+            opening: Opening::shell(),
+            agent: None,
+            ports: PreviewPorts::default(),
+            idle: IdleRule::Never,
+        };
+        assert_eq!(
+            change_project(&conn, owner, ws.project, general.revision, &change).expect("query"),
+            ChangeOutcome::Done
+        );
+        assert_eq!(
+            change_project(&conn, owner, ws.project, general.revision, &change).expect("query"),
+            ChangeOutcome::Stale
+        );
+        let renamed = project(&conn, owner, ws.project)
+            .expect("query")
+            .expect("the project");
+        assert_eq!(
+            (renamed.name.as_str(), renamed.revision),
+            ("notes", general.revision.next())
+        );
+    }
+
+    #[test]
+    fn only_columns_that_opened_forget_their_prompts() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let column = |name: &str| ColumnRecord {
+            spec: ColumnSpec {
+                name: name.parse().expect("a session"),
+                kind: iglu_domain::column::ColumnKind::Shell,
+                width: iglu_domain::column::ColumnWidth::Half,
+            },
+            prompt: Some("fix the login bug".parse().expect("a prompt")),
+        };
+        replace_columns(&conn, ws.id, &[column("opened"), column("failed")]).expect("columns");
+        clear_prompts(&conn, ws.id, &["opened".parse().expect("a session")]).expect("cleared");
+        let prompts: Vec<(String, bool)> = columns(&conn, ws.id)
+            .expect("columns")
+            .into_iter()
+            .map(|c| (c.spec.name.as_str().to_owned(), c.prompt.is_some()))
+            .collect();
+        assert_eq!(prompts, [("opened".into(), false), ("failed".into(), true)]);
+    }
+
+    #[test]
+    fn rows_written_before_columns_and_agents_still_read() {
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate_until(&mut conn, 1).expect("the 0.2 schema");
+        let owner = principal(&conn, "alice");
+        let env = Uuid::new_v4();
+        let name: EnvName = "default".parse().expect("env name");
+        let source: EnvSource = "github:acme/env#default".parse().expect("source");
+        create_environment(&conn, env, owner, &name, &source, at(1)).expect("environment");
+        let revision = EnvRevisionId::from_uuid(Uuid::new_v4());
+        insert_revision(&conn, revision, env, at(1)).expect("revision");
+        // As 0.2 wrote them: no agents in the image, no columns in a running instance.
+        conn.execute(
+            "UPDATE env_revision SET status = 'ready', built = ?1",
+            [r#"{"fingerprint":"0000000000000000000000000000000000000000000000000000000000000000","arch":"x86_64","user":{"name":"dev","uid":1000,"gid":100,"home":"/home/dev"},"store_path":"/nix/store/x"}"#],
+        )
+        .expect("an old image");
+        let id = WorkspaceId::from_uuid(Uuid::new_v4());
+        conn.execute(
+            "INSERT INTO workspace (id, owner_id, host_id, env_revision_id, name, repo, branch, desired,
+                                    revision, observed, observed_at, created_at)
+             VALUES (?1, ?2, 'host-1', ?3, 'old', 'https://github.com/acme/app.git', 'old', 'running', 1, ?4, 5, 1)",
+            params![
+                id.to_string(),
+                owner.to_string(),
+                revision.to_string(),
+                r#"{"kind":"present","runtime":{"status":"running","readiness":"network","secrets":1},"provisioning":"complete"}"#,
+            ],
+        )
+        .expect("an old workspace");
+        migrate(&mut conn).expect("the rest apply");
+        let live = live_workspaces(&conn).expect("old rows read");
+        assert_eq!(live.len(), 1);
+        assert!(
+            live[0].observed.is_none(),
+            "observed again on the next tick"
+        );
+        let image = revision_image(&conn, revision)
+            .expect("an old image reads")
+            .expect("ready");
+        assert!(image.agents.is_empty());
+    }
+
+    #[test]
+    fn renaming_keeps_names_unique_among_live_workspaces() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let env = revision(&conn, owner);
+        let project = projects(&conn, owner).expect("projects")[0].id;
+        let first = workspace_record(owner, env, project, "first");
+        let second = workspace_record(owner, env, project, "second");
+        insert_workspace(&conn, &first, None, "a").expect("first");
+        insert_workspace(&conn, &second, None, "b").expect("second");
+
+        let taken: WorkspaceName = "first".parse().expect("name");
+        assert_eq!(
+            rename_workspace(&conn, second.id, owner, &taken).expect("rename"),
+            RenameOutcome::NameTaken
+        );
+        let same = rename_workspace(&conn, first.id, owner, &taken).expect("rename to itself");
+        assert_eq!(same, RenameOutcome::Done);
+
+        let fresh: WorkspaceName = "palette".parse().expect("name");
+        assert_eq!(
+            rename_workspace(&conn, second.id, owner, &fresh).expect("rename"),
+            RenameOutcome::Done
+        );
+        let renamed = workspace(&conn, second.id).expect("read").expect("live");
+        assert_eq!(renamed.name, fresh);
+
+        mark_deleted(&conn, first.id, at(2)).expect("delete");
+        assert_eq!(
+            rename_workspace(&conn, second.id, owner, &taken)
+                .expect("a deleted workspace's name is free"),
+            RenameOutcome::Done
+        );
+        assert_eq!(
+            rename_workspace(&conn, first.id, owner, &fresh).expect("rename"),
+            RenameOutcome::Missing
+        );
+
+        let bob = principal(&conn, "bob");
+        let bobs = revision(&conn, bob);
+        let theirs = workspace_record(
+            bob,
+            bobs,
+            projects(&conn, bob).expect("projects")[0].id,
+            "theirs",
+        );
+        insert_workspace(&conn, &theirs, None, "c").expect("bob's");
+        assert_eq!(
+            rename_workspace(&conn, theirs.id, bob, &taken).expect("names are per owner"),
+            RenameOutcome::Done
+        );
     }
 }

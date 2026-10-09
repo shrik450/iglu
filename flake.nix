@@ -40,6 +40,16 @@
           self.nixosModules.workspace
           {
             iglu.user = "dev";
+            # A stand-in agent that shows its prompt, so the test can read it back.
+            iglu.agents.echo = {
+              command = [
+                "/bin/sh"
+                "-c"
+                "printf 'PROMPT<%s>' \"$1\"; exec sleep infinity"
+                "echo"
+              ];
+              prompt = "argument";
+            };
             system.stateVersion = "26.05";
           }
         ];
@@ -71,6 +81,7 @@
             zmx
             git
             netcat
+            lsof
             ;
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
@@ -96,6 +107,7 @@
             zmx
             git
             netcat
+            lsof
             # The dev stack's clients. The Docker daemon is yours to run.
             docker-client
             openssl

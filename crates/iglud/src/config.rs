@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use iglu_domain::auth::{Issuer, SignInPolicy};
 use iglu_domain::capacity::Bytes;
+use iglu_domain::idle::IdlePolicy;
 use iglu_domain::label::HostId;
+use iglu_domain::time::Millis;
 use serde::Deserialize;
 use url::Url;
 
@@ -30,6 +32,8 @@ pub struct Config {
     pub workspaces: WorkspaceDefaults,
     #[serde(default)]
     pub sessions: SessionPolicy,
+    #[serde(default)]
+    pub idle: IdleSettings,
     /// Copies of the database; none when absent.
     #[serde(default)]
     pub backups: Option<Backups>,
@@ -111,6 +115,34 @@ impl Default for WorkspaceDefaults {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdleSettings {
+    /// Minutes unused before a running workspace freezes; `None` never.
+    pub freeze_after_minutes: Option<u32>,
+    /// Minutes unused before a frozen workspace stops; `None` never.
+    pub stop_after_minutes: Option<u32>,
+}
+
+impl Default for IdleSettings {
+    fn default() -> Self {
+        Self {
+            freeze_after_minutes: Some(120),
+            stop_after_minutes: None,
+        }
+    }
+}
+
+impl IdleSettings {
+    pub fn policy(&self) -> IdlePolicy {
+        let minutes = |m: u32| Millis::from_secs(m.saturating_mul(60));
+        IdlePolicy {
+            freeze_after: self.freeze_after_minutes.map(minutes),
+            stop_after: self.stop_after_minutes.map(minutes),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionPolicy {
     pub absolute_hours: u32,

@@ -178,6 +178,18 @@ workspace clone from GitHub also lets the host fetch
 references, not `git+https:` ones. The host keeps what it fetched in its Nix
 store, and every owner's builds share that store.
 
+### Idle workspaces
+
+A workspace nobody has used for two hours freezes: its memory moves to swap
+and its processes pause. An attached terminal, a preview request, a working
+or waiting agent, and having it open in the console all count as use; a
+project can set its own timing, or never idle. Attaching
+to a frozen workspace or opening its preview thaws it. A long build in a
+plain terminal isn't an agent, so run it as `caffeinate cargo build` (or run
+`caffeinate` alone until Ctrl-C) to keep the workspace awake. Change the timing in
+`services.iglu.control.extraSettings.idle`: `freeze_after_minutes` and
+`stop_after_minutes`, either `null` for never. Stopping is off by default.
+
 ### Backups
 
 iglud copies its database to `/var/lib/iglud/backups` at every start, before
@@ -195,7 +207,10 @@ copy come back, freshly cloned.
 ## Using it
 
 ```sh
-iglu new https://github.com/acme/app.git --wait      # a workspace on a new branch
+iglu project add --repo https://github.com/acme/app.git   # a project named app
+iglu new app --wait                                  # a workspace on a new branch
+iglu new general "Tidy my notes"                     # an agent with a prompt, no repository
+iglu attach <workspace> [column]                     # a column in this terminal; Ctrl-] detaches
 iglu ls
 iglu port <workspace> 3000                           # publish a preview
 iglu freeze <workspace>                              # or stop, start, rm
@@ -203,6 +218,13 @@ iglu secret set anthropic --env CLAUDE_CODE_OAUTH_TOKEN < token.txt
 iglu secret set github --git github.com --username x-access-token < pat.txt
 iglu secret set deploy-key --file .ssh/id_ed25519 < id_ed25519
 ```
+
+The console does all of this too: environments, projects and secrets live
+in Settings, under your initial in the top bar.
+
+Every workspace belongs to a project. A project names a repository, or
+none, and an environment; `general` is the one everyone starts with, without
+a repository.
 
 Secrets reach every workspace you own: environment variables in new
 terminals, files under the home directory, and answers from `iglu-guest`,

@@ -96,8 +96,7 @@ pub trait Runtime: Send + Sync + 'static {
         timeout: Duration,
     ) -> impl Future<Output = Result<Output, RuntimeError>> + Send;
 
-    /// Attaches to a terminal session, creating it on first attach, on a
-    /// terminal of `size`.
+    /// Attaches to an open terminal session, on a terminal of `size`.
     fn attach(
         &self,
         guest: &Guest,
@@ -210,6 +209,8 @@ pub enum GuestFile {
     SecretsGeneration,
     /// Per-session attention status.
     Status,
+    /// Exists once the boot has opened the workspace's columns.
+    ColumnsOpened,
 }
 
 /// How a guest tool command ended.

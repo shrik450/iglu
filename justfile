@@ -154,7 +154,10 @@ dev:
         "state_dir": "$state/devhost",
         "runtime_dir": "{{ dev_runtime }}",
         "guest_tools": "{{ justfile_directory() }}/target/debug",
-        "memory_available": 68719476736
+        "memory_available": 68719476736,
+        "agents": [
+          { "name": "claude", "command": ["claude"], "prompt": "argument", "attention": "claude-hooks" }
+        ]
       }
     }
     JSON

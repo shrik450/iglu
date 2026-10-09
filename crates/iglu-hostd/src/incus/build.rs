@@ -10,6 +10,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use hyper::Method;
+use iglu_domain::agent::{AgentSpec, MAX_AGENTS};
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
 use iglu_domain::guest::{self, INTERFACE, Incompatible, Interface};
 use iglu_domain::secret::FetchTokens;
@@ -31,6 +32,10 @@ struct ImageManifest {
     /// before it was recorded don't say.
     #[serde(default)]
     guest_interface: Option<Interface>,
+    /// The agents the environment declares. Parsed, so a malformed one
+    /// fails the build with a message instead of reaching a workspace.
+    #[serde(default)]
+    agents: Vec<AgentSpec>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -60,6 +65,12 @@ pub async fn build(
     let manifest: ImageManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
     guest::compatible(manifest.guest_interface)?;
+    if manifest.agents.len() > MAX_AGENTS {
+        return Err(BuildError::BadOutput(format!(
+            "iglu.json declares {} agents; at most {MAX_AGENTS} are allowed",
+            manifest.agents.len()
+        )));
+    }
     let metadata = store_path.join("metadata.tar.xz");
     let rootfs = store_path.join("rootfs.squashfs");
     let fingerprint = fingerprint(&metadata, &rootfs).await?;
@@ -69,6 +80,7 @@ pub async fn build(
         fingerprint,
         arch: manifest.arch,
         user: manifest.user,
+        agents: manifest.agents,
         store_path: store_path.display().to_string(),
     })
 }

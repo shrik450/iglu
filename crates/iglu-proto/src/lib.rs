@@ -9,17 +9,18 @@
 
 use iglu_domain::attention::SessionStatus;
 use iglu_domain::capacity::Bytes;
+use iglu_domain::column::Argv;
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
 use iglu_domain::lifecycle::Instance;
 use iglu_domain::port::GuestPort;
-use iglu_domain::repo::{BranchName, RepoUrl};
+use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretBundle};
-use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::terminal::SessionName;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Paths, so client and server can't drift.
 pub mod path {
@@ -32,6 +33,16 @@ pub mod path {
     #[must_use]
     pub fn commands(workspace: WorkspaceId) -> String {
         format!("/v1/workspaces/{workspace}/commands")
+    }
+
+    #[must_use]
+    pub fn git(workspace: WorkspaceId) -> String {
+        format!("/v1/workspaces/{workspace}/git")
+    }
+
+    #[must_use]
+    pub fn listeners(workspace: WorkspaceId) -> String {
+        format!("/v1/workspaces/{workspace}/listeners")
     }
 
     #[must_use]
@@ -106,10 +117,17 @@ pub struct CreateSpec {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProvisionSpec {
-    pub repo: RepoUrl,
-    pub branch: BranchName,
-    /// Where a new branch starts. `None` means the remote's default branch.
-    pub base: Option<BranchName>,
+    /// The repository to clone. A workspace without one starts its sessions
+    /// in the home directory.
+    pub checkout: Option<Checkout>,
+}
+
+/// A terminal session to open, if it isn't open already.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionSpec {
+    pub name: SessionName,
+    /// What it runs, as given. `None` runs the user's login shell.
+    pub command: Option<Argv>,
 }
 
 /// One lifecycle step, with the payload it needs. Every command is idempotent:
@@ -121,6 +139,11 @@ pub enum Command {
     Start,
     DeliverSecrets(SecretBundle),
     Provision(ProvisionSpec),
+    /// Opens the workspace's columns for this boot, then records that it did.
+    /// A struct variant: the tag can't sit beside a bare list.
+    OpenColumns {
+        sessions: Vec<SessionSpec>,
+    },
     Freeze,
     Thaw,
     Stop,
@@ -173,13 +196,6 @@ pub struct AttachParams {
     pub rows: u16,
 }
 
-/// Text frames a terminal client sends. Binary frames are input bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum TerminalControl {
-    Resize(TerminalSize),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuildRequest {
     pub source: EnvSource,
@@ -213,3 +229,54 @@ impl std::fmt::Display for CommandError {
 }
 
 impl std::error::Error for CommandError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every command crosses HTTP as JSON; one that can't is a step no
+    /// workspace ever gets past.
+    #[test]
+    fn every_command_survives_json() {
+        let argv: Argv = vec![
+            "claude".parse().expect("an argument"),
+            "fix it".parse().expect("an argument"),
+        ]
+        .try_into()
+        .expect("a command");
+        let commands = [
+            Command::Start,
+            Command::Provision(ProvisionSpec { checkout: None }),
+            Command::Provision(ProvisionSpec {
+                checkout: Some(Checkout {
+                    repo: "https://github.com/acme/app.git"
+                        .parse()
+                        .expect("a repository"),
+                    branch: "fix".parse().expect("a branch"),
+                    base: None,
+                }),
+            }),
+            Command::OpenColumns {
+                sessions: vec![
+                    SessionSpec {
+                        name: "shell".parse().expect("a session"),
+                        command: None,
+                    },
+                    SessionSpec {
+                        name: "claude".parse().expect("a session"),
+                        command: Some(argv),
+                    },
+                ],
+            },
+            Command::Freeze,
+            Command::Thaw,
+            Command::Stop,
+            Command::Delete,
+        ];
+        for command in commands {
+            let json = serde_json::to_string(&command).expect("serializes");
+            let back: Command = serde_json::from_str(&json).expect("deserializes");
+            assert_eq!(back, command, "{json}");
+        }
+    }
+}
