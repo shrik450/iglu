@@ -261,6 +261,8 @@ try:
         browser("answers-queries", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
         browser("palette-from-terminal", "demo")
+        browser("palette-ranks", "demo")
+        browser("recording-cancels")
         browser("keys-stay", "demo")
         browser("prefix-moves", "demo")
         browser("focus-returns", "demo")

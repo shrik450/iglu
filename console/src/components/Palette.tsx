@@ -6,7 +6,8 @@ import { api } from "../api/client.ts";
 import { addColumn, nextWaiting, open, toggleFreeze } from "../actions.ts";
 import { keysFor } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
-import { ask, current, details, listed, look, navigate, overlay, say } from "../state/store.ts";
+import { search } from "../state/search.ts";
+import { ask, current, details, listed, look, navigate, overlay, projects, say } from "../state/store.ts";
 import { Modal } from "./Modal.tsx";
 
 interface Item {
@@ -24,6 +25,7 @@ function items(): Item[] {
     { label: "Next workspace that needs you", hint: keysFor("next-waiting"), run: nextWaiting },
     { label: "Overview", run: () => navigate({ view: "overview" }) },
     { label: "Previews", hint: keysFor("previews"), run: () => navigate({ view: "previews" }) },
+    { label: "Settings", sub: "Environments, secrets, keyboard", run: () => navigate({ view: "settings" }) },
     // Keys are no help on a touch screen.
     ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: keysFor("keys"), run: () => (overlay.value = "keys") }]),
   ];
@@ -38,6 +40,7 @@ function items(): Item[] {
     if (ws.phase === "frozen") list.push({ label: `Thaw ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
   }
   for (const w of listed.value) list.push({ label: w.name, sub: w.attention?.summary || (w.checkout ? `⎇ ${w.checkout.branch}` : ""), run: () => open(w) });
+  for (const p of projects.value) list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
   for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${w.name} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });
   list.push(
     { label: "Look: match the system", run: () => (look.value = "auto") },
@@ -52,22 +55,15 @@ function items(): Item[] {
   return list;
 }
 
-function matches(query: string, text: string): boolean {
-  let at = 0;
-  for (const c of text.toLowerCase()) if (c === query[at]) at++;
-  return at === query.length;
-}
-
 export function Palette() {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
-  const all = useMemo(items, [current.value, listed.value]);
-  const q = query.trim().toLowerCase();
-  const shown = all.filter((item) => !q || matches(q, `${item.label} ${item.sub ?? ""}`));
+  const all = useMemo(items, [current.value, listed.value, projects.value]);
+  const shown = search(query, all);
   useEffect(() => setIndex(0), [query]);
-  const run = (item: Item | undefined) => {
+  const run = (item: Item) => {
     overlay.value = null;
-    item?.run();
+    item.run();
   };
   const list = useId();
   return (
@@ -91,7 +87,11 @@ export function Palette() {
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") setIndex((i) => Math.min(shown.length - 1, i + 1));
             else if (e.key === "ArrowUp") setIndex((i) => Math.max(0, i - 1));
-            else if (e.key === "Enter") run(shown[index]);
+            else if (e.key === "Enter") {
+              // With nothing found, there's nothing to do: the search stays to be fixed.
+              const item = shown[index];
+              if (item) run(item);
+            }
             else return;
             e.preventDefault();
           }}

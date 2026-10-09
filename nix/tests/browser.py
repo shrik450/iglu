@@ -297,6 +297,45 @@ def palette_from_terminal(page: Page, name: str) -> Any:
     return {"went": "/previews"}
 
 
+def palette_ranks(page: Page, name: str) -> Any:
+    """The palette puts what's named exactly first, finds Settings, and keeps
+    a search that found nothing so it can be fixed."""
+    open_workspace(page, name)
+    search = page.get_by_role("combobox", name="Search")
+
+    def look_for(query: str) -> None:
+        page.get_by_role("button", name="Search and commands").click()
+        search.fill(query)
+
+    look_for(name)
+    expect(page.get_by_role("option", selected=True)).to_have_text(re.compile(f"^{re.escape(name)}"))
+    page.keyboard.press("Enter")
+    expect(search).to_have_count(0)
+    expect(page.locator("form.rename")).to_have_count(0)
+    assert page.url == f"{CONSOLE}/w/{name}", page.url
+    look_for("zz-nothing-is-called-this")
+    page.keyboard.press("Enter")
+    expect(search).to_have_value("zz-nothing-is-called-this")
+    search.fill("settings")
+    page.keyboard.press("Enter")
+    page.wait_for_url(f"{CONSOLE}/settings")
+    return {"first": name}
+
+
+def recording_cancels(page: Page) -> Any:
+    """Giving up on recording a prefix takes its complaint with it."""
+    page.goto(f"{CONSOLE}/settings")
+    button = page.get_by_role("button", name=re.compile("^Prefix: "))
+    button.click()
+    page.keyboard.press("a")
+    complaint = page.get_by_role("alert").filter(has_text="Use Ctrl with")
+    expect(complaint).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(complaint).to_have_count(0)
+    expect(button).to_have_attribute("aria-pressed", "false")
+    return {"cancelled": True}
+
+
 def keys_stay(page: Page, name: str) -> Any:
     """A terminal keeps the chords shells use: Alt+B moves back a word and
     Ctrl+K kills the rest of the line, where iglu once took both."""
@@ -642,6 +681,8 @@ STEPS: dict[str, Callable[..., Any]] = {
     "new-column": new_column,
     "answers-queries": answers_queries,
     "palette-from-terminal": palette_from_terminal,
+    "palette-ranks": palette_ranks,
+    "recording-cancels": recording_cancels,
     "keys-stay": keys_stay,
     "prefix-moves": prefix_moves,
     "focus-returns": focus_returns,

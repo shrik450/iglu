@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Chord, DEFAULT_PREFIX, type KeyInput, type Keymap, metaBytes, prefixBytes, resolve } from "./keys.ts";
+import { type Chord, chordLabel, DEFAULT_PREFIX, type KeyInput, type Keymap, metaBytes, prefixBytes, resolve } from "./keys.ts";
 
 const mac: Keymap = { mac: true, prefix: DEFAULT_PREFIX, altMoves: true };
 const linux: Keymap = { ...mac, mac: false };
@@ -92,4 +92,12 @@ test("Option as Meta sends ESC and the unmodified character", () => {
   assert.equal(metaBytes("Digit2", true), "\x1b@");
   assert.equal(metaBytes("ArrowLeft", false), null);
   assert.equal(metaBytes("Backspace", false), null);
+});
+
+test("a chord shows the key as it's printed", () => {
+  const chord = (code: string): Chord => ({ code, ctrl: true, alt: false, shift: false, meta: false });
+  assert.equal(chordLabel(chord("BracketLeft"), true), "⌃[");
+  assert.equal(chordLabel(chord("Backslash"), false), "Ctrl+\\");
+  assert.equal(chordLabel(chord("KeyB"), true), "⌃B");
+  assert.equal(chordLabel(chord("Space"), false), "Ctrl+Space");
 });

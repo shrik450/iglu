@@ -683,14 +683,22 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
     case "broken":
     case "held": {
       const project = projects.value.find((p) => p.id === ws.project);
+      const cloning = now.kind === "stuck" && ws.phase === "creating" ? ws.checkout : null;
       return (
         <div class={`cols-note problem ${now.kind === "held" ? "calm" : "trouble"}`} role="status">
           <b>{now.title}</b>
           <p translate={false}>{now.detail}</p>
+          {/* A workspace keeps the repository it was made with: fixing the project's helps only the next one. */}
+          {cloning && project ? (
+            <p>
+              It clones <code translate={false}>{cloning.repo}</code>, as {project.name} had it when this workspace was made. If that's wrong, fix the project's
+              repository, then delete this workspace and make a new one.
+            </p>
+          ) : null}
           <div class="acts">
-            {now.kind === "stuck" && ws.phase === "creating" && project?.repo ? (
+            {cloning && project ? (
               <a class="btn" href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
-                Check {project.name}'s repository
+                Open {project.name}
               </a>
             ) : null}
             {now.kind === "broken" ? (
@@ -821,7 +829,7 @@ function History({ ws }: { ws: WorkspaceView }) {
   useEffect(() => {
     let current = true;
     void api.activity(ws.id).then(
-      (list) => current && setEntries([...list].reverse()),
+      (list) => current && setEntries(list),
       () => current && setEntries([]),
     );
     return () => {

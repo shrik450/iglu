@@ -431,9 +431,10 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
   .needs-badge .wide { display: none; }
   .seg button { padding-inline: 10px; }
 }
-/* Keys are no help on a touch screen. */
+/* Shortcut hints are no help on a touch screen. A chord that is a setting's
+   value, like the prefix, still shows: a tablet can have a keyboard. */
 @media (hover: none) and (pointer: coarse) {
-  kbd, .pitem .h { display: none !important; }
+  .search kbd, .pitem .h { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 0s !important; }

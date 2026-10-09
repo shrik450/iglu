@@ -177,8 +177,11 @@ export function resolve(mode: Mode, input: KeyInput, keymap: Keymap): Outcome {
 }
 
 /** A chord as written on this keyboard: ⌃Space on a Mac, Ctrl+Space elsewhere. */
+/** Keys whose code names don't say what's printed on them. */
+const PRINTED: Readonly<Record<string, string>> = { BracketLeft: "[", BracketRight: "]", Backslash: "\\", Slash: "/", Period: ".", Comma: ",", Semicolon: ";", Quote: "'", Backquote: "`", Minus: "-", Equal: "=" };
+
 export function chordLabel(chord: Chord, mac: boolean): string {
-  const key = chord.code.replace(/^Key|^Digit/, "");
+  const key = PRINTED[chord.code] ?? chord.code.replace(/^Key|^Digit/, "");
   const mods = mac
     ? `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}`
     : `${chord.ctrl ? "Ctrl+" : ""}${chord.alt ? "Alt+" : ""}${chord.shift ? "Shift+" : ""}${chord.meta ? "Win+" : ""}`;
