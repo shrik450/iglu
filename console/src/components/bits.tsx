@@ -121,19 +121,6 @@ export function attentionText(attention: AttentionView): { tone: string; text: s
   }
 }
 
-export function conditionText(condition: Condition): string {
-  switch (condition.kind) {
-    case "error":
-      return `${condition.message}; retrying`;
-    case "capacity":
-      return "waiting for the host to have room";
-    case "runtime_failed":
-      return "the runtime reports this workspace as broken; stop or delete it";
-    case "host_offline":
-      return "the host isn't answering";
-  }
-}
-
 /** Rows of the igloo, built bottom up: 0–4 rows, then the door. */
 export function Igloo({ rows = 5, class: className = "" }: { rows?: number; class?: string }) {
   const cx = 60;

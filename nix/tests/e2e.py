@@ -459,7 +459,7 @@ try:
         client.wait_until_succeeds(
             f"{IGLU} --json show waits | jq -e '.condition.kind == \"capacity\"'", timeout=120
         )
-        browser("card", "waits", "waiting for the host to have room")
+        browser("card", "waits", "Waiting for room")
         host.succeed("systemctl stop hog")
         phase_is("waits", "running")
         # Its branch was never pushed, so deleting it would lose it.
