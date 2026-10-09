@@ -1,18 +1,67 @@
 // Search and commands: everything in one list.
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useMemo, useState } from "preact/hooks";
 
 import { api } from "../api/client.ts";
-import { addColumn, nextWaiting, open, toggleFreeze } from "../actions.ts";
-import { keysFor } from "../keyboard.ts";
+import {
+  activeOf,
+  addColumn,
+  columnsOf,
+  cycleWidth,
+  focusColumn,
+  labelOrSay,
+  moveColumn,
+  nextWaiting,
+  open,
+  restartColumn,
+  toggleFreeze,
+  toggleZoom,
+  zoomedIn,
+} from "../actions.ts";
+import { afterPrefix, keysFor } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
-import { ask, current, details, listed, look, navigate, overlay, say } from "../state/store.ts";
+import type { WorkspaceView } from "../generated/WorkspaceView.ts";
+import { LABEL, titleOf } from "../state/layout.ts";
+import { search } from "../state/search.ts";
+import { ask, current, details, listed, look, navigate, overlay, previous, projects, say, workspaces } from "../state/store.ts";
+import { copyLink, ONLY_YOU } from "./CopyLink.tsx";
+import { Modal } from "./Modal.tsx";
 
 interface Item {
   label: string;
-  sub?: string;
+  sub?: string | undefined;
   hint?: string | undefined;
   run: () => void;
+}
+
+/** What can be done with the open workspace's columns: go to one, or act on
+ * the one that has the keyboard, with the keys for each. */
+function columnItems(ws: WorkspaceView): Item[] {
+  const list: Item[] = [];
+  const columns = columnsOf(ws);
+  const active = activeOf(ws);
+  columns.forEach((c, i) => {
+    if (c.name !== active) list.push({ label: `Go to column ${titleOf(c)}`, sub: c.label ? `session ${c.name}` : undefined, hint: i < 9 ? afterPrefix(String(i + 1)) : undefined, run: () => focusColumn(ws, c.name) });
+  });
+  const here = columns.findIndex((c) => c.name === active);
+  const column = columns[here];
+  if (!column) return list;
+  const title = titleOf(column);
+  if (column.state === "adopted") {
+    list.push({ label: `End ${title}`, hint: keysFor("close-column"), run: () => ask(ws, { kind: "end", column: column.name }) });
+    return list;
+  }
+  const zoom = zoomedIn(ws) === column.name;
+  list.push(
+    { label: zoom ? `Put ${title} back` : `Zoom ${title} to fill the page`, hint: keysFor("zoom"), run: () => toggleZoom(ws) },
+    { label: `Change ${title}'s width`, sub: `It's ${LABEL[column.width]} of the strip`, hint: keysFor("width"), run: () => void cycleWidth(ws) },
+  );
+  if (here > 0) list.push({ label: `Move ${title} left`, hint: keysFor({ kind: "move-column", step: -1 }), run: () => void moveColumn(ws, -1) });
+  if (here < columns.length - 1) list.push({ label: `Move ${title} right`, hint: keysFor({ kind: "move-column", step: 1 }), run: () => void moveColumn(ws, 1) });
+  list.push({ label: `Rename column ${title}`, sub: column.label ? `session ${column.name}` : undefined, hint: keysFor("label-column"), run: () => labelOrSay(ws, column.name) });
+  if (column.state === "ended") list.push({ label: `Restart ${title}`, run: () => void restartColumn(ws, column.name) });
+  list.push({ label: `End ${title}`, hint: keysFor("close-column"), run: () => ask(ws, { kind: "end", column: column.name }) });
+  return list;
 }
 
 function items(): Item[] {
@@ -23,12 +72,17 @@ function items(): Item[] {
     { label: "Next workspace that needs you", hint: keysFor("next-waiting"), run: nextWaiting },
     { label: "Overview", run: () => navigate({ view: "overview" }) },
     { label: "Previews", hint: keysFor("previews"), run: () => navigate({ view: "previews" }) },
+    { label: "Settings", sub: "Environments, secrets, keyboard", run: () => navigate({ view: "settings" }) },
     // Keys are no help on a touch screen.
     ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: keysFor("keys"), run: () => (overlay.value = "keys") }]),
   ];
+  const before = workspaces.value.find((w) => w.id === previous.value && w.id !== ws?.id);
+  if (before) list.push({ label: `Back to ${before.name}`, sub: "The workspace you were in before", hint: keysFor("last-workspace"), run: () => open(before) });
   if (ws) {
     list.push({ label: `Rename ${ws.name}`, hint: keysFor("rename"), run: () => ask(ws, { kind: "rename" }) });
     list.push({ label: `Details of ${ws.name}`, hint: keysFor("details"), run: () => (details.value = true) });
+    list.push(...columnItems(ws));
+    for (const r of ws.routes) list.push({ label: `Copy the link to ${r.name}`, sub: ONLY_YOU, run: () => copyLink(r.url) });
     if (ws.phase === "running") {
       list.push({ label: `Shell in ${ws.name}`, run: () => void addColumn(ws, { kind: "shell" }) });
       for (const agent of ws.agents) list.push({ label: `${agent} in ${ws.name}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
@@ -37,6 +91,7 @@ function items(): Item[] {
     if (ws.phase === "frozen") list.push({ label: `Thaw ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
   }
   for (const w of listed.value) list.push({ label: w.name, sub: w.attention?.summary || (w.checkout ? `⎇ ${w.checkout.branch}` : ""), run: () => open(w) });
+  for (const p of projects.value) list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
   for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${w.name} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });
   list.push(
     { label: "Look: match the system", run: () => (look.value = "auto") },
@@ -51,38 +106,22 @@ function items(): Item[] {
   return list;
 }
 
-function matches(query: string, text: string): boolean {
-  let at = 0;
-  for (const c of text.toLowerCase()) if (c === query[at]) at++;
-  return at === query.length;
-}
-
 export function Palette() {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
-  const all = useMemo(items, [current.value, listed.value]);
-  const q = query.trim().toLowerCase();
-  const shown = all.filter((item) => !q || matches(q, `${item.label} ${item.sub ?? ""}`));
+  const all = useMemo(items, [current.value, listed.value, projects.value]);
+  const shown = search(query, all);
   useEffect(() => setIndex(0), [query]);
-  const run = (item: Item | undefined) => {
+  const run = (item: Item) => {
     overlay.value = null;
-    item?.run();
+    item.run();
   };
   const list = useId();
-  // Opened from a terminal, the next keys must reach the palette, not the
-  // shell: take focus as soon as it renders, before the next key arrives, and
-  // again once the terminal has finished taking it back.
-  const input = useRef<HTMLInputElement>(null);
-  useLayoutEffect(() => {
-    input.current?.focus();
-    const again = window.setTimeout(() => input.current?.focus());
-    return () => window.clearTimeout(again);
-  }, []);
   return (
-    <div class="overlay" onClick={(e) => e.target === e.currentTarget && (overlay.value = null)}>
-      <div class="pbox" role="dialog" aria-label="Search and commands">
+    <Modal label="Search and commands" onClose={() => (overlay.value = null)}>
+      <div class="pbox">
         <input
-          ref={input}
+          autofocus
           type="text"
           name="q"
           aria-label="Search"
@@ -99,8 +138,11 @@ export function Palette() {
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") setIndex((i) => Math.min(shown.length - 1, i + 1));
             else if (e.key === "ArrowUp") setIndex((i) => Math.max(0, i - 1));
-            else if (e.key === "Enter") run(shown[index]);
-            else if (e.key === "Escape") overlay.value = null;
+            else if (e.key === "Enter") {
+              // With nothing found, there's nothing to do: the search stays to be fixed.
+              const item = shown[index];
+              if (item) run(item);
+            }
             else return;
             e.preventDefault();
           }}
@@ -126,6 +168,6 @@ export function Palette() {
           ))}
         </ul>
       </div>
-    </div>
+    </Modal>
   );
 }

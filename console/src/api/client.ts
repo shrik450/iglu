@@ -23,6 +23,7 @@ import type { Me } from "../generated/Me.ts";
 import type { ProjectId } from "../generated/ProjectId.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
 import type { PublishPort } from "../generated/PublishPort.ts";
+import type { LabelColumn } from "../generated/LabelColumn.ts";
 import type { PutLayout } from "../generated/PutLayout.ts";
 import type { PutSecret } from "../generated/PutSecret.ts";
 import type { SecretName } from "../generated/SecretName.ts";
@@ -107,6 +108,8 @@ export const api = {
   columns: (id: WorkspaceId) => request<ColumnStatus[]>("GET", `/v1/workspaces/${id}/columns`),
   addColumn: (id: WorkspaceId, body: AddColumn) => request<ColumnSpec>("POST", `/v1/workspaces/${id}/columns`, body),
   putLayout: (id: WorkspaceId, body: PutLayout) => request<void>("PUT", `/v1/workspaces/${id}/layout`, body),
+  labelColumn: (id: WorkspaceId, session: SessionName, label: string | null) =>
+    request<void>("PUT", `/v1/workspaces/${id}/columns/${session}/label`, { label } satisfies LabelColumn),
   restartColumn: (id: WorkspaceId, session: SessionName) => request<void>("POST", `/v1/workspaces/${id}/columns/${session}/restart`),
   closeColumn: (id: WorkspaceId, session: SessionName) => request<void>("DELETE", `/v1/workspaces/${id}/columns/${session}`),
   publish: (id: WorkspaceId, port: GuestPort) => request<RouteView>("POST", `/v1/workspaces/${id}/routes`, { port } satisfies PublishPort),

@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ColumnSpec } from "../generated/ColumnSpec.ts";
-import { inView, moved, nextWidth, scrollTarget, shown, stepIndex, widened } from "./layout.ts";
+import { inView, moved, nextWidth, scrollTarget, shown, stepIndex, titleOf, widened } from "./layout.ts";
 
 const columns: ColumnSpec[] = [
-  { name: "shell", kind: { kind: "shell" }, width: "half" },
-  { name: "claude", kind: { kind: "agent", agent: "claude" }, width: "two-thirds" },
-  { name: "server", kind: { kind: "server", command: ["npm", "run", "dev"] }, width: "third" },
+  { name: "shell", kind: { kind: "shell" }, width: "half", label: null },
+  { name: "claude", kind: { kind: "agent", agent: "claude" }, width: "two-thirds", label: null },
+  { name: "server", kind: { kind: "server", command: ["npm", "run", "dev"] }, width: "third", label: "preview" },
 ];
 
 test("widths cycle through every preset", () => {
@@ -84,4 +84,8 @@ test("a column is in view only when all of it is", () => {
   assert.deepEqual([...inView(spans, 1000, 0)], [0]);
   assert.deepEqual([...inView(spans, 1000, 258)], [1]);
   assert.deepEqual([...inView(spans, 1300, 0)], [0, 1]);
+});
+
+test("a column shows its label, or its session name when it has none", () => {
+  assert.deepEqual(shown(columns, undefined).map(titleOf), ["shell", "claude", "preview"]);
 });

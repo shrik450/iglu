@@ -282,12 +282,17 @@ function Keyboard() {
   const prefs = keyboard.value;
   const [recording, setRecording] = useState(false);
   const [refused, setRefused] = useState(false);
+  // An abandoned recording takes its complaint with it.
+  const cancel = () => {
+    setRecording(false);
+    setRefused(false);
+  };
   const record = (e: KeyboardEvent) => {
     if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") {
-      setRecording(false);
+      cancel();
       return;
     }
     const chord: Chord = { code: e.code, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey };
@@ -309,12 +314,13 @@ function Keyboard() {
           type="button"
           class="btn"
           aria-pressed={recording}
+          aria-label={recording ? "Press a Ctrl chord for the prefix" : `Prefix: ${chordLabel(prefs.prefix, mac)}. Change it`}
           onClick={() => {
             setRecording(true);
             setRefused(false);
           }}
           onKeyDown={recording ? record : undefined}
-          onBlur={() => setRecording(false)}
+          onBlur={cancel}
         >
           {recording ? "Press a Ctrl chord…" : <kbd>{chordLabel(prefs.prefix, mac)}</kbd>}
         </button>

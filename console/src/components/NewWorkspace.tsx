@@ -6,10 +6,10 @@ import { create } from "../actions.ts";
 import type { CreateWorkspace } from "../generated/CreateWorkspace.ts";
 import { startingAgent } from "../state/project.ts";
 import { environments, newIn, overlay, projects } from "../state/store.ts";
-import { FieldError, FormError, invalid, textOf, useForm, useGrab } from "./forms.tsx";
+import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
+import { Modal } from "./Modal.tsx";
 
 export function NewWorkspace() {
-  const prompt = useGrab<HTMLTextAreaElement>();
   const [chosen, setChosen] = useState(newIn.value ?? projects.value[0]?.id ?? "");
   const project = projects.value.find((p) => p.id === chosen) ?? null;
   const latest = environments.value.find((env) => env.name === project?.environment)?.latest;
@@ -39,13 +39,8 @@ export function NewWorkspace() {
     await create(body);
   });
   return (
-    <div class="overlay" onClick={(e) => e.target === e.currentTarget && close()}>
-      <form
-        class="nbox"
-        aria-labelledby="new-h"
-        onKeyDown={(e) => e.key === "Escape" && close()}
-        onSubmit={start.onSubmit}
-      >
+    <Modal labelledby="new-h" onClose={close}>
+      <form class="nbox" aria-labelledby="new-h" onSubmit={start.onSubmit}>
         <h2 id="new-h">New workspace</h2>
         {projects.value.length === 0 ? <p class="field-err">Add an environment first, in <a href="/settings">Settings</a>.</p> : null}
         <label>
@@ -55,7 +50,7 @@ export function NewWorkspace() {
             rows={3}
             placeholder={agent ? `What should ${agent} do? Optional…` : "No agents in this environment…"}
             disabled={agents.length === 0}
-            ref={prompt}
+            autofocus
             {...invalid(start, "prompt")}
             onKeyDown={(e) => {
               // ⌘↩ submits from the prompt, which takes plain returns.
@@ -114,14 +109,15 @@ export function NewWorkspace() {
         ) : null}
         <FormError form={start} />
         <div class="nbtns">
+          {/* Once asked for, the workspace is made either way; closing only stops waiting for it. */}
           <button type="button" class="btn" onClick={close}>
-            Cancel
+            {start.busy ? "Close" : "Cancel"}
           </button>
           <button type="submit" class="btn primary" disabled={start.busy || !project}>
             {start.busy ? "Creating…" : "Create"}
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

@@ -1,6 +1,7 @@
 // A workspace's tile in the overview.
 
 import type { VNode } from "preact";
+import { useEffect, useRef } from "preact/hooks";
 
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { runs, situation } from "../state/situation.ts";
@@ -74,9 +75,15 @@ export function Card({ ws }: { ws: WorkspaceView }) {
   const phase = phaseText(ws.phase);
   // The branch is worth showing only when it isn't the workspace's own name.
   const branch = ws.checkout && ws.checkout.branch !== ws.name ? ws.checkout.branch : null;
-  const classes = ["card", ws.needs_you ? "needs" : "", frozen ? "is-frozen" : "", look === "asleep" ? "asleep" : "", cursor.value === ws.id ? "sel" : ""];
+  const selected = cursor.value === ws.id;
+  const ref = useRef<HTMLElement>(null);
+  // The cursor stays in sight as j and k move it.
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+  const classes = ["card", ws.needs_you ? "needs" : "", frozen ? "is-frozen" : "", look === "asleep" ? "asleep" : "", selected ? "sel" : ""];
   return (
-    <article class={classes.filter(Boolean).join(" ")} data-name={ws.name}>
+    <article ref={ref} class={classes.filter(Boolean).join(" ")} data-name={ws.name}>
       <header class="c-head">
         <Glyph kind={workspaceGlyph(ws)} />
         <WorkspaceLink ws={ws} class="name">

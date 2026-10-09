@@ -2,7 +2,7 @@
 
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { Card } from "../components/Card.tsx";
-import { Glyph, Igloo, WorkspaceLink, attentionGlyph } from "../components/bits.tsx";
+import { Glyph, Icon, Igloo, WorkspaceLink, attentionGlyph } from "../components/bits.tsx";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { situation } from "../state/situation.ts";
 import { repoLabel } from "../state/groups.ts";
@@ -50,7 +50,7 @@ function Welcome() {
 export function Overview() {
   if (projects.value.length === 0) return <Welcome />;
   return (
-    <>
+    <div class="overview">
       <h1 class="sr-only">Workspaces</h1>
       {waiting.value.length ? (
         <ul class="needs-strip" aria-label="Waiting on you">
@@ -85,7 +85,7 @@ export function Overview() {
             <section key={group.key} aria-label={group.label} class={group.workspaces.length === 0 ? "g-empty" : undefined}>
               <header class="g-head">
                 <button type="button" class="chev" aria-expanded={!closed} aria-label={`${closed ? "Expand" : "Collapse"} ${group.label}`} onClick={() => toggle(group.key)}>
-                  {closed ? "▸" : "▾"}
+                  <Icon name="chevron" size={12} />
                 </button>
                 <h2 translate={false}>
                   <a
@@ -114,7 +114,7 @@ export function Overview() {
                     overlay.value = "new";
                   }}
                 >
-                  +
+                  <Icon name="plus" size={14} />
                 </button>
                 {closed ? (
                   <span class="sum">
@@ -142,6 +142,6 @@ export function Overview() {
       <button type="button" class="btn new-project" onClick={() => (overlay.value = "project")}>
         New project
       </button>
-    </>
+    </div>
   );
 }

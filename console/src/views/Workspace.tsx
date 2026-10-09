@@ -12,6 +12,8 @@ import {
   columnsOf,
   cycleWidth,
   focusColumn,
+  labelColumn,
+  labelOrSay,
   loadColumns,
   loadLive,
   markActive,
@@ -24,10 +26,13 @@ import {
   saveOpening,
   setState,
   toggleFreeze,
+  toggleZoom,
   unpublish,
+  zoomedIn,
 } from "../actions.ts";
 import { api } from "../api/client.ts";
-import { FieldError, type Form, FormError, InputError, invalid, useForm, useGrab } from "../components/forms.tsx";
+import { FieldError, type Form, FormError, InputError, invalid, textOf, useForm, useGrab } from "../components/forms.tsx";
+import { CopyLink, ONLY_YOU } from "../components/CopyLink.tsx";
 import { Previews } from "../components/Previews.tsx";
 import {
   attentionGlyph,
@@ -35,27 +40,29 @@ import {
   buildRows,
   Frost,
   Glyph,
+  Icon,
   Igloo,
   phaseText,
   workspaceGlyph,
 } from "../components/bits.tsx";
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
+import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { keysFor, terminalKey } from "../keyboard.ts";
-import { FRACTION, inView, LABEL, scrollTarget, type Shown } from "../state/layout.ts";
+import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
-import { ask, collapsed, details, filter, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
+import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
 import { loadGhostty, TerminalPane } from "../terminal.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
   const r = route.value;
   return (
-    <div class="wsv" data-phase={ws?.phase}>
+    <div class={`wsv${ws && zoomedIn(ws) ? " zoomed" : ""}`} data-phase={ws?.phase}>
       <Tree current={ws} />
       {ws ? (
         <Main ws={ws} />
@@ -72,81 +79,59 @@ export function Workspace({ ws }: { ws: WorkspaceView | null }) {
 }
 
 function Tree({ current }: { current: WorkspaceView | null }) {
-  const query = filter.value.trim().toLowerCase();
-  const shown = groups.value
-    .map((group) => ({
-      ...group,
-      workspaces: group.workspaces.filter((ws) => !query || [ws.name, ws.checkout?.branch ?? "", group.label, ws.attention?.summary ?? ""].some((t) => t.toLowerCase().includes(query))),
-    }))
-    .filter((group) => group.workspaces.length > 0);
   const toggle = (key: string) => {
     const next = new Set(collapsed.value);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     collapsed.value = next;
   };
+  // Finding a workspace by name is the palette's job, so the list is only a list.
   return (
     <nav class="side" aria-label="Workspaces">
-      <div class="tree-tools">
-        <input
-          type="search"
-          name="filter"
-          placeholder="Filter…"
-          aria-label="Filter workspaces"
-          autocomplete="off"
-          spellcheck={false}
-          value={filter.value}
-          onInput={(e) => (filter.value = e.currentTarget.value)}
-        />
-        <button type="button" aria-label="Collapse all" title="Collapse all" onClick={() => (collapsed.value = new Set(groups.value.map((g) => g.key)))}>
-          ⊟
-        </button>
-        <button type="button" aria-label="Expand all" title="Expand all" onClick={() => (collapsed.value = new Set())}>
-          ⊞
-        </button>
-      </div>
       <div class="tree">
-        {shown.map((group) => {
-          const closed = collapsed.value.has(group.key) && !query;
-          const need = group.workspaces.filter((ws) => ws.needs_you).length;
-          return (
-            <div key={group.key} role="group" aria-label={group.label}>
-              <div class="t-group">
-                <button type="button" class="chev" aria-expanded={!closed} aria-label={`${closed ? "Expand" : "Collapse"} ${group.label}`} onClick={() => toggle(group.key)}>
-                  {closed ? "▸" : "▾"}
-                </button>
-                <span class="label" translate={false}>
-                  {group.label}
-                </span>
-                <span class={`cnt${need ? " hot" : ""}`}>{need ? `● ${need}` : group.workspaces.length}</span>
+        {groups.value
+          .filter((group) => group.workspaces.length > 0)
+          .map((group) => {
+            const closed = collapsed.value.has(group.key);
+            const need = group.workspaces.filter((ws) => ws.needs_you).length;
+            return (
+              <div key={group.key} role="group" aria-label={group.label}>
+                <div class="t-group">
+                  <button type="button" class="chev" aria-expanded={!closed} aria-label={`${closed ? "Expand" : "Collapse"} ${group.label}`} onClick={() => toggle(group.key)}>
+                    <Icon name="chevron" size={12} />
+                  </button>
+                  <span class="label" translate={false}>
+                    {group.label}
+                  </span>
+                  <span class={`cnt${need ? " hot" : ""}`}>{need ? `● ${need}` : group.workspaces.length}</span>
+                </div>
+                {/* A folded project still shows the open workspace, and a phone, with no
+                    projects to unfold, shows them all. */}
+                {group.workspaces.map((ws) => (
+                  <a
+                    key={ws.id}
+                    href={`/w/${ws.name}`}
+                    class={`t-ws${ws.needs_you ? " needs" : ""}${ws.phase === "stopped" || ws.phase === "frozen" ? " asleep" : ""}${closed && ws.id !== current?.id ? " folded" : ""}`}
+                    aria-current={ws.id === current?.id ? "page" : undefined}
+                    // In the one-row list on a phone, the current workspace may be off to the side.
+                    ref={(el) => {
+                      if (ws.id === current?.id) el?.scrollIntoView({ inline: "nearest", block: "nearest" });
+                    }}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                      e.preventDefault();
+                      navigate({ view: "workspace", name: ws.name });
+                    }}
+                  >
+                    <Glyph kind={workspaceGlyph(ws)} />
+                    <span class="n" translate={false}>
+                      {ws.name}
+                    </span>
+                  </a>
+                ))}
               </div>
-              {closed
-                ? null
-                : group.workspaces.map((ws) => (
-                    <a
-                      key={ws.id}
-                      href={`/w/${ws.name}`}
-                      class={`t-ws${ws.needs_you ? " needs" : ""}${ws.phase === "stopped" || ws.phase === "frozen" ? " asleep" : ""}`}
-                      aria-current={ws.id === current?.id ? "page" : undefined}
-                      // In the one-row list on a phone, the current workspace may be off to the side.
-                      ref={(el) => {
-                        if (ws.id === current?.id) el?.scrollIntoView({ inline: "nearest", block: "nearest" });
-                      }}
-                      onClick={(e) => {
-                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                        e.preventDefault();
-                        navigate({ view: "workspace", name: ws.name });
-                      }}
-                    >
-                      <Glyph kind={workspaceGlyph(ws)} />
-                      <span class="n" translate={false}>
-                        {ws.name}
-                      </span>
-                    </a>
-                  ))}
-            </div>
-          );
-        })}
+            );
+          })}
       </div>
     </nav>
   );
@@ -238,7 +223,8 @@ function Header({ ws }: { ws: WorkspaceView }) {
               </form>
             ) : (
               <button type="button" class="chip" aria-label="Publish a port" onClick={() => ask(ws, { kind: "port" })}>
-                + port
+                <Icon name="plus" size={11} />
+                port
               </button>
             )
           ) : null}
@@ -357,7 +343,9 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             onClick={() => focusColumn(ws, c.name)}
           >
             <Glyph kind={attentionGlyph(threads.get(c.name)?.[0] ?? null)} />
-            <span translate={false}>{c.name}</span>
+            <span translate={false} title={c.label ? `${c.label} (session ${c.name})` : undefined}>
+              {titleOf(c)}
+            </span>
           </button>
         ))}
       </nav>
@@ -370,7 +358,7 @@ function Strip({ ws }: { ws: WorkspaceView }) {
           title={`Add a column (${keysFor("add-column")})`}
           onClick={() => (isAsking("add-column") ? settle(ws) : ask(ws, { kind: "add-column" }))}
         >
-          +
+          <Icon name="plus" size={13} />
         </button>
         {isAsking("add-column") ? <AddMenu ws={ws} /> : null}
       </div>
@@ -380,6 +368,13 @@ function Strip({ ws }: { ws: WorkspaceView }) {
 
 function AddMenu({ ws }: { ws: WorkspaceView }) {
   const [command, setCommand] = useState(false);
+  // What's opening: the menu stays, says so, and takes no second click until
+  // the column is there (which puts the menu away) or iglu refuses it.
+  const [opening, setOpening] = useState<string | null>(null);
+  const add = (label: string, kind: ColumnKind) => {
+    setOpening(label);
+    void addColumn(ws, kind).finally(() => setOpening(null));
+  };
   const first = useGrab<HTMLButtonElement>();
   useEffect(() => {
     const away = (e: PointerEvent) => {
@@ -398,25 +393,26 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
       <form class="add-menu" onSubmit={run.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
         <CommandInput form={run} />
         <button type="submit" class="btn" disabled={run.busy}>
-          Run
+          Start
         </button>
+        <p class="about">It keeps running, and starts again with the workspace. For a one-off command, use a shell.</p>
         <FieldError form={run} input="command" />
         <FormError form={run} />
       </form>
     );
   }
   return (
-    <div class="add-menu" role="group" aria-label="Add a column" onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
-      <button type="button" ref={first} onClick={() => void addColumn(ws, { kind: "shell" })}>
-        Shell
+    <div class="add-menu" role="group" aria-label="Add a column" aria-busy={opening !== null} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+      <button type="button" ref={first} disabled={opening !== null} onClick={() => add("Shell", { kind: "shell" })}>
+        {opening === "Shell" ? "Opening a shell…" : "Shell"}
       </button>
       {ws.agents.map((agent) => (
-        <button type="button" key={agent} translate={false} onClick={() => void addColumn(ws, { kind: "agent", agent })}>
-          {agent}
+        <button type="button" key={agent} translate={false} disabled={opening !== null} onClick={() => add(agent, { kind: "agent", agent })}>
+          {opening === agent ? `Opening ${agent}…` : agent}
         </button>
       ))}
-      <button type="button" onClick={() => setCommand(true)}>
-        Command…
+      <button type="button" disabled={opening !== null} onClick={() => setCommand(true)}>
+        Server…
       </button>
     </div>
   );
@@ -434,16 +430,41 @@ function PortInput({ form }: { form: Form }) {
 
 function CommandInput({ form }: { form: Form }) {
   const ref = useGrab<HTMLInputElement>();
-  return <input ref={ref} name="command" aria-label="Command to run" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
+  return <input ref={ref} name="command" aria-label="Server command" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
+}
+
+/** Naming a column: Enter keeps the name, an empty one goes back to the
+ * session's, and Escape leaves it as it was. */
+function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
+  const ref = useGrab<HTMLInputElement>(true);
+  const naming = useForm(async (data) => labelColumn(ws, column.name, textOf(data)("label") ?? ""));
+  return (
+    <form class="col-rename" onSubmit={naming.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+      <input
+        ref={ref}
+        name="label"
+        aria-label={`Name of ${titleOf(column)}`}
+        placeholder={column.name}
+        defaultValue={titleOf(column)}
+        maxLength={40}
+        autocomplete="off"
+        spellcheck={false}
+        disabled={naming.busy}
+        {...invalid(naming, "label")}
+      />
+      <FieldError form={naming} input="label" />
+      <FormError form={naming} />
+    </form>
+  );
 }
 
 /** Ending a column asks first; the question takes the keyboard, and Escape keeps the column. */
-function Ending({ ws, name }: { ws: WorkspaceView; name: string }) {
+function Ending({ ws, name, title }: { ws: WorkspaceView; name: string; title: string }) {
   const end = useGrab<HTMLButtonElement>();
   return (
     <span class="col-ctl" style={{ opacity: 1 }} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
       <button type="button" class="end" ref={end} onClick={() => void closeColumn(ws, name)}>
-        End {name}
+        End {title}
       </button>
       <button type="button" onClick={() => settle(ws)}>
         Keep
@@ -464,7 +485,8 @@ function Columns({ ws }: { ws: WorkspaceView }) {
   const strip = useRef<HTMLDivElement>(null);
   const activeNow = useRef(active);
   activeNow.current = active;
-  const arrangement = columns.map((c) => `${c.name}:${c.width}`).join(" ");
+  const zoom = zoomedIn(ws);
+  const arrangement = `${columns.map((c) => `${c.name}:${c.width}`).join(" ")} ${zoom ?? ""}`;
   // The strip scrolls so the active column is wholly in view, whenever it,
   // the order, the widths or the window change.
   const settle = (smooth: boolean) => {
@@ -514,24 +536,26 @@ function Columns({ ws }: { ws: WorkspaceView }) {
   return (
     <div class="w-cols" ref={strip}>
       {columns.map((c) => (
-        <Column key={`${ws.id}/${c.name}`} ws={ws} column={c} on={c.name === active} threads={threads.get(c.name) ?? []} />
+        <Column key={`${ws.id}/${c.name}`} ws={ws} column={c} on={c.name === active} zoomed={c.name === zoom} threads={threads.get(c.name) ?? []} />
       ))}
     </div>
   );
 }
 
-function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads: AttentionView[] }) {
+function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: boolean; threads: AttentionView[] }) {
   const { ws, column, threads } = props;
   const attention = threads[0] ?? null;
   const [listing, setListing] = useState(false);
   const { name } = column;
+  const title = titleOf(column);
   const state = attention ? attentionText(attention) : null;
   const arranged = arrangeable(column.state);
   const [status, setStatus] = useState("");
   const asked = question.value;
   const ending = asked?.kind === "end" && asked.column === name;
+  const naming = asked?.kind === "label" && asked.column === name;
   return (
-    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[column.width]) }} data-column={name} aria-label={`Column ${name}`}>
+    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[props.zoomed ? "full" : column.width]) }} data-column={name} aria-label={`Column ${title}`}>
       <header
         class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}
         onMouseDown={(e) => {
@@ -541,7 +565,17 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
         }}
       >
         <Glyph kind={attentionGlyph(attention)} />
-        <b translate={false}>{name}</b>
+        {naming ? (
+          <Naming ws={ws} column={column} />
+        ) : (
+          <b
+            translate={false}
+            title={column.state === "adopted" ? undefined : `${column.label ? `Session ${name}. ` : ""}Double-click to rename (${keysFor("label-column")})`}
+            onDblClick={() => labelOrSay(ws, name)}
+          >
+            {title}
+          </b>
+        )}
         {attention?.summary ? <span class="ct">{attention.summary}</span> : null}
         {state && state.text !== "idle" ? <span class={`state ${state.tone}`}>{state.text}</span> : null}
         {threads.length > 1 ? (
@@ -551,30 +585,39 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
         ) : null}
         {status && column.state !== "ended" ? <span class="status">{status}</span> : null}
         {ending ? (
-          <Ending ws={ws} name={name} />
+          <Ending ws={ws} name={name} title={title} />
         ) : (
           <span class="col-ctl">
             {arranged ? (
               <>
-                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${name}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
+                <button
+                  type="button"
+                  aria-pressed={props.zoomed}
+                  aria-label={props.zoomed ? `Put ${title} back` : `Zoom ${title}`}
+                  title={`${props.zoomed ? "Put it back" : "Zoom to fill the page"} (${keysFor("zoom")})`}
+                  onClick={() => (markActive(ws, name), toggleZoom(ws))}
+                >
+                  <Icon name={props.zoomed ? "unzoom" : "zoom"} size={11} />
+                </button>
+                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${title}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
                   {LABEL[column.width]}
                 </button>
-                <button type="button" aria-label={`Move ${name} left`} onClick={() => (markActive(ws, name), void moveColumn(ws, -1))}>
-                  ‹
+                <button type="button" aria-label={`Move ${title} left`} onClick={() => (markActive(ws, name), void moveColumn(ws, -1))}>
+                  <Icon name="back" size={11} />
                 </button>
-                <button type="button" aria-label={`Move ${name} right`} onClick={() => (markActive(ws, name), void moveColumn(ws, 1))}>
-                  ›
+                <button type="button" aria-label={`Move ${title} right`} onClick={() => (markActive(ws, name), void moveColumn(ws, 1))}>
+                  <Icon name="chevron" size={11} />
                 </button>
               </>
             ) : null}
-            <button type="button" aria-label={`End ${name}`} title={`End this column (${keysFor("close-column")})`} onClick={() => ask(ws, { kind: "end", column: name })}>
-              ×
+            <button type="button" aria-label={`End ${title}`} title={`End this column (${keysFor("close-column")})`} onClick={() => ask(ws, { kind: "end", column: name })}>
+              <Icon name="close" size={11} />
             </button>
           </span>
         )}
       </header>
       {listing && threads.length > 1 ? (
-        <ul class="threads" aria-label={`Threads in ${name}`}>
+        <ul class="threads" aria-label={`Threads in ${title}`}>
           {threads.map((t) => {
             const text = attentionText(t);
             return (
@@ -675,14 +718,22 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
     case "broken":
     case "held": {
       const project = projects.value.find((p) => p.id === ws.project);
+      const cloning = now.kind === "stuck" && ws.phase === "creating" ? ws.checkout : null;
       return (
         <div class={`cols-note problem ${now.kind === "held" ? "calm" : "trouble"}`} role="status">
           <b>{now.title}</b>
           <p translate={false}>{now.detail}</p>
+          {/* A workspace keeps the repository it was made with: fixing the project's helps only the next one. */}
+          {cloning && project ? (
+            <p>
+              It clones <code translate={false}>{cloning.repo}</code>, as {project.name} had it when this workspace was made. If that's wrong, fix the project's
+              repository, then delete this workspace and make a new one.
+            </p>
+          ) : null}
           <div class="acts">
-            {now.kind === "stuck" && ws.phase === "creating" && project?.repo ? (
+            {cloning && project ? (
               <a class="btn" href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
-                Check {project.name}'s repository
+                Open {project.name}
               </a>
             ) : null}
             {now.kind === "broken" ? (
@@ -813,7 +864,7 @@ function History({ ws }: { ws: WorkspaceView }) {
   useEffect(() => {
     let current = true;
     void api.activity(ws.id).then(
-      (list) => current && setEntries([...list].reverse()),
+      (list) => current && setEntries(list),
       () => current && setEntries([]),
     );
     return () => {
@@ -841,9 +892,10 @@ function RouteRow({ ws, route: r }: { ws: WorkspaceView; route: RouteView }) {
   const [sure, setSure] = useState(false);
   return (
     <div class="row">
-      <a href={r.url} target="_blank" rel="noopener" translate={false}>
+      <a href={r.url} target="_blank" rel="noopener" translate={false} title={ONLY_YOU}>
         {r.name} :{r.port}
       </a>
+      <CopyLink url={r.url} name={r.name} />
       {sure ? (
         <button type="button" class="btn danger" onClick={() => void unpublish(ws, r)}>
           Unpublish for good

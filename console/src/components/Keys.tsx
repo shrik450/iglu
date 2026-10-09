@@ -2,9 +2,9 @@
 // Both read the keymap's own table, so they can't disagree with it.
 
 import { armed, keyboard, mac } from "../keyboard.ts";
-import { useGrab } from "./forms.tsx";
 import { type Binding, BINDINGS, chordLabel, onKeyboard } from "../state/keys.ts";
 import { overlay } from "../state/store.ts";
+import { Modal } from "./Modal.tsx";
 
 const GROUPS = ["Anywhere", "Workspaces", "Columns"] as const;
 
@@ -28,20 +28,27 @@ function ways(binding: Binding, prefix: string): string[] {
 
 export function Keys() {
   const close = () => (overlay.value = null);
-  const closer = useGrab<HTMLButtonElement>();
   const prefix = chordLabel(keyboard.value.prefix, mac);
   return (
-    <div class="overlay" onClick={(e) => e.target === e.currentTarget && close()}>
-      <div class="kbox" role="dialog" aria-labelledby="keys-h" onKeyDown={(e) => e.key === "Escape" && close()}>
+    <Modal labelledby="keys-h" onClose={close}>
+      <div class="kbox">
         <div class="khead">
           <h2 id="keys-h">Keyboard shortcuts</h2>
-          <button type="button" class="btn icon" aria-label="Close" ref={closer} onClick={close}>
+          <button type="button" class="btn icon" aria-label="Close" autofocus onClick={close}>
             ×
           </button>
         </div>
         <p class="muted">
-          Terminals keep every key. To reach iglu from one, press <Chord keys={prefix} />, then a key. Pressing it twice sends{" "}
-          <Chord keys={prefix} /> to the terminal. On the overview, the keys work without it.
+          {keyboard.value.altMoves ? (
+            <>
+              Terminals keep every key but <Chord keys={onKeyboard("⌥H ⌥J ⌥K ⌥L", mac)} />, which move between columns and workspaces; Settings can give
+              those back.{" "}
+            </>
+          ) : (
+            "Terminals keep every key. "
+          )}
+          To reach iglu from one, press <Chord keys={prefix} />, then a key. Pressing it twice sends <Chord keys={prefix} /> to the terminal. On the
+          overview, the keys work without it.
         </p>
         <div class="kgroups">
           {GROUPS.map((group) => (
@@ -72,7 +79,7 @@ export function Keys() {
           ))}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 

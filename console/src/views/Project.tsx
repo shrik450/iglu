@@ -1,9 +1,10 @@
 // One project: its workspaces, and how new ones start.
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 
 import { attempt } from "../actions.ts";
 import { api } from "../api/client.ts";
+import { Icon } from "../components/bits.tsx";
 import { Card } from "../components/Card.tsx";
 import { FieldError, FormError, InputError, invalid, textOf, useForm } from "../components/forms.tsx";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
@@ -32,8 +33,7 @@ export function ProjectPage() {
       </div>
     );
   }
-  // Keyed so the form starts over when the project changes underneath it.
-  return <Project key={`${project.id}/${project.revision}`} project={project} />;
+  return <Project key={project.id} project={project} />;
 }
 
 function Project({ project }: { project: ProjectView }) {
@@ -65,7 +65,7 @@ function Project({ project }: { project: ProjectView }) {
       ) : (
         <p class="muted">No workspaces yet.</p>
       )}
-      <Settings project={project} />
+      <Draft project={project} />
       {project.origin === "added" ? <Remove project={project} live={inside.length} /> : null}
     </div>
   );
@@ -88,8 +88,30 @@ function idleChoice(rule: IdleRule): IdleRule["kind"] {
   return rule.kind;
 }
 
-function Settings({ project }: { project: ProjectView }) {
-  const [opening, setOpening] = useState<ColumnTemplate[]>(project.opening);
+/** The settings form edits the revision it opened on. A save elsewhere
+ * replaces an untouched form; an edited one keeps the edits and says so,
+ * since saving them would overwrite what was saved. */
+function Draft({ project }: { project: ProjectView }) {
+  const [base, setBase] = useState(project);
+  const [edited, setEdited] = useState(false);
+  const moved = base.revision !== project.revision;
+  useEffect(() => {
+    if (moved && !edited) setBase(project);
+  }, [moved, edited, project]);
+  const restart = () => {
+    setBase(project);
+    setEdited(false);
+  };
+  return <Settings key={base.revision} project={base} onEdit={() => setEdited(true)} onSaved={() => setEdited(false)} stale={moved && edited ? restart : null} />;
+}
+
+function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: () => void; stale: (() => void) | null }) {
+  const { project } = props;
+  const [opening, setOpeningState] = useState<ColumnTemplate[]>(project.opening);
+  const setOpening = (next: ColumnTemplate[]) => {
+    setOpeningState(next);
+    props.onEdit();
+  };
   const [idle, setIdle] = useState<IdleRule["kind"]>(idleChoice(project.idle));
   const [envName, setEnvName] = useState(project.environment);
   const [agent, setAgent] = useState(project.agent ?? "");
@@ -135,12 +157,22 @@ function Settings({ project }: { project: ProjectView }) {
       ports: ports.ports,
       idle: rule,
     });
+    props.onSaved();
     say("Saved.");
     if (name !== project.name) navigate({ view: "project", name }, "replace");
   });
   return (
-    <form class="set-form p-settings" aria-label={`Settings for ${project.name}`} onSubmit={save.onSubmit}>
+    <form class="set-form p-settings" aria-label={`Settings for ${project.name}`} onSubmit={save.onSubmit} onInput={props.onEdit} onChange={props.onEdit}>
       <h2>Settings</h2>
+      {/* While saving, a new revision may be this save's own, arriving before its answer. */}
+      {props.stale && !save.busy ? (
+        <p class="field-err stale" role="status">
+          These settings were saved elsewhere since you started editing, so yours can't be saved over them.{" "}
+          <button type="button" class="btn" onClick={props.stale}>
+            Show the saved settings
+          </button>
+        </p>
+      ) : null}
       <label>
         Name
         <input name="name" required defaultValue={project.name} autocomplete="off" spellcheck={false} {...invalid(save, "name")} />
@@ -225,24 +257,26 @@ function Settings({ project }: { project: ProjectView }) {
                 ))}
               </select>
               <button type="button" class="btn icon" aria-label="Move left" disabled={i === 0} onClick={() => move(i, -1)}>
-                ‹
+                <Icon name="back" size={12} />
               </button>
               <button type="button" class="btn icon" aria-label="Move right" disabled={i === opening.length - 1} onClick={() => move(i, 1)}>
-                ›
+                <Icon name="chevron" size={12} />
               </button>
               <button type="button" class="btn icon" aria-label={`Remove ${t.name ?? kindText(t.kind)}`} onClick={() => setOpening(opening.filter((_, j) => j !== i))}>
-                ×
+                <Icon name="close" size={12} />
               </button>
             </li>
           ))}
         </ol>
         <div class="opening-add">
           <button type="button" class="btn" onClick={() => add({ kind: "shell" })}>
-            + Shell
+            <Icon name="plus" size={12} />
+            Shell
           </button>
           {agents.map((agent) => (
             <button key={agent} type="button" class="btn" onClick={() => add({ kind: "agent", agent })}>
-              + {agent}
+              <Icon name="plus" size={12} />
+              {agent}
             </button>
           ))}
         </div>

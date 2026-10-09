@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
 use crate::label::AgentName;
-use crate::parse::text_type;
+use crate::parse::{is_printable, text_type};
 use crate::terminal::SessionName;
 
 /// One argument of a command. Passed to the program as it is: never joined
@@ -109,6 +109,57 @@ impl From<Argv> for Vec<Arg> {
     }
 }
 
+/// What a person calls a column, shown in place of its session name: 1–40
+/// characters of text a line can show, with no space at either end. A label
+/// only names; the session name stays the column's identity.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
+#[serde(try_from = "String", into = "String")]
+pub struct ColumnLabel(String);
+
+impl ColumnLabel {
+    pub const MAX_CHARS: usize = 40;
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for ColumnLabel {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() || s.trim() != s {
+            return Err(ParseError::new(
+                "column label",
+                "must have text and no space at either end",
+            ));
+        }
+        if s.chars().count() > Self::MAX_CHARS {
+            return Err(ParseError::new(
+                "column label",
+                "must be at most 40 characters",
+            ));
+        }
+        if !s.chars().all(is_printable) {
+            return Err(ParseError::new(
+                "column label",
+                "must be one line of plain text",
+            ));
+        }
+        Ok(Self(s.to_owned()))
+    }
+}
+
+impl fmt::Display for ColumnLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+text_type!(ColumnLabel);
+
 /// How much of the strip a column takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -185,6 +236,8 @@ pub struct ColumnSpec {
     pub name: SessionName,
     pub kind: ColumnKind,
     pub width: ColumnWidth,
+    /// What the person calls it, if they've named it.
+    pub label: Option<ColumnLabel>,
 }
 
 /// A column in a project's opening layout, before it has a name.
@@ -312,6 +365,7 @@ pub fn name_templates(templates: &[ColumnTemplate]) -> Vec<ColumnSpec> {
             name,
             kind: template.kind.clone(),
             width: template.width,
+            label: None,
         });
     }
     specs
@@ -376,11 +430,33 @@ mod tests {
         assert!(free_name(&long, &taken).as_str().len() <= SessionName::MAX_LEN);
     }
 
+    #[test]
+    fn a_label_is_one_line_of_text_up_to_forty_characters() {
+        for good in ["tests", "dev server", "Ölçüm 🧊", &"x".repeat(40)] {
+            assert_eq!(
+                good.parse::<ColumnLabel>().map(|l| l.to_string()),
+                Ok(good.to_owned())
+            );
+        }
+        for bad in [
+            "",
+            " tests",
+            "tests ",
+            "two\nlines",
+            "tab\there",
+            "\u{202e}desrever",
+            &"x".repeat(41),
+        ] {
+            assert!(bad.parse::<ColumnLabel>().is_err(), "{bad:?}");
+        }
+    }
+
     fn spec(name: &str) -> ColumnSpec {
         ColumnSpec {
             name: name.parse().expect("name"),
             kind: ColumnKind::Shell,
             width: ColumnWidth::Half,
+            label: None,
         }
     }
 

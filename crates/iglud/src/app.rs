@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use iglu_api::{ErrorBody, ErrorKind, Field};
 use iglu_domain::auth::{Action, Decision, Resource, authorize};
-use iglu_domain::id::PrincipalId;
+use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
 use iglu_domain::preview::{
     ConsoleOrigin, Credential, CsrfToken, FetchMetadata, MethodClass, Transport, console_access,
@@ -47,6 +47,27 @@ pub struct App {
     pub usage: crate::idle::Usage,
     /// This run of iglud, which the console compares to notice an upgrade.
     pub boot: iglu_api::BootId,
+    pub column_edits: ColumnEdits,
+}
+
+/// One change at a time to a workspace's columns. Adding one picks a free
+/// name, opens its session on the host, then records it; two at once would
+/// pick the same name. Layout changes are one transaction and don't need it.
+#[derive(Default)]
+pub struct ColumnEdits(Mutex<HashMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>);
+
+impl ColumnEdits {
+    /// Waits for the workspace's columns, held until the guard drops.
+    pub async fn lock(&self, id: WorkspaceId) -> tokio::sync::OwnedMutexGuard<()> {
+        let edits = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(id)
+            .or_default()
+            .clone();
+        edits.lock_owned().await
+    }
 }
 
 impl App {

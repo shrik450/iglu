@@ -1,7 +1,7 @@
 // The console's frame: the top bar, the current view, and overlays.
 
 import { nextWaiting } from "./actions.ts";
-import { Glyph, Igloo } from "./components/bits.tsx";
+import { Glyph, Icon, Igloo } from "./components/bits.tsx";
 import { Keys, PrefixHint } from "./components/Keys.tsx";
 import { keysFor, mac } from "./keyboard.ts";
 import { onKeyboard } from "./state/keys.ts";
@@ -26,7 +26,10 @@ function Topbar() {
           class="tb-mark"
           href="/"
           translate={false}
+          aria-label="iglu, overview"
+          aria-current={view === "overview" ? "page" : undefined}
           onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();
             navigate({ view: "overview" });
           }}
@@ -54,24 +57,29 @@ function Topbar() {
         )}
       </div>
       <div class="tb-right">
-        <div class="seg" role="group" aria-label="View">
-          <button type="button" aria-pressed={view === "overview"} onClick={() => navigate({ view: "overview" })}>
-            Overview
-          </button>
-          <button type="button" aria-pressed={view === "previews"} onClick={() => navigate({ view: "previews" })}>
-            Previews
-          </button>
-        </div>
+        {/* The mark is the way to the overview, so only previews needs a way here. */}
+        <a
+          class="tb-link"
+          href="/previews"
+          aria-current={view === "previews" ? "page" : undefined}
+          title={`Previews (${keysFor("previews")})`}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            navigate({ view: "previews" });
+          }}
+        >
+          Previews
+        </a>
         <button type="button" class="search" aria-label="Search and commands" onClick={() => (overlay.value = "palette")}>
-          <svg class="narrow" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-            <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6" />
-            <path d="m10.4 10.4 3.4 3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-          </svg>
+          <span class="narrow">
+            <Icon name="search" size={15} />
+          </span>
           <span class="wide">Search…</span>
           <kbd>{onKeyboard("⌘ K", mac)}</kbd>
         </button>
-        <button type="button" class="btn icon primary" aria-label="New workspace" title="New workspace (n)" onClick={() => (overlay.value = "new")}>
-          +
+        <button type="button" class="btn icon primary" aria-label="New workspace" title={`New workspace (${keysFor("new")})`} onClick={() => (overlay.value = "new")}>
+          <Icon name="plus" size={16} />
         </button>
         <a
           class="who"

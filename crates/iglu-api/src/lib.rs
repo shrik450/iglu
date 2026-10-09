@@ -9,7 +9,7 @@ use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{AttentionState, Seen, Summary, ThreadKey};
 use iglu_domain::auth::{DisplayName, Email};
 use iglu_domain::capacity::{Bytes, Capacity};
-use iglu_domain::column::{ColumnKind, ColumnSpec, ColumnState, ColumnWidth};
+use iglu_domain::column::{ColumnKind, ColumnLabel, ColumnSpec, ColumnState, ColumnWidth};
 use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
 use iglu_domain::git::{GitState, Unsaved};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
@@ -255,6 +255,14 @@ pub struct AddColumn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub after: Option<SessionName>,
+}
+
+/// What to call a column; `null` goes back to its session name.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct LabelColumn {
+    pub label: Option<ColumnLabel>,
 }
 
 /// A workspace's columns in their new order, with their widths. Names every

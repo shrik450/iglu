@@ -35,7 +35,8 @@ def open_workspace(page: Page, name: str) -> None:
 
 
 def column(page: Page, name: str) -> Locator:
-    return page.get_by_role("region", name=f"Column {name}", exact=True)
+    """A column by its session name, which stays when the column is renamed."""
+    return page.locator(f'section[data-column="{name}"]')
 
 
 def columns(page: Page) -> list[str]:
@@ -264,7 +265,7 @@ def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
     open_workspace(page, name)
     column(page, other).locator(".term-host").click()
     expect(column(page, other)).to_have_class(re.compile(r"\bon\b"))
-    page.get_by_role("button", name="Overview").click()
+    page.get_by_role("link", name="iglu, overview").click()
     page.get_by_role("link", name=name, exact=True).click()
     # Until the columns' sessions load, the first column stands in as active;
     # judge once they have.
@@ -295,6 +296,45 @@ def palette_from_terminal(page: Page, name: str) -> Any:
     column(page, first).locator(".term-host").click()
     assert screen(page).count("previews") == before, screen(page)
     return {"went": "/previews"}
+
+
+def palette_ranks(page: Page, name: str) -> Any:
+    """The palette puts what's named exactly first, finds Settings, and keeps
+    a search that found nothing so it can be fixed."""
+    open_workspace(page, name)
+    search = page.get_by_role("combobox", name="Search")
+
+    def look_for(query: str) -> None:
+        page.get_by_role("button", name="Search and commands").click()
+        search.fill(query)
+
+    look_for(name)
+    expect(page.get_by_role("option", selected=True)).to_have_text(re.compile(f"^{re.escape(name)}"))
+    page.keyboard.press("Enter")
+    expect(search).to_have_count(0)
+    expect(page.locator("form.rename")).to_have_count(0)
+    assert page.url == f"{CONSOLE}/w/{name}", page.url
+    look_for("zz-nothing-is-called-this")
+    page.keyboard.press("Enter")
+    expect(search).to_have_value("zz-nothing-is-called-this")
+    search.fill("settings")
+    page.keyboard.press("Enter")
+    page.wait_for_url(f"{CONSOLE}/settings")
+    return {"first": name}
+
+
+def recording_cancels(page: Page) -> Any:
+    """Giving up on recording a prefix takes its complaint with it."""
+    page.goto(f"{CONSOLE}/settings")
+    button = page.get_by_role("button", name=re.compile("^Prefix: "))
+    button.click()
+    page.keyboard.press("a")
+    complaint = page.get_by_role("alert").filter(has_text="Use Ctrl with")
+    expect(complaint).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(complaint).to_have_count(0)
+    expect(button).to_have_attribute("aria-pressed", "false")
+    return {"cancelled": True}
 
 
 def keys_stay(page: Page, name: str) -> Any:
@@ -359,6 +399,7 @@ def focus_returns(page: Page, name: str) -> Any:
         "add a column": lambda: asks("c", page.get_by_role("group", name="Add a column").get_by_role("button", name="Shell")),
         "end the column": lambda: asks("x", page.get_by_role("button", name=f"End {first}", exact=True)),
         "width button": width.click,
+        "details": lambda: (page.get_by_role("button", name="Details", exact=True).click(), page.get_by_role("button", name="Details", exact=True).click()),
         "column header": lambda: here.locator(".col-h b").click(),
     }
     for case, run in cases.items():
@@ -373,6 +414,244 @@ def focus_returns(page: Page, name: str) -> Any:
     return {"cases": list(cases)}
 
 
+def selects_in_place(page: Page, name: str) -> Any:
+    """Selecting text in a column scrolled into view leaves the strip where it
+    is; focusing the terminal's hidden input scrolled it back to the first
+    column."""
+    open_workspace(page, name)
+    names = columns(page)
+    assert len(names) >= 2, names
+    at_prompt(page, names[0])
+    prefix(page, "l")
+    second = column(page, names[1])
+    width = second.locator(".wbtn")
+    opened = width.inner_text()
+    # As wide as the strip, so showing it scrolls the first column away.
+    while width.inner_text() != "1":
+        width.click()
+    strip = page.locator(".w-cols")
+    expect(second).to_be_in_viewport(ratio=0.9)
+    time.sleep(0.5)
+    before = strip.evaluate("(s) => s.scrollLeft")
+    assert before > 0, before
+    strip.evaluate("(s) => { window.stripMoves = []; s.addEventListener('scroll', () => window.stripMoves.push(s.scrollLeft)); }")
+    box = second.locator("canvas").first.bounding_box()
+    assert box
+    page.mouse.move(box["x"] + 40, box["y"] + 20)
+    page.mouse.down()
+    page.mouse.move(box["x"] + 200, box["y"] + 60, steps=8)
+    page.mouse.up()
+    time.sleep(0.5)
+    moves = page.evaluate("window.stripMoves")
+    while width.inner_text() != opened:
+        width.click()
+    assert moves == [], {"before": before, "moves": moves}
+    return {"scrollLeft": before}
+
+
+def dialogs_hold_focus(page: Page, name: str) -> Any:
+    """A dialog keeps the keyboard while it's open: Tab never reaches the page
+    behind it, Escape still closes it, and the terminal has the keyboard
+    again after."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    prefix(page, "Shift+Slash")
+    sheet = page.get_by_role("dialog", name="Keyboard shortcuts")
+    expect(sheet).to_be_visible()
+    # Past its last control, Tab may go to the browser's own controls, which
+    # leaves the page's body focused; never to the page behind the dialog.
+    for _ in range(3):
+        page.keyboard.press("Tab")
+        inside = page.evaluate("document.activeElement === document.body || Boolean(document.activeElement?.closest('dialog'))")
+        assert inside, page.evaluate("document.activeElement?.outerHTML.slice(0, 120)")
+    page.keyboard.press("Escape")
+    expect(sheet).to_have_count(0)
+    reaches(page, first)
+    return {"tabbed": 3}
+
+
+def enter_presses_buttons(page: Page) -> Any:
+    """On the overview, Enter on a focused button presses it, rather than
+    opening the selected workspace."""
+    page.goto(CONSOLE)
+    button = page.get_by_role("button", name="New project", exact=True)
+    button.focus()
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog", name="New project")
+    expect(dialog).to_be_visible()
+    assert page.url.rstrip("/") == CONSOLE, page.url
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    return {"opened": "New project"}
+
+
+def prefix_cancels(page: Page, name: str) -> Any:
+    """The prefix waits for the next key only: a click in between puts it
+    away, so what's typed next goes where the click went."""
+    open_workspace(page, name)
+    at_prompt(page, columns(page)[0])
+    page.keyboard.press("Control+Space")
+    expect(page.get_by_role("status", name="iglu is waiting for a key")).to_be_visible()
+    page.get_by_role("button", name="Search and commands").click()
+    search = page.get_by_role("combobox", name="Search")
+    expect(search).to_be_focused()
+    page.keyboard.type("previews")
+    expect(search).to_have_value("previews")
+    assert page.url == f"{CONSOLE}/w/{name}", page.url
+    page.keyboard.press("Escape")
+    return {"typed": "previews"}
+
+
+def names_column(page: Page, name: str) -> Any:
+    """A column can be called what it's for: the name shows on it and its
+    chip, stays after a reload, and an empty one gives back the session's.
+    The keyboard comes back to the terminal after."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    prefix(page, "Comma")
+    field = page.get_by_role("textbox", name=f"Name of {first}")
+    expect(field).to_be_focused()
+    expect(field).to_have_value(first)
+    field.fill("the tests")
+    page.keyboard.press("Enter")
+    header = column(page, first).locator(".col-h b")
+    expect(header).to_have_text("the tests")
+    expect(page.get_by_role("navigation", name="Columns").get_by_role("button", name="the tests")).to_be_visible()
+    reaches(page, first)
+    page.reload()
+    expect(header).to_have_text("the tests")
+    header.dblclick()
+    field = page.get_by_role("textbox", name="Name of the tests")
+    expect(field).to_have_value("the tests")
+    field.fill("")
+    page.keyboard.press("Enter")
+    expect(header).to_have_text(first)
+    return {"column": first}
+
+
+def zooms(page: Page, name: str) -> Any:
+    """Zoom gives a column the page and puts it back as it was: the layout
+    iglu keeps doesn't change, and the keyboard stays in the terminal."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    width = column(page, first).get_by_role("button", name=re.compile("^Width of ")).inner_text()
+    sidebar = page.get_by_role("navigation", name="Workspaces")
+    prefix(page, "KeyZ")
+    expect(column(page, first)).to_have_attribute("style", re.compile(r"--cw:\s*1\b"))
+    expect(sidebar).to_be_hidden()
+    expect(column(page, first).get_by_role("button", name=re.compile("^Put .* back$"))).to_have_attribute("aria-pressed", "true")
+    reaches(page, first)
+    # The palette has the column's actions too.
+    prefix(page, "Slash")
+    page.get_by_role("combobox", name="Search").fill("put back")
+    page.keyboard.press("Enter")
+    expect(sidebar).to_be_visible()
+    expect(column(page, first).get_by_role("button", name=re.compile("^Width of "))).to_have_text(width)
+    reaches(page, first)
+    return {"width": width}
+
+
+def goes_back(page: Page, name: str, other: str | None = None) -> Any:
+    """The prefix then ; goes back to the workspace you were in before, even
+    by way of the overview; with none yet, it says so."""
+    open_workspace(page, name)
+    if other is None:
+        prefix(page, "Semicolon")
+        expect(page.get_by_text("There's no other workspace to go back to yet.")).to_be_visible()
+        return {"back": None}
+    page.get_by_role("link", name="iglu, overview").click()
+    page.get_by_role("link", name=other, exact=True).first.click()
+    page.wait_for_url(f"{CONSOLE}/w/{other}")
+    prefix(page, "Semicolon")
+    page.wait_for_url(f"{CONSOLE}/w/{name}")
+    prefix(page, "Semicolon")
+    page.wait_for_url(f"{CONSOLE}/w/{other}")
+    return {"back": other}
+
+
+def renames_follow(page: Page, name: str) -> Any:
+    """Renaming keeps the same workspace open: its column keeps the keyboard,
+    and another tab showing it follows to the new name, terminals and all."""
+    other = page.context.new_page()
+    open_workspace(other, name)
+    open_workspace(page, name)
+    names = columns(page)
+    assert len(names) >= 2, names
+    at_prompt(page, names[0])
+    prefix(page, "l")
+    expect(column(page, names[1])).to_have_class(re.compile(r"\bon\b"))
+    renamed = f"{name}-renamed"
+
+    def rename(old: str, new: str) -> None:
+        page.get_by_role("button", name=old, exact=True).click()
+        field = page.get_by_role("textbox", name="Workspace name")
+        field.fill(new)
+        field.press("Enter")
+        page.wait_for_url(f"{CONSOLE}/w/{new}")
+
+    rename(name, renamed)
+    reaches(page, names[1])
+    other.wait_for_url(f"{CONSOLE}/w/{renamed}")
+    expect(other.locator("[data-column]")).to_have_count(len(names))
+    rename(renamed, name)
+    reaches(page, names[1])
+    other.wait_for_url(f"{CONSOLE}/w/{name}")
+    other.close()
+    return {"renamed": renamed}
+
+
+def drafts_survive(page: Page, project: str) -> Any:
+    """An edit in progress on a project's settings survives a save made in
+    another tab, which the form says, rather than vanishing; an untouched
+    form takes the saved settings."""
+    other = page.context.new_page()
+    for p in (page, other):
+        p.goto(f"{CONSOLE}/p/{project}")
+    form = page.get_by_role("form", name=f"Settings for {project}")
+    theirs = other.get_by_role("form", name=f"Settings for {project}")
+    idle = theirs.get_by_label("When unused")
+    before = idle.input_value()
+    previews = form.get_by_label("Previews")
+    previews.fill("18480")
+    idle.select_option("never" if before != "never" else "default")
+    theirs.get_by_role("button", name="Save").click()
+    notice = form.get_by_role("status")
+    expect(notice).to_contain_text("saved elsewhere")
+    expect(previews).to_have_value("18480")
+    notice.get_by_role("button", name="Show the saved settings").click()
+    expect(form.get_by_label("When unused")).to_have_value(idle.input_value())
+    # Put it back, from the tab that changed it; this one, untouched, follows.
+    idle.select_option(before)
+    theirs.get_by_role("button", name="Save").click()
+    expect(form.get_by_label("When unused")).to_have_value(before)
+    other.close()
+    return {"kept": "18480"}
+
+
+def adds_at_once(page: Page, name: str) -> Any:
+    """Two columns asked for at once both open, under different names; they
+    once picked the same free name, and one failed."""
+    open_workspace(page, name)
+    added = page.evaluate(
+        """async (name) => {
+          const me = await (await fetch('/v1/me')).json();
+          const ws = (await (await fetch('/v1/workspaces')).json()).find((w) => w.name === name);
+          const headers = { 'content-type': 'application/json', 'x-csrf-token': me.csrf_token };
+          const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'shell' } }) });
+          const answers = await Promise.all([add(), add()]);
+          const made = await Promise.all(answers.map(async (a) => (a.ok ? (await a.json()).name : `${a.status} ${await a.text()}`)));
+          for (const a of answers.keys()) if (answers[a].ok) await fetch(`/v1/workspaces/${ws.id}/columns/${made[a]}`, { method: 'DELETE', headers });
+          return { statuses: answers.map((a) => a.status), made };
+        }""",
+        name,
+    )
+    assert added["statuses"] == [201, 201] and len(set(added["made"])) == 2, added
+    return added
+
+
 def questions_end(page: Page, name: str) -> Any:
     """A question ends with the visit that asked it: a Delete armed and left
     unanswered is gone on coming back, so no later click can answer it."""
@@ -382,7 +661,7 @@ def questions_end(page: Page, name: str) -> Any:
     details.click()
     panel.get_by_role("button", name="Delete", exact=True).click()
     expect(panel.get_by_text(f"Delete {name}?")).to_be_visible()
-    page.get_by_role("group", name="View").get_by_role("button", name="Overview").click()
+    page.get_by_role("link", name="iglu, overview").click()
     page.wait_for_url(f"{CONSOLE}/")
     page.go_back()
     page.wait_for_url(f"{CONSOLE}/w/{name}")
@@ -472,9 +751,21 @@ STEPS: dict[str, Callable[..., Any]] = {
     "new-column": new_column,
     "answers-queries": answers_queries,
     "palette-from-terminal": palette_from_terminal,
+    "palette-ranks": palette_ranks,
+    "recording-cancels": recording_cancels,
     "keys-stay": keys_stay,
     "prefix-moves": prefix_moves,
     "focus-returns": focus_returns,
+    "selects-in-place": selects_in_place,
+    "dialogs-hold-focus": dialogs_hold_focus,
+    "enter-presses-buttons": enter_presses_buttons,
+    "prefix-cancels": prefix_cancels,
+    "names-column": names_column,
+    "zooms": zooms,
+    "goes-back": goes_back,
+    "renames-follow": renames_follow,
+    "drafts-survive": drafts_survive,
+    "adds-at-once": adds_at_once,
     "questions-end": questions_end,
     "card": card,
     "lands-on-waiting": lands_on_waiting,

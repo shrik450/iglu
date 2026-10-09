@@ -11,7 +11,7 @@ import type { ProjectView } from "../generated/ProjectView.ts";
 import type { WorkspaceId } from "../generated/WorkspaceId.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { groupByProject } from "./groups.ts";
-import { type Look, loadCollapsed, loadLook, saveCollapsed, saveLook } from "./prefs.ts";
+import { type Look, loadCollapsed, loadLook, saveCollapsed, saveLook, watch } from "./prefs.ts";
 import { formatRoute, parseRoute, type Route } from "./route.ts";
 
 export const me = signal<Me | null>(null);
@@ -40,10 +40,26 @@ export const groups = computed(() => groupByProject(projects.value, workspaces.v
 export const listed = computed(() => groups.value.flatMap((group) => group.workspaces));
 export const waiting = computed(() => workspaces.value.filter((ws) => ws.needs_you));
 
-/** The workspace the URL names, if it exists. */
+/** The workspace last shown, by the name it had then. */
+let shown: { id: WorkspaceId; name: string } | null = null;
+
+/** The workspace the URL names. A URL still naming the workspace shown by the
+ * name it had then follows it to its new name, so a rename, in this tab or
+ * any other, keeps the same workspace open rather than losing it. */
 export const current = computed(() => {
   const r = route.value;
-  return r.view === "workspace" ? (workspaces.value.find((ws) => ws.name === r.name) ?? null) : null;
+  if (r.view !== "workspace") return null;
+  const list = workspaces.value;
+  const named = list.find((ws) => ws.name === r.name);
+  if (named) return named;
+  return shown?.name === r.name ? (list.find((ws) => ws.id === shown?.id) ?? null) : null;
+});
+effect(() => {
+  const ws = current.value;
+  if (!ws) return;
+  shown = { id: ws.id, name: ws.name };
+  const r = route.peek();
+  if (r.view === "workspace" && r.name !== ws.name) navigate({ view: "workspace", name: ws.name }, "replace");
 });
 
 /** The overview's cursor, by ID so renames don't lose it. */
@@ -56,9 +72,11 @@ effect(() => {
   else document.documentElement.dataset["look"] = value;
   saveLook(value);
 });
+watch("look", () => (look.value = loadLook()));
 
 export const collapsed = signal<ReadonlySet<string>>(loadCollapsed());
 effect(() => saveCollapsed(collapsed.value));
+watch("collapsed", () => (collapsed.value = loadCollapsed()));
 
 /** Each workspace's columns as its host last reported them. */
 export const columnStates = signal<Record<WorkspaceId, ColumnStatus[]>>({});
@@ -71,10 +89,22 @@ export const overlay = signal<null | "palette" | "new" | "project" | "keys">(nul
 /** The project the new-workspace form starts on. */
 export const newIn = signal<ProjectId | null>(null);
 export const details = signal(false);
+/** The column zoomed to fill the page, for this visit: the strip shows it
+ * whole and the list of workspaces folds away until it's put back. */
+export const zoomed = signal<{ ws: WorkspaceId; column: string } | null>(null);
+/** The workspace visited before the open one, to go back to. */
+export const previous = signal<WorkspaceId | null>(null);
 
 /** Something a workspace is asking the person: its new name, whether to
- * delete it or end a column, a port to publish, or a column to add. */
-export type Question = { kind: "rename" } | { kind: "delete" } | { kind: "end"; column: string } | { kind: "port" } | { kind: "add-column" };
+ * delete it or end a column, a column's name, a port to publish, or a column
+ * to add. */
+export type Question =
+  | { kind: "rename" }
+  | { kind: "delete" }
+  | { kind: "end"; column: string }
+  | { kind: "label"; column: string }
+  | { kind: "port" }
+  | { kind: "add-column" };
 
 /** One question at a time, held with the workspace that asked it, so it never
  * carries over to another: an armed delete stays with its own workspace. */
@@ -100,7 +130,10 @@ export function settle(ws: WorkspaceView, kind?: Question["kind"]): void {
 export const isAsking = (kind: Question["kind"]) => question.value?.kind === kind;
 
 // A visit starts fresh: what the last one asked or showed stays with it.
+// Passing through the overview between two workspaces still goes from one
+// to the other.
 let visiting: WorkspaceId | null = null;
+let visited: WorkspaceId | null = null;
 effect(() => {
   const id = current.value?.id ?? null;
   if (id === visiting) return;
@@ -108,10 +141,12 @@ effect(() => {
   untracked(() => {
     asked.value = null;
     details.value = false;
+    zoomed.value = null;
+    if (id === null) return;
+    if (visited !== null && visited !== id) previous.value = visited;
+    visited = id;
   });
 });
-
-export const filter = signal("");
 
 export interface Flash {
   message: string;

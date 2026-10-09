@@ -13,6 +13,7 @@ import type { WorkspaceView } from "./generated/WorkspaceView.ts";
 import { layoutOf, moved, type Shown, shown, stepIndex, widened } from "./state/layout.ts";
 import {
   activeColumn,
+  ask,
   columnStates,
   current,
   cursor,
@@ -21,6 +22,7 @@ import {
   listed,
   navigate,
   overlay,
+  previous,
   projects,
   question,
   route,
@@ -28,6 +30,7 @@ import {
   settle,
   waiting,
   workspaces,
+  zoomed,
 } from "./state/store.ts";
 import { panes } from "./terminal.ts";
 
@@ -90,18 +93,41 @@ export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
   else if (ws.phase === "frozen") await setState(ws, "running");
 }
 
-/** Renames a workspace; throws what iglu refused, for the form to show. */
+/** Renames a workspace; throws what iglu refused, for the form to show. Its
+ * new name shows at once, and the URL follows it, before the next snapshot. */
 export async function rename(ws: WorkspaceView, name: string): Promise<void> {
   const renamed = await api.rename(ws.id, name);
+  workspaces.value = workspaces.value.map((w) => (w.id === renamed.id ? renamed : w));
   settle(ws, "rename");
-  if (current.value?.id === ws.id) navigate({ view: "workspace", name: renamed.name }, "replace");
 }
 
-/** Creates a workspace and opens it; throws what iglu refused, for the form to show. */
+/** Names a column, or gives it back its session name with an empty `label`
+ * or that name;
+ * throws what iglu refused, for the form to show. */
+export async function labelColumn(ws: WorkspaceView, column: string, label: string): Promise<void> {
+  // Its own session name, or nothing, is no name of its own.
+  const trimmed = label.trim();
+  const named = trimmed && trimmed !== column ? trimmed : null;
+  await api.labelColumn(ws.id, column, named);
+  workspaces.value = workspaces.value.map((w) => (w.id === ws.id ? { ...w, columns: w.columns.map((c) => (c.name === column ? { ...c, label: named } : c)) } : w));
+  settle(ws, "label");
+}
+
+/** Asks for a column's name; a session nobody asked iglu for has no column to name. */
+export function labelOrSay(ws: WorkspaceView, column: string): void {
+  if (ws.columns.some((c) => c.name === column)) ask(ws, { kind: "label", column });
+  else say(`${column} was opened inside the workspace, not by iglu, so it can't be renamed.`);
+}
+
+/** Creates a workspace; throws what iglu refused, for the form to show. */
 export async function create(body: CreateWorkspace): Promise<void> {
   const ws = await api.create(body);
-  overlay.value = null;
-  open(ws);
+  // Opened only for someone still waiting on the form; one who closed it and
+  // moved on hears about it instead of being taken away.
+  if (overlay.peek() === "new") {
+    overlay.value = null;
+    open(ws);
+  } else say(`${ws.name} is being made; it's in the list.`);
 }
 
 /** Publishes a port; throws what iglu refused, for a form to show. */
@@ -180,7 +206,7 @@ effect(() => {
  * would go nowhere. */
 let asking = false;
 effect(() => {
-  const now = Boolean(overlay.value) || question.value !== null;
+  const now = Boolean(overlay.value) || question.value !== null || details.value;
   const closed = asking && !now;
   asking = now;
   if (!closed) return;
@@ -198,6 +224,28 @@ effect(() => {
 /** Records which column has focus, without moving focus. */
 export function markActive(ws: WorkspaceView, name: string): void {
   if (activeColumn.value[ws.id] !== name) activeColumn.value = { ...activeColumn.value, [ws.id]: name };
+  // Zoom is for one column: moving to another puts it back.
+  const zoom = zoomed.peek();
+  if (zoom?.ws === ws.id && zoom.column !== name) zoomed.value = null;
+}
+
+/** The zoomed column of `ws`, if one is. */
+export function zoomedIn(ws: WorkspaceView): string | null {
+  const zoom = zoomed.value;
+  return zoom?.ws === ws.id ? zoom.column : null;
+}
+
+export function toggleZoom(ws: WorkspaceView): void {
+  const column = activeOf(ws);
+  if (!column) return;
+  zoomed.value = zoomedIn(ws) === column ? null : { ws: ws.id, column };
+}
+
+/** Goes back to the workspace visited before this one. */
+export function lastWorkspace(): void {
+  const ws = workspaces.value.find((w) => w.id === previous.value);
+  if (ws) open(ws);
+  else say("There's no other workspace to go back to yet.");
 }
 
 export function focusColumn(ws: WorkspaceView, name: string): void {
@@ -249,7 +297,6 @@ export async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<v
 
 /** openColumn for buttons and keys. */
 export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
-  settle(ws, "add-column");
   await attempt(() => openColumn(ws, kind));
 }
 

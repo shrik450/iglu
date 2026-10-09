@@ -2,9 +2,9 @@
 
 import { signal } from "@preact/signals";
 
-import { activeOf, back, columnsOf, cycleWidth, focusColumn, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze } from "./actions.ts";
+import { activeOf, back, columnsOf, cycleWidth, focusColumn, labelOrSay, lastWorkspace, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze, toggleZoom } from "./actions.ts";
 import { type Action, BINDINGS, chordLabel, type Focus, type KeyInput, metaBytes, onKeyboard, prefixBytes, resolve } from "./state/keys.ts";
-import { type KeyboardPrefs, loadKeyboard, saveKeyboard } from "./state/prefs.ts";
+import { type KeyboardPrefs, loadKeyboard, saveKeyboard, watch } from "./state/prefs.ts";
 import { unreachable } from "./state/unsaved.ts";
 import { ask, current, cursor, details, listed, navigate, overlay, route } from "./state/store.ts";
 
@@ -13,21 +13,31 @@ export const mac = /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** This browser's keyboard settings. */
 export const keyboard = signal<KeyboardPrefs>(loadKeyboard());
+watch("keyboard", () => (keyboard.value = loadKeyboard()));
 
 export function setKeyboard(prefs: KeyboardPrefs): void {
   keyboard.value = prefs;
   saveKeyboard(prefs);
 }
 
-/** How to press an action from anywhere, for hints: "⌃Space n". */
-export function keysFor(kind: Action["kind"]): string | undefined {
-  if (kind === "palette") return onKeyboard("⌘K", mac);
-  const after = BINDINGS.find((b) => b.action.kind === kind && b.after)?.after;
-  return after ? `${chordLabel(keyboard.value.prefix, mac)} ${after.label}` : undefined;
+/** The prefix and a key after it, for hints: "⌃Space 3". */
+export const afterPrefix = (key: string) => `${chordLabel(keyboard.value.prefix, mac)} ${key}`;
+
+/** How to press an action from anywhere, for hints: "⌃Space n". A kind
+ * alone means its first binding; a whole action, the binding for exactly it. */
+export function keysFor(action: Action["kind"] | Action): string | undefined {
+  if (action === "palette") return onKeyboard("⌘K", mac);
+  const wanted = typeof action === "string" ? (b: Action) => b.kind === action : (b: Action) => JSON.stringify(b) === JSON.stringify(action);
+  const after = BINDINGS.find((b) => wanted(b.action) && b.after)?.after;
+  return after ? afterPrefix(after.label) : undefined;
 }
 
 /** The prefix was pressed: the next key is the console's. */
 export const armed = signal(false);
+// It waits for that key only: a click, or leaving the window, puts it away,
+// so a later key typed into a field isn't taken as a command.
+window.addEventListener("pointerdown", () => (armed.value = false), { capture: true });
+window.addEventListener("blur", () => (armed.value = false));
 
 export function perform(action: Action): void {
   const ws = current.value;
@@ -81,6 +91,17 @@ export function perform(action: Action): void {
     case "add-column":
       if (ws?.phase === "running") ask(ws, { kind: "add-column" });
       return;
+    case "zoom":
+      if (ws) toggleZoom(ws);
+      return;
+    case "last-workspace":
+      lastWorkspace();
+      return;
+    case "label-column": {
+      const column = ws && activeOf(ws);
+      if (ws && column) labelOrSay(ws, column);
+      return;
+    }
     case "rename":
       if (ws) ask(ws, { kind: "rename" });
       return;
@@ -99,6 +120,7 @@ function focusOf(target: EventTarget | null): Focus {
   if (!(target instanceof Element)) return "page";
   if (target.closest(".term-host")) return "terminal";
   if (target.closest("input, textarea, select, [contenteditable='true']")) return "field";
+  if (target.closest("button, a[href], summary, [role='button'], [role='option'], dialog")) return "control";
   return "page";
 }
 

@@ -23,6 +23,14 @@ function write(key: string, value: unknown): void {
   }
 }
 
+/** Calls `changed` when another tab of this browser changes the preference,
+ * so every tab follows it without a reload. */
+export function watch(key: "look" | "collapsed" | "keyboard", changed: () => void): void {
+  addEventListener("storage", (event) => {
+    if (event.key === `iglu.${key}`) changed();
+  });
+}
+
 export function loadLook(): Look {
   const value = read("look");
   return value === "dark" || value === "light" ? value : "auto";

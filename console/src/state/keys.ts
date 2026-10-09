@@ -7,8 +7,9 @@
 //   outside terminals);
 // - it follows the prefix, ⌃Space unless the person chose another, as in tmux;
 // - it's ⌥H/J/K/L and the person lets the console take those from terminals;
-// - or it's a plain key on a page with nothing to type into, outside a
-//   workspace, such as j/k and ↩ on the overview.
+// - or it's a plain key on a page where nothing interactive has focus,
+//   outside a workspace, such as j/k and ↩ on the overview. A focused button,
+//   link or dialog keeps its own keys, so ↩ presses the button.
 
 export type Action =
   | { kind: "palette" }
@@ -20,6 +21,9 @@ export type Action =
   | { kind: "move-column"; step: -1 | 1 }
   | { kind: "width" }
   | { kind: "close-column" }
+  | { kind: "label-column" }
+  | { kind: "zoom" }
+  | { kind: "last-workspace" }
   | { kind: "add-column" }
   | { kind: "rename" }
   | { kind: "freeze" }
@@ -29,7 +33,9 @@ export type Action =
   | { kind: "back" }
   | { kind: "keys" };
 
-export type Focus = "page" | "terminal" | "field";
+/** What has the keyboard: nothing in particular, a terminal, a text field,
+ * or another control such as a button, link or dialog. */
+export type Focus = "page" | "terminal" | "field" | "control";
 
 export interface KeyInput {
   key: string;
@@ -121,6 +127,7 @@ export const BINDINGS: readonly Binding[] = [
   },
   { action: { kind: "open" }, does: "Open the selected workspace", group: "Workspaces", page: [{ code: "Enter", label: "↩" }] },
   { action: { kind: "back" }, does: "Back to the overview", group: "Workspaces", page: [{ code: "Escape", label: "esc" }] },
+  { action: { kind: "last-workspace" }, does: "The workspace you were in before", group: "Workspaces", after: { code: "Semicolon", label: ";" } },
   { action: { kind: "rename" }, does: "Rename", group: "Workspaces", after: letter("r") },
   { action: { kind: "freeze" }, does: "Freeze or thaw", group: "Workspaces", after: letter("f") },
   { action: { kind: "details" }, does: "Details", group: "Workspaces", after: letter("i") },
@@ -129,7 +136,9 @@ export const BINDINGS: readonly Binding[] = [
   { action: { kind: "move-column", step: -1 }, does: "Move the column left", group: "Columns", after: letter("h", true) },
   { action: { kind: "move-column", step: 1 }, does: "Move the column right", group: "Columns", after: letter("l", true) },
   { action: { kind: "width" }, does: "Change its width", group: "Columns", after: letter("w") },
+  { action: { kind: "zoom" }, does: "Zoom it to fill the page, or put it back", group: "Columns", after: letter("z") },
   { action: { kind: "add-column" }, does: "New column", group: "Columns", after: letter("c") },
+  { action: { kind: "label-column" }, does: "Rename the column", group: "Columns", after: { code: "Comma", label: "," } },
   { action: { kind: "close-column" }, does: "End the column", group: "Columns", after: letter("x") },
 ];
 
@@ -174,8 +183,11 @@ export function resolve(mode: Mode, input: KeyInput, keymap: Keymap): Outcome {
 }
 
 /** A chord as written on this keyboard: ⌃Space on a Mac, Ctrl+Space elsewhere. */
+/** Keys whose code names don't say what's printed on them. */
+const PRINTED: Readonly<Record<string, string>> = { BracketLeft: "[", BracketRight: "]", Backslash: "\\", Slash: "/", Period: ".", Comma: ",", Semicolon: ";", Quote: "'", Backquote: "`", Minus: "-", Equal: "=" };
+
 export function chordLabel(chord: Chord, mac: boolean): string {
-  const key = chord.code.replace(/^Key|^Digit/, "");
+  const key = PRINTED[chord.code] ?? chord.code.replace(/^Key|^Digit/, "");
   const mods = mac
     ? `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}`
     : `${chord.ctrl ? "Ctrl+" : ""}${chord.alt ? "Alt+" : ""}${chord.shift ? "Shift+" : ""}${chord.meta ? "Win+" : ""}`;
