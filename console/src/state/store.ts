@@ -40,10 +40,26 @@ export const groups = computed(() => groupByProject(projects.value, workspaces.v
 export const listed = computed(() => groups.value.flatMap((group) => group.workspaces));
 export const waiting = computed(() => workspaces.value.filter((ws) => ws.needs_you));
 
-/** The workspace the URL names, if it exists. */
+/** The workspace last shown, by the name it had then. */
+let shown: { id: WorkspaceId; name: string } | null = null;
+
+/** The workspace the URL names. A URL still naming the workspace shown by the
+ * name it had then follows it to its new name, so a rename, in this tab or
+ * any other, keeps the same workspace open rather than losing it. */
 export const current = computed(() => {
   const r = route.value;
-  return r.view === "workspace" ? (workspaces.value.find((ws) => ws.name === r.name) ?? null) : null;
+  if (r.view !== "workspace") return null;
+  const list = workspaces.value;
+  const named = list.find((ws) => ws.name === r.name);
+  if (named) return named;
+  return shown?.name === r.name ? (list.find((ws) => ws.id === shown?.id) ?? null) : null;
+});
+effect(() => {
+  const ws = current.value;
+  if (!ws) return;
+  shown = { id: ws.id, name: ws.name };
+  const r = route.peek();
+  if (r.view === "workspace" && r.name !== ws.name) navigate({ view: "workspace", name: ws.name }, "replace");
 });
 
 /** The overview's cursor, by ID so renames don't lose it. */

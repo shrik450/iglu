@@ -90,11 +90,12 @@ export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
   else if (ws.phase === "frozen") await setState(ws, "running");
 }
 
-/** Renames a workspace; throws what iglu refused, for the form to show. */
+/** Renames a workspace; throws what iglu refused, for the form to show. Its
+ * new name shows at once, and the URL follows it, before the next snapshot. */
 export async function rename(ws: WorkspaceView, name: string): Promise<void> {
   const renamed = await api.rename(ws.id, name);
+  workspaces.value = workspaces.value.map((w) => (w.id === renamed.id ? renamed : w));
   settle(ws, "rename");
-  if (current.value?.id === ws.id) navigate({ view: "workspace", name: renamed.name }, "replace");
 }
 
 /** Creates a workspace and opens it; throws what iglu refused, for the form to show. */

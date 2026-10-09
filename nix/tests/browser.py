@@ -463,6 +463,37 @@ def prefix_cancels(page: Page, name: str) -> Any:
     return {"typed": "previews"}
 
 
+def renames_follow(page: Page, name: str) -> Any:
+    """Renaming keeps the same workspace open: its column keeps the keyboard,
+    and another tab showing it follows to the new name, terminals and all."""
+    other = page.context.new_page()
+    open_workspace(other, name)
+    open_workspace(page, name)
+    names = columns(page)
+    assert len(names) >= 2, names
+    at_prompt(page, names[0])
+    prefix(page, "l")
+    expect(column(page, names[1])).to_have_class(re.compile(r"\bon\b"))
+    renamed = f"{name}-renamed"
+
+    def rename(old: str, new: str) -> None:
+        page.get_by_role("button", name=old, exact=True).click()
+        field = page.get_by_role("textbox", name="Workspace name")
+        field.fill(new)
+        field.press("Enter")
+        page.wait_for_url(f"{CONSOLE}/w/{new}")
+
+    rename(name, renamed)
+    reaches(page, names[1])
+    other.wait_for_url(f"{CONSOLE}/w/{renamed}")
+    expect(other.locator("[data-column]")).to_have_count(len(names))
+    rename(renamed, name)
+    reaches(page, names[1])
+    other.wait_for_url(f"{CONSOLE}/w/{name}")
+    other.close()
+    return {"renamed": renamed}
+
+
 def questions_end(page: Page, name: str) -> Any:
     """A question ends with the visit that asked it: a Delete armed and left
     unanswered is gone on coming back, so no later click can answer it."""
@@ -569,6 +600,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "dialogs-hold-focus": dialogs_hold_focus,
     "enter-presses-buttons": enter_presses_buttons,
     "prefix-cancels": prefix_cancels,
+    "renames-follow": renames_follow,
     "questions-end": questions_end,
     "card": card,
     "lands-on-waiting": lands_on_waiting,

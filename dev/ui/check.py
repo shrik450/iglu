@@ -80,6 +80,7 @@ def main() -> None:
             step("dialogs-hold-focus", browser.dialogs_hold_focus, page, NAME)
             step("enter-presses-buttons", browser.enter_presses_buttons, page)
             step("prefix-cancels", browser.prefix_cancels, page, NAME)
+            step("renames-follow", browser.renames_follow, page, NAME)
             step("questions-end", browser.questions_end, page, NAME)
             step("card", browser.card, page, NAME, "Check needs you")
             step("lands-on-waiting", browser.lands_on_waiting, page, NAME, "shell", added)
