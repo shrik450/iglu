@@ -6,8 +6,7 @@ use std::time::Duration;
 use axum::extract::ws::{Message as Browser, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use iglu_domain::auth::{Action, Decision, Resource, authorize};
-use iglu_domain::terminal::{SessionName, TerminalSize};
-use iglu_proto::TerminalControl;
+use iglu_domain::terminal::{SessionName, TerminalControl, TerminalSize};
 use tokio_tungstenite::tungstenite::Message as Host;
 
 use crate::app::{App, Caller, now, session_valid};
@@ -17,6 +16,9 @@ use crate::model::WorkspaceRecord;
 
 /// How long an authorization decision for an open stream lasts.
 pub const LEASE: Duration = Duration::from_secs(5);
+
+/// How long attaching waits for a frozen workspace to thaw.
+const THAW: Duration = Duration::from_secs(60);
 
 /// Whether the person used a stream since its last lease check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +86,11 @@ pub async fn relay(
     browser: WebSocket,
 ) {
     let (mut to_browser, mut from_browser) = browser.split();
+    // Opening a frozen workspace thaws it.
+    if !crate::idle::thaw(&app, &ws, THAW).await {
+        let _ = to_browser.send(Browser::Close(None)).await;
+        return;
+    }
     let upstream = match host.attach(ws.id, &session, size).await {
         Ok(socket) => socket,
         Err(error) => {
@@ -122,6 +129,8 @@ pub async fn relay(
                 Some(Ok(Host::Close(_)) | Err(_)) | None => break,
             },
             _ = lease.tick() => {
+                // An attached terminal keeps its workspace awake.
+                app.usage.used(ws.id);
                 if !still_allowed(&app, &caller, &ws, used).await {
                     tracing::info!(workspace = %ws.id, "closing a terminal whose authorization ended");
                     break;

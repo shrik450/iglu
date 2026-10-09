@@ -77,6 +77,8 @@ pub struct LocalRuntime {
     tools: PathBuf,
     /// Whom workspaces run as: the devhost's own user.
     user: GuestUser,
+    /// The agents every environment gets; see [`Settings::agents`].
+    agents: Vec<iglu_domain::agent::AgentSpec>,
     memory_available: capacity::Bytes,
     timeouts: Timeouts,
     /// The account's login shell, which terminal sessions run.
@@ -230,6 +232,7 @@ impl LocalRuntime {
             layout,
             tools,
             user,
+            agents: settings.agents.clone(),
             shell: settings
                 .shell
                 .as_ref()
@@ -583,6 +586,7 @@ impl Runtime for LocalRuntime {
             fingerprint,
             arch: iglu_hostd::host_arch().map_err(|e| BuildFailure(e.to_string()))?,
             user: self.user.clone(),
+            agents: self.agents.clone(),
             // Nothing was built.
             store_path: String::new(),
         })
@@ -714,6 +718,7 @@ impl Runtime for LocalRuntime {
             GuestFile::Ready => return Ok(Some(Vec::new())),
             GuestFile::SecretsGeneration => guest_tools::SECRETS_GENERATION,
             GuestFile::Status => guest_tools::STATUS,
+            GuestFile::ColumnsOpened => guest_tools::COLUMNS_OPENED,
         };
         let path = self.run_dir(guest.name).await?.join(relative);
         tokio::task::spawn_blocking(move || read_guest_file(&path))

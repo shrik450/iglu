@@ -7,12 +7,15 @@ use iglu_domain::repo::{BranchName, RepoUrl};
 use iglu_domain::terminal::SessionName;
 use iglu_guest::credential::{self, Stored};
 use iglu_guest::paths::Dirs;
-use iglu_guest::{provision, secrets, session};
+use iglu_guest::{git, listeners, provision, secrets, session};
 
 const USAGE: &str = "usage:
   iglu-guest install-secrets      (reads the bundle on stdin)
-  iglu-guest provision --repo <url> --branch <name> [--base <name>]
+  iglu-guest provision [--repo <url> --branch <name> [--base <name>]]
+  iglu-guest open [--boot]          (reads the sessions on stdin)
   iglu-guest sessions
+  iglu-guest listeners            (what the user is listening on)
+  iglu-guest git-state            (where the checkout stands)
   iglu-guest attach <session>
   iglu-guest close <session>
   iglu-guest git-credential <get|store|erase>
@@ -43,6 +46,15 @@ fn main() -> ExitCode {
     if command == "git-credential" {
         return git_credential(rest);
     }
+    if command == "listeners" {
+        return match serde_json::to_string(&listeners::scan(std::path::Path::new("/proc"))) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => fail(error),
+        };
+    }
     let dirs = match Dirs::from_env() {
         Ok(dirs) => dirs,
         Err(error) => return fail(error),
@@ -58,6 +70,10 @@ fn main() -> ExitCode {
                 Err(error) => fail(error),
             }
         }
+        "provision" if rest.is_empty() => match provision::without_repository(&dirs) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => fail(error),
+        },
         "provision" => {
             let parsed = (|| -> Result<provision::Spec, String> {
                 let repo: RepoUrl = flag(rest, "--repo")
@@ -82,6 +98,14 @@ fn main() -> ExitCode {
                 Err(error) => fail(error),
             }
         }
+        "open" => open(&dirs, rest),
+        "git-state" => match serde_json::to_string(&git::state(&dirs)) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => fail(error),
+        },
         "sessions" => match session::list(&dirs) {
             Ok(list) => match serde_json::to_string(&list) {
                 Ok(json) => {
@@ -106,6 +130,36 @@ fn main() -> ExitCode {
             None => fail(USAGE),
         },
         _ => fail(USAGE),
+    }
+}
+
+/// Opens the sessions on stdin. One column on request is all-or-nothing; a
+/// boot's opening carries on past a broken one.
+fn open(dirs: &Dirs, rest: &[String]) -> ExitCode {
+    let opening = if rest.iter().any(|a| a == "--boot") {
+        session::Opening::Boot
+    } else {
+        session::Opening::Column
+    };
+    let mut request = Vec::new();
+    if let Err(error) = std::io::stdin().read_to_end(&mut request) {
+        return fail(format!("reading the sessions: {error}"));
+    }
+    match session::open(dirs, &request, opening) {
+        Ok(failures) => {
+            for failure in &failures {
+                eprintln!(
+                    "iglu-guest: {} didn't open: {}",
+                    failure.name, failure.reason
+                );
+            }
+            if opening == session::Opening::Column && !failures.is_empty() {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => fail(error),
     }
 }
 

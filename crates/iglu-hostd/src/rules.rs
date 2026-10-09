@@ -5,7 +5,9 @@
 //! Every command is idempotent: one that already took effect takes no steps.
 
 use iglu_domain::guest as guest_tools;
-use iglu_domain::lifecycle::{Instance, Present, Readiness, Running, Runtime, SecretsGeneration};
+use iglu_domain::lifecycle::{
+    Columns, Instance, Present, Readiness, Running, Runtime, SecretsGeneration,
+};
 use iglu_proto::{CommandError, CreateSpec, ErrorCode};
 
 use crate::runtime::{Claim, Guest, Observed, Ownership, State};
@@ -163,6 +165,8 @@ pub struct BootFacts {
     /// The guest finished booting.
     pub ready: bool,
     pub secrets: Option<SecretsGeneration>,
+    /// The boot has opened the workspace's columns.
+    pub columns_opened: bool,
 }
 
 impl BootFacts {
@@ -173,6 +177,7 @@ impl BootFacts {
         Self {
             ready: self.ready || other.ready,
             secrets: self.secrets.max(other.secrets),
+            columns_opened: self.columns_opened || other.columns_opened,
         }
     }
 }
@@ -188,6 +193,11 @@ pub fn instance(observed: &Observed, facts: BootFacts) -> Instance {
         State::Running { has_address, .. } => Runtime::Running(Running {
             readiness: readiness(facts.ready, has_address),
             secrets: facts.secrets,
+            columns: if facts.columns_opened {
+                Columns::Opened
+            } else {
+                Columns::Pending
+            },
         }),
     };
     Instance::Present(Present {
@@ -416,10 +426,12 @@ mod tests {
         let delivered = BootFacts {
             ready: true,
             secrets: generation(4),
+            ..BootFacts::default()
         };
         let stale = BootFacts {
             ready: true,
             secrets: generation(3),
+            ..BootFacts::default()
         };
         assert_eq!(delivered.merge(stale), delivered);
         assert_eq!(stale.merge(delivered), delivered);
@@ -440,7 +452,7 @@ mod tests {
             observed,
             BootFacts {
                 ready,
-                secrets: None,
+                ..BootFacts::default()
             },
         ) {
             Instance::Present(Present {

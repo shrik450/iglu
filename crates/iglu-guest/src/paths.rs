@@ -51,6 +51,12 @@ impl Dirs {
         &self.runtime
     }
 
+    /// Written once a boot has opened the workspace's columns.
+    #[must_use]
+    pub fn columns_opened(&self) -> PathBuf {
+        self.runtime.join(iglu_domain::guest::COLUMNS_OPENED)
+    }
+
     /// The directory delivered secrets live in, on the per-boot runtime
     /// directory.
     #[must_use]

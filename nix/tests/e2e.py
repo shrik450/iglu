@@ -29,6 +29,9 @@ def diagnose() -> None:
         flags = " ".join(f"-u {unit}" for unit in units.split())
         _, logs = machine.execute(f"journalctl --no-pager -n 150 {flags}")
         print(f"===== {machine.name}: {units} =====\n{logs}")
+    # What iglud thinks of each workspace, and what happened to it.
+    _, listing = client.execute(f"{IGLU} ls; for w in $({IGLU} --json ls | jq -r '.[].name'); do echo \"== $w\"; {IGLU} log $w; done")
+    print(f"===== workspaces =====\n{listing}")
     if client.execute("test -d /tmp/browser")[0] == 0:
         client.copy_from_machine("/tmp/browser", "")
 
@@ -179,8 +182,12 @@ try:
 
     with subtest("a workspace created in the browser starts from the private repository"):
         created = browser("create", "example", f"ssh://git@{GIT_ADDRESS}/srv/git/app.git", "demo")
+        assert created["columns"] == ["shell"], created
+        projects = {p["name"]: p for p in iglu("project ls")}
+        assert projects.keys() == {"app", "general"}, projects
+        assert projects["general"]["origin"] == "builtin" and projects["general"]["repo"] is None, projects
         ws = iglu("show demo")
-        assert ws["id"] == created["id"] and ws["phase"] == "running", (created, ws)
+        assert ws["phase"] == "running", ws
         instance = "iglu-" + ws["id"].replace("-", "")
         guest = guest_of(instance)
 
@@ -198,23 +205,42 @@ try:
 
     with subtest("the browser's terminal runs in the workspace with secrets in its environment"):
         browser("terminal", "demo", "echo token=$TEST_TOKEN", "token=hunter2")
-        second = browser("new-tab", "demo", "echo $((6*7))-second", "42-second")
-        assert len(second["tabs"]) == 2, second
+        second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
+        assert second["columns"] == ["shell", "shell-2"], second
 
     token = json.loads(client.succeed("cat /root/.config/iglu/credentials.json"))["token"]
     api = f"curl -sS --fail-with-body -H 'Authorization: Bearer {token}'"
 
-    with subtest("API tokens attach to terminals too"):
-        terminal = json.loads(client.succeed(f"{api} -X POST {CONSOLE}/v1/workspaces/{ws['id']}/terminals"))["name"]
-        attach = f"wss://iglu.example.test/v1/workspaces/{ws['id']}/terminals/{terminal}/attach?cols=80&rows=24"
+    with subtest("API tokens attach to columns too"):
+        terminal = json.loads(
+            client.succeed(
+                f"{api} -X POST -H 'Content-Type: application/json' "
+                f"-d '{{\"kind\": {{\"kind\": \"shell\"}}}}' {CONSOLE}/v1/workspaces/{ws['id']}/columns"
+            )
+        )["name"]
+        attach = f"wss://iglu.example.test/v1/workspaces/{ws['id']}/columns/{terminal}/attach?cols=80&rows=24"
         client.succeed(
             f"(sleep 2; printf 'echo token=$TEST_TOKEN\\r'; sleep 3) "
             f"| websocat {shlex.quote(attach)} -b -H 'Authorization: Bearer {token}' > /tmp/terminal.out || true"
         )
         output = client.succeed("cat /tmp/terminal.out")
         assert "token=hunter2" in output, f"the terminal should see the secret: {output!r}"
-        sessions = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/terminals"))
-        assert {s["name"] for s in sessions} >= {"t1", "t2", terminal}, sessions
+        columns = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/columns"))
+        assert [(c["name"], c["state"]) for c in columns] == [
+            ("shell", "open"),
+            ("shell-2", "open"),
+            (terminal, "open"),
+        ], columns
+        git_state = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/live"))["git"]
+        assert git_state["branch"] == "demo" and git_state["conflicted"] == 0, git_state
+
+    with subtest("the CLI attaches to a column and detaches with Ctrl-]"):
+        client.succeed(
+            "(sleep 3; printf 'echo via-cli-$((6*7))\\r'; sleep 3; printf '\\035') "
+            f"| script -qfec '{IGLU} attach demo shell' /tmp/attach.out"
+        )
+        output = client.succeed("cat /tmp/attach.out")
+        assert "via-cli-42" in output and "detached from demo shell" in output, output
 
     with subtest("Claude Code's hooks report attention"):
         settings = json.loads(guest("cat /etc/claude-code/managed-settings.d/50-iglu.json"))
@@ -244,7 +270,7 @@ try:
         # From the browser's first terminal, where Claude Code would run.
         browser("terminal", "demo", f"{hook} < /tmp/tool.json && echo tool-$((40+2))", "tool-42")
         client.wait_until_succeeds(
-            f"{IGLU} --json show demo | jq -e '.sessions[] | select(.session == \"t1\") | "
+            f"{IGLU} --json show demo | jq -e '.threads[] | select(.session == \"shell\" and .thread == \"s1\") | "
             ".state == \"working\" and .summary == \"Bash: Print the word probe\"'",
             timeout=60,
         )
@@ -254,13 +280,18 @@ try:
         client.wait_until_succeeds(
             f"{IGLU} --json show demo | jq -e '.attention.state == \"waiting\"'", timeout=60
         )
-        waiting = browser("row", "demo", "Claude needs your permission to use Bash")
-        assert "attention" in (waiting["class"] or ""), waiting
+        waiting = browser("card", "demo", "Claude needs your permission to use Bash")
+        assert "needs" in (waiting["class"] or ""), waiting
 
     with subtest("a port published in the browser is served behind preview sign-in"):
         host.succeed(
             f"incus exec {instance} --user 1000 --group 100 -- bash -lc "
             "\"setsid bash -c 'while true; do printf \\\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\nConnection: close\\r\\n\\r\\nhello\\\" | nc -N -l 3000; done' >/dev/null 2>&1 &\""
+        )
+        client.wait_until_succeeds(
+            f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/live | "
+            "jq -e '.listeners[] | select(.port == 3000) | .reachable and .route == null'",
+            timeout=60,
         )
         label_host = urllib.parse.urlsplit(iglu("port demo 3000")["url"]).hostname
         resolve = f"--resolve {label_host}:443:{CONTROL_IP} --resolve auth.dev.example.test:443:{CONTROL_IP}"
@@ -274,14 +305,47 @@ try:
         result = browser("attack", published["url"], ws["id"])
         assert result == {"read": "blocked", "socket": "refused"}, result
         assert "forged" not in {w["name"] for w in iglu("ls")}
-        sessions = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/terminals"))
-        assert "forged" not in {s["name"] for s in sessions}, sessions
+        columns = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/columns"))
+        assert "forged" not in {c["name"] for c in columns}, columns
+
+    with subtest("opening a frozen workspace's preview thaws it"):
+        iglu("freeze demo --wait")
+        browser("visit", published["url"])
+        phase_is("demo", "running")
+        assert "thawed-on-open" in [entry["kind"] for entry in iglu("log demo")]
 
     with subtest("a workspace clones over HTTPS with the Git credential secret"):
-        https = iglu(f"new https://{GIT_ADDRESS}/app.git --env example --name over-https --wait")
+        project = iglu(f"project add app-https --repo https://{GIT_ADDRESS}/app.git --env example")
+        # Its workspaces publish port 3000 as they're created.
+        change = {key: project[key] for key in ("name", "repo", "environment", "opening", "agent", "idle")}
+        change |= {"expected_revision": project["revision"], "ports": [3000]}
+        client.succeed(
+            f"{api} -X PUT -H 'Content-Type: application/json' -d {shlex.quote(json.dumps(change))} "
+            f"{CONSOLE}/v1/projects/{project['id']}"
+        )
+        https = iglu("new app-https --name over-https --wait")
+        assert [route["port"] for route in https["routes"]] == [3000], https
         assert https["phase"] == "running", https
         https_instance = "iglu-" + https["id"].replace("-", "")
         assert "init" in guest_of(https_instance)("git -C ~/app log --oneline")
+
+    with subtest("a prompt starts an agent in a workspace without a repository"):
+        scratch = iglu("new general 'Fix the login bug' --wait")
+        assert scratch["name"] == "fix-login", scratch
+        assert scratch["phase"] == "running" and scratch["checkout"] is None, scratch
+        guest_of("iglu-" + scratch["id"].replace("-", ""))("test ! -e ~/app")
+        columns = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/columns"))
+        assert [(c["name"], c["state"]) for c in columns] == [("shell", "open"), ("echo", "open")], columns
+        assert json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/live"))["git"] is None
+        attach = f"wss://iglu.example.test/v1/workspaces/{scratch['id']}/columns/echo/attach?cols=80&rows=24"
+        client.succeed(
+            f"sleep 3 | websocat {shlex.quote(attach)} -b -H 'Authorization: Bearer {token}' > /tmp/prompt.out || true"
+        )
+        output = client.succeed("cat /tmp/prompt.out")
+        assert "PROMPT<Fix the login bug>" in output, f"the agent should get the prompt: {output!r}"
+        client.fail(f"{IGLU} new general --name branchy --branch main")
+        client.fail(f"{IGLU} project rm general")
+        iglu("rm fix-login --wait")
 
     with subtest("workspaces can't reach each other"):
         neighbour = guest_of(https_instance)
@@ -336,14 +400,17 @@ try:
         host.wait_until_succeeds(
             f"test $(awk '/MemAvailable/ {{ print $2 * 1024 }}' /proc/meminfo) -lt {512 * 1024 * 1024}"
         )
-        iglu(f"new https://{GIT_ADDRESS}/app.git --env example --name waits")
+        iglu("new app-https --name waits")
         client.wait_until_succeeds(
             f"{IGLU} --json show waits | jq -e '.condition.kind == \"capacity\"'", timeout=120
         )
-        browser("row", "waits", "waiting for the host to have room")
+        browser("card", "waits", "waiting for the host to have room")
         host.succeed("systemctl stop hog")
         phase_is("waits", "running")
-        iglu("rm waits --wait")
+        # Its branch was never pushed, so deleting it would lose it.
+        refused = client.fail(f"{IGLU} rm waits 2>&1")
+        assert "never pushed" in refused, refused
+        iglu("rm waits --force --wait")
 
     with subtest("an interrupted delete is finished, and unknown instances are left alone"):
         stranger = "0123456789abcdef0123456789abcdef"
@@ -386,7 +453,8 @@ try:
 
     with subtest("stopping and deleting clean up the instance"):
         assert iglu("stop demo --wait")["phase"] == "stopped"
-        iglu("rm demo --wait")
+        client.fail(f"{IGLU} rm demo")
+        iglu("rm demo --force --wait")
         host.wait_until_succeeds(f"! incus info {instance}", timeout=120)
 except Exception:
     diagnose()

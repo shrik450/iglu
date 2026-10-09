@@ -1,7 +1,7 @@
 //! Claude Code hook events, as Claude Code writes them to a hook's stdin,
 //! and what each one says about whether the session needs its user.
 
-use iglu_domain::attention::{AttentionState, Summary};
+use iglu_domain::attention::{AttentionState, Summary, ThreadKey};
 use serde::Deserialize;
 
 /// The parts of a hook event iglu uses. Claude Code sends more fields;
@@ -68,6 +68,38 @@ pub enum NotificationType {
 #[must_use]
 pub fn parse(input: &str) -> Option<HookEvent> {
     serde_json::from_str(input).ok()
+}
+
+#[derive(Deserialize)]
+struct Envelope {
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+/// The conversation an event belongs to: Claude Code's session ID, or the
+/// session's own thread when the event doesn't carry a usable one.
+#[must_use]
+pub fn thread(input: &str) -> ThreadKey {
+    serde_json::from_str::<Envelope>(input)
+        .ok()
+        .and_then(|envelope| envelope.session_id)
+        .and_then(|id| id.parse().ok())
+        .unwrap_or_else(ThreadKey::session)
+}
+
+/// What a conversation is about: the prompt that starts its first turn.
+#[must_use]
+pub fn title(event: &HookEvent) -> Option<Summary> {
+    match event {
+        HookEvent::UserPromptSubmit { prompt } => Some(Summary::sanitize(prompt)),
+        HookEvent::SessionStart
+        | HookEvent::PreToolUse(_)
+        | HookEvent::PostToolUse(_)
+        | HookEvent::Notification { .. }
+        | HookEvent::Stop { .. }
+        | HookEvent::SessionEnd
+        | HookEvent::Other => None,
+    }
 }
 
 /// What an event means for the session's attention state, or `None` when it
@@ -160,6 +192,22 @@ mod tests {
             state_of(SESSION_END),
             Some((AttentionState::Exited, String::new()))
         );
+    }
+
+    #[test]
+    fn events_name_their_conversation_and_prompts_title_it() {
+        assert_eq!(thread(PROMPT).as_str(), "s1");
+        assert_eq!(
+            thread(r#"{"hook_event_name":"Stop","session_id":"../etc"}"#),
+            ThreadKey::session()
+        );
+        assert_eq!(thread("not json"), ThreadKey::session());
+        let prompt = parse(PROMPT).expect("a real payload parses");
+        assert_eq!(
+            title(&prompt).map(|t| t.as_str().to_owned()).as_deref(),
+            Some("Run the shell command 'echo probe' with your Bash tool.")
+        );
+        assert_eq!(title(&parse(STOP).expect("a real payload parses")), None);
     }
 
     #[test]

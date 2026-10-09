@@ -6,6 +6,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
+use crate::agent::AgentSpec;
 use crate::label::DnsLabel;
 use crate::parse::text_type;
 
@@ -309,6 +310,8 @@ pub struct BuiltImage {
     pub fingerprint: ImageFingerprint,
     pub arch: Arch,
     pub user: GuestUser,
+    /// The agents the environment declares, which its workspaces can run.
+    pub agents: Vec<AgentSpec>,
     /// The Nix store path the image came from, for provenance.
     pub store_path: String,
 }

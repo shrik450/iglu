@@ -6,21 +6,28 @@
 
 mod parse;
 
+pub mod agent;
 pub mod attention;
 pub mod auth;
 pub mod capacity;
+pub mod column;
 pub mod env;
+pub mod git;
 pub mod guest;
 pub mod id;
+pub mod idle;
 pub mod label;
 pub mod lifecycle;
+pub mod listener;
 pub mod names;
 pub mod network;
 pub mod port;
 pub mod preview;
+pub mod project;
 pub mod repo;
 pub mod secret;
 pub mod signin;
+pub mod standing;
 pub mod terminal;
 pub mod time;
 

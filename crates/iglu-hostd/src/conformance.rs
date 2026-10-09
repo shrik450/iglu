@@ -12,17 +12,21 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use iglu_domain::attention::AttentionState;
 use iglu_domain::capacity;
+use iglu_domain::column::{Arg, Argv};
 use iglu_domain::env::{BuiltImage, EnvSource};
 use iglu_domain::guest as guest_tools;
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::{
-    Instance, Present, Provisioning, Readiness, Running, Runtime as Status, SecretsGeneration,
+    Columns, Instance, Present, Provisioning, Readiness, Running, Runtime as Status,
+    SecretsGeneration,
 };
 use iglu_domain::port::GuestPort;
+use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretTarget, SecretValue, bundle};
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
-    BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, Limits, ProvisionSpec,
+    BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Limits,
+    ProvisionSpec, SessionSpec,
 };
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -99,17 +103,36 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     );
     outcomes.push(
         suite
+            .check(
+                "columns open once a boot, with their arguments exactly as given",
+                Suite::opens_columns,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
             .check("stopping a frozen workspace ends it", Suite::stops_frozen)
             .await,
     );
     outcomes.push(
         suite
-            .check("tunnels reach the guest's ports", Suite::tunnels)
+            .check(
+                "tunnels reach the guest's ports, which show as listening",
+                Suite::tunnels,
+            )
             .await,
     );
     outcomes.push(
         suite
             .check("attention reaches the inventory", Suite::attention)
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
+                "caffeinate keeps a terminal working while its command runs",
+                Suite::caffeinate,
+            )
             .await,
     );
     outcomes.push(
@@ -483,6 +506,16 @@ impl<'a, R: Runtime> Suite<'a, R> {
         expect: &str,
     ) -> Result<(), String> {
         let session: SessionName = session.parse().map_err(|e| format!("{e}"))?;
+        self.host
+            .open_terminal(
+                workspace,
+                &SessionSpec {
+                    name: session.clone(),
+                    command: None,
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?;
         let mut terminal = self
             .host
             .attach(workspace, &session, TerminalSize::DEFAULT)
@@ -574,6 +607,111 @@ impl<'a, R: Runtime> Suite<'a, R> {
         })
     }
 
+    /// Waits for `expect` in what a session's terminal shows, without typing.
+    async fn screen(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionName,
+        expect: &str,
+    ) -> Result<String, String> {
+        let mut terminal = self
+            .host
+            .attach(workspace, session, TerminalSize::DEFAULT)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut seen = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !String::from_utf8_lossy(&seen).contains(expect) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(remaining, terminal.output.recv()).await {
+                Ok(Some(bytes)) => seen.extend_from_slice(&bytes),
+                Ok(None) | Err(_) => {
+                    return Err(format!(
+                        "{session} never showed {expect:?}: {:?}",
+                        String::from_utf8_lossy(&seen)
+                    ));
+                }
+            }
+        }
+        Ok(String::from_utf8_lossy(&seen).into_owned())
+    }
+
+    async fn opens_columns(&self, workspace: WorkspaceId) -> Checked {
+        self.running_workspace(workspace).await?;
+        // Everything a shell would mangle, so a shell anywhere on the way shows.
+        let tricky = [
+            "a b",
+            "$HOME",
+            "x;y",
+            "it's \"quoted\"",
+            "back\\slash",
+            "line one\nline two",
+            "✓ ünïcode",
+        ];
+        let program = [
+            "/bin/sh",
+            "-c",
+            r#"printf 'SUM:'; printf '%s\0' "$@" | cksum; sleep 600"#,
+            "sh",
+        ];
+        let argv = |args: &[&str]| -> Argv {
+            Argv::try_from(
+                args.iter()
+                    .map(|a| a.parse::<Arg>().expect("a valid argument"))
+                    .collect::<Vec<_>>(),
+            )
+            .expect("a valid command")
+        };
+        let name = |n: &str| -> SessionName { n.parse().expect("a valid session name") };
+        let columns = vec![
+            SessionSpec {
+                name: name("argv"),
+                command: Some(argv(&[program.as_slice(), tricky.as_slice()].concat())),
+            },
+            SessionSpec {
+                name: name("quits"),
+                command: Some(argv(&["/bin/sh", "-c", "exit 3"])),
+            },
+            SessionSpec {
+                name: name("shell"),
+                command: None,
+            },
+        ];
+        let opened = self
+            .perform(
+                workspace,
+                Command::OpenColumns {
+                    sessions: columns.clone(),
+                },
+            )
+            .await?;
+        ensure(
+            running(opened).map(|r| r.columns) == Some(Columns::Opened),
+            || format!("after opening the columns: {opened:?}"),
+        )?;
+        // Opening again leaves the open ones alone.
+        self.perform(workspace, Command::OpenColumns { sessions: columns })
+            .await?;
+        let listed = self.sessions(workspace).await?;
+        ensure(
+            listed.iter().filter(|s| s.as_str() == "argv").count() == 1
+                && listed.iter().any(|s| s.as_str() == "shell"),
+            || format!("after opening twice: {listed:?}"),
+        )?;
+        let joined: Vec<u8> = tricky
+            .iter()
+            .flat_map(|a| a.bytes().chain(std::iter::once(0)))
+            .collect();
+        let expected = format!("SUM:{} {}", posix_cksum(&joined), joined.len());
+        self.screen(workspace, &name("argv"), &expected).await?;
+        // A new boot opens them again.
+        self.perform(workspace, Command::Stop).await?;
+        let rebooted = self.boot(workspace).await?;
+        ensure(rebooted.columns == Columns::Pending, || {
+            format!("a new boot already counted as opened: {rebooted:?}")
+        })
+    }
+
     async fn stops_frozen(&self, workspace: WorkspaceId) -> Checked {
         self.running_workspace(workspace).await?;
         self.shell(workspace, "sleeper", "echo started-$((6*7))", "started-42")
@@ -604,6 +742,7 @@ impl<'a, R: Runtime> Suite<'a, R> {
             "nc -l",
         )
         .await?;
+        self.listening(workspace, port).await?;
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let heard = match self.host.connect(workspace, port).await {
@@ -628,6 +767,34 @@ impl<'a, R: Runtime> Suite<'a, R> {
             }
             if Instant::now() > deadline {
                 return Err(format!("nothing came back through port {port}"));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Waits for the port to show as a reachable listener, in the `server`
+    /// column where the system can tell (Linux; elsewhere `lsof` can't).
+    async fn listening(&self, workspace: WorkspaceId, port: GuestPort) -> Checked {
+        let column_known = cfg!(target_os = "linux");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let listeners = self
+                .host
+                .listeners(workspace)
+                .await
+                .map_err(|e| e.to_string())?;
+            let found = listeners.iter().find(|l| l.port == port);
+            if let Some(listener) = found
+                && listener.reachable
+                && (!column_known
+                    || listener.column.as_ref().map(SessionName::as_str) == Some("server"))
+            {
+                return Ok(());
+            }
+            if Instant::now() > deadline {
+                return Err(format!(
+                    "port {port} never showed as listening in server: {listeners:?}"
+                ));
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -665,6 +832,52 @@ impl<'a, R: Runtime> Suite<'a, R> {
         }
     }
 
+    /// A command run under `caffeinate` shows as a working thread of its
+    /// terminal while it runs, and only then.
+    async fn caffeinate(&self, workspace: WorkspaceId) -> Checked {
+        self.running_workspace(workspace).await?;
+        self.shell(
+            workspace,
+            "build",
+            "caffeinate sh -c 'echo awake-$((6*7)); sleep 5'",
+            "awake-42",
+        )
+        .await?;
+        let session: SessionName = "build".parse().expect("a valid session name");
+        let awake = |inventory: &[InstanceReport]| {
+            inventory
+                .iter()
+                .filter(|report| report.workspace == workspace)
+                .flat_map(|report| &report.sessions)
+                .any(|status| {
+                    status.session == session
+                        && status.state == AttentionState::Working
+                        && status.thread.as_str().starts_with("caffeinate-")
+                })
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut seen = false;
+        loop {
+            let inventory = self.host.inventory().await.map_err(|e| e.to_string())?;
+            match (seen, awake(&inventory)) {
+                (false, true) => seen = true,
+                (true, false) => return Ok(()),
+                (false | true, _) => {}
+            }
+            if Instant::now() > deadline {
+                return Err(format!(
+                    "caffeinate {}: {inventory:?}",
+                    if seen {
+                        "never cleared its thread"
+                    } else {
+                        "never showed as working"
+                    }
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
     async fn large_bundle(&self, workspace: WorkspaceId) -> Checked {
         self.running_workspace(workspace).await?;
         // Bigger than any pipe or socket buffer: 17 files of the largest
@@ -696,11 +909,13 @@ impl<'a, R: Runtime> Suite<'a, R> {
     async fn failed_clone(&self, workspace: WorkspaceId) -> Checked {
         self.running_workspace(workspace).await?;
         let spec = ProvisionSpec {
-            repo: "https://conformance.invalid/missing.git"
-                .parse()
-                .expect("a valid repository URL"),
-            branch: "conformance".parse().expect("a valid branch"),
-            base: None,
+            checkout: Some(Checkout {
+                repo: "https://conformance.invalid/missing.git"
+                    .parse()
+                    .expect("a valid repository URL"),
+                branch: "conformance".parse().expect("a valid branch"),
+                base: None,
+            }),
         };
         self.refused(workspace, Command::Provision(spec), ErrorCode::GuestFailed)
             .await?;
@@ -719,5 +934,38 @@ impl<'a, R: Runtime> Suite<'a, R> {
             ),
             || format!("after a failed clone: {instance:?}"),
         )
+    }
+}
+
+/// POSIX `cksum`'s CRC, which GNU and BSD `cksum` both print by default.
+fn posix_cksum(data: &[u8]) -> u32 {
+    fn feed(crc: u32, byte: u8) -> u32 {
+        (0..8).fold(crc ^ (u32::from(byte) << 24), |crc, _| {
+            if crc & 0x8000_0000 == 0 {
+                crc << 1
+            } else {
+                (crc << 1) ^ 0x04C1_1DB7
+            }
+        })
+    }
+    let crc = data.iter().fold(0, |crc, &byte| feed(crc, byte));
+    let length = u64::try_from(data.len()).unwrap_or(u64::MAX).to_le_bytes();
+    let used = length
+        .iter()
+        .rposition(|&b| b != 0)
+        .map_or(0, |last| last + 1);
+    !length[..used]
+        .iter()
+        .fold(crc, |crc, &byte| feed(crc, byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::posix_cksum;
+
+    #[test]
+    fn cksum_matches_the_posix_check_values() {
+        assert_eq!(posix_cksum(b""), 4_294_967_295);
+        assert_eq!(posix_cksum(b"123456789"), 930_766_865);
     }
 }

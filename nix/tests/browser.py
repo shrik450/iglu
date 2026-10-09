@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Locator, Page, expect, sync_playwright
 
 CONSOLE = "https://iglu.example.test"
 STATE = Path("/root/browser-state.json")
@@ -23,21 +23,31 @@ SHOTS = Path("/tmp/browser")
 
 def open_workspace(page: Page, name: str) -> None:
     page.goto(CONSOLE)
-    page.locator(".row", has=page.locator(".name", has_text=name)).click()
-    expect(page.locator("#workspace-header .phase")).to_have_text("running", timeout=600_000)
+    page.get_by_role("link", name=name, exact=True).click()
+    page.wait_for_url(f"{CONSOLE}/w/{name}")
+    expect(page.locator('.wsv[data-phase="running"]')).to_be_visible(timeout=600_000)
+
+
+def column(page: Page, name: str) -> Locator:
+    return page.get_by_role("region", name=f"Column {name}", exact=True)
+
+
+def columns(page: Page) -> list[str]:
+    return [str(c.get_attribute("data-column")) for c in page.locator("[data-column]").all()]
 
 
 def screen(page: Page) -> str:
     return str(page.evaluate("globalThis.iglu.screen()"))
 
 
-def run_in_terminal(page: Page, command: str, expected: str) -> str:
-    """Types into the active terminal, as a person would, and waits for output."""
+def run_in_column(page: Page, name: str, command: str, expected: str) -> str:
+    """Types into a column's terminal, as a person would, and waits for output."""
+    page.wait_for_selector("[data-column]")
+    column(page, name).locator(".term-host").click()
     deadline = time.monotonic() + 60
     while "$" not in screen(page):  # the shell's prompt
         assert time.monotonic() < deadline, f"no prompt: {screen(page)!r}"
         time.sleep(0.5)
-    page.locator("#terminal").click()
     page.keyboard.type(command)
     page.keyboard.press("Enter")
     while expected not in screen(page):
@@ -52,7 +62,7 @@ def sign_in(page: Page) -> Any:
     page.locator("#password-textfield").fill("password")
     page.locator("#sign-in-button").click()
     page.wait_for_url(f"{CONSOLE}/**")
-    expect(page.locator("#sidebar .who")).to_have_text("alice@example.org")
+    expect(page.get_by_role("link", name="Settings, signed in as alice@example.org")).to_be_visible()
     return {"url": page.url}
 
 
@@ -65,47 +75,57 @@ def approve_cli(page: Page, url: str) -> Any:
 
 
 def create(page: Page, environment: str, repo: str, name: str) -> Any:
+    """Adds a project for `repo`, then its first workspace, `name`."""
     page.goto(CONSOLE)
-    page.get_by_role("button", name="+ New workspace").click()
-    dialog = page.locator("dialog#create")
-    dialog.locator("select[name=environment]").select_option(environment)
-    dialog.locator("input[name=repo]").fill(repo)
-    dialog.locator("input[name=name]").fill(name)
-    dialog.get_by_role("button", name="Create").click()
-    expect(page.locator("#workspace-header h1")).to_have_text(name)
-    expect(page.locator("#workspace-header .phase")).to_have_text("running", timeout=600_000)
-    return {"id": page.url.rsplit("/", 1)[1]}
+    page.get_by_role("button", name="New project").click()
+    project = page.get_by_role("form", name="New project")
+    project.get_by_label("Repository").fill(repo)
+    project.get_by_label("Environment").select_option(environment)
+    project.get_by_role("button", name="Add").click()
+    form = page.get_by_role("form", name="New workspace")
+    expect(form.get_by_label("Project").locator("option:checked")).to_have_text("app")
+    form.get_by_label("Name").fill(name)
+    form.get_by_role("button", name="Create").click()
+    page.wait_for_url(f"{CONSOLE}/w/{name}")
+    expect(page.get_by_role("heading", name=name)).to_be_visible()
+    expect(page.locator('.wsv[data-phase="running"]')).to_be_visible(timeout=600_000)
+    return {"name": name, "columns": columns(page)}
 
 
 def terminal(page: Page, name: str, command: str, expected: str) -> Any:
+    """Runs a command in the workspace's first column."""
     open_workspace(page, name)
-    return {"screen": run_in_terminal(page, command, expected)}
+    page.wait_for_selector("[data-column]")
+    first = columns(page)[0]
+    return {"column": first, "screen": run_in_column(page, first, command, expected)}
 
 
-def new_tab(page: Page, name: str, command: str, expected: str) -> Any:
+def new_column(page: Page, name: str, command: str, expected: str) -> Any:
+    """Adds a shell column from the strip and runs a command in it."""
     open_workspace(page, name)
-    tabs = page.locator("#tabs .tab:not(.add)")
-    expect(tabs).not_to_have_count(0)
-    before = tabs.count()
-    page.locator("#tabs .tab.add").click()
-    expect(tabs).to_have_count(before + 1)
-    output = run_in_terminal(page, command, expected)
-    return {"tabs": tabs.all_inner_texts(), "screen": output}
+    page.wait_for_selector("[data-column]")
+    before = columns(page)
+    page.get_by_role("button", name="Add a column").click()
+    page.get_by_role("group", name="Add a column").get_by_role("button", name="Shell").click()
+    expect(page.locator("[data-column]")).to_have_count(len(before) + 1)
+    added = next(c for c in columns(page) if c not in before)
+    return {"columns": columns(page), "added": added, "screen": run_in_column(page, added, command, expected)}
 
 
-def row(page: Page, name: str, expected: str) -> Any:
-    """Waits for a workspace's sidebar row to show `expected`, without selecting it."""
+def card(page: Page, name: str, expected: str) -> Any:
+    """Waits for a workspace's overview card to show `expected`, without opening it."""
     page.goto(CONSOLE)
-    entry = page.locator(".row", has=page.locator(".name", has_text=name))
+    entry = page.locator(f'.card[data-name="{name}"]')
     expect(entry).to_contain_text(expected, timeout=120_000)
     return {"text": entry.inner_text(), "class": entry.get_attribute("class")}
 
 
 def publish(page: Page, name: str, port: str) -> Any:
     open_workspace(page, name)
-    page.locator("#ports input").fill(port)
-    page.get_by_role("button", name="Publish").click()
-    link = page.locator("#ports a", has_text=f":{port}")
+    page.get_by_role("button", name="Publish a port").click()
+    page.get_by_label("Port to publish").fill(port)
+    page.get_by_role("button", name="Publish", exact=True).click()
+    link = page.locator(".w-ports").get_by_role("link").filter(has_text=f":{port}")
     url = link.get_attribute("href")
     with page.context.expect_page() as opened:
         link.click()
@@ -113,6 +133,13 @@ def publish(page: Page, name: str, port: str) -> Any:
     preview.wait_for_load_state()
     expect(preview.locator("body")).to_have_text("hello", timeout=60_000)
     return {"url": url, "landed": preview.url}
+
+
+def visit(page: Page, url: str) -> Any:
+    """Opens a preview and waits for the app, through any 'Thawing…' page."""
+    page.goto(url)
+    expect(page.locator("body")).to_have_text("hello", timeout=120_000)
+    return {"url": page.url}
 
 
 def attack(page: Page, preview: str, workspace: str) -> Any:
@@ -137,7 +164,7 @@ def attack(page: Page, preview: str, workspace: str) -> Any:
                 headers: { "content-type": "text/plain" },
                 body: JSON.stringify({ environment: "example", repo: "https://example.org/x.git", name: "forged" }),
             }).catch(() => {});
-            const url = new URL(`/v1/workspaces/${workspace}/terminals/forged/attach?cols=80&rows=24`, console);
+            const url = new URL(`/v1/workspaces/${workspace}/columns/forged/attach?cols=80&rows=24`, console);
             url.protocol = "wss:";
             result.socket = await new Promise((resolve) => {
                 const socket = new WebSocket(url);
@@ -156,9 +183,10 @@ STEPS: dict[str, Callable[..., Any]] = {
     "approve-cli": approve_cli,
     "create": create,
     "terminal": terminal,
-    "new-tab": new_tab,
-    "row": row,
+    "new-column": new_column,
+    "card": card,
     "publish": publish,
+    "visit": visit,
     "attack": attack,
 }
 

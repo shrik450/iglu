@@ -3,7 +3,8 @@
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use iglu_proto::{CommandError, TerminalControl};
+use iglu_domain::terminal::TerminalControl;
+use iglu_proto::CommandError;
 
 use crate::runtime::{Terminal, TerminalInput};
 

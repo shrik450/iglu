@@ -6,18 +6,58 @@
 //! The runtime directory is per boot, so everything here starts empty when
 //! a workspace starts.
 
+use crate::attention::{AttentionState, Summary};
+
 /// Written last by `iglu-guest install-secrets`: the secrets delivery the
 /// guest holds, as a decimal number.
 pub const SECRETS_GENERATION: &str = "iglu/secrets/generation";
 
-/// Per-session attention status, maintained by `iglu-status`.
+/// Per-session attention status, maintained by `iglu-status`: sessions,
+/// each with its threads, each a [`StatusEntry`].
 pub const STATUS: &str = "iglu/status/sessions.json";
+
+/// One thread's entry in the status file. Hosts read it as untrusted and
+/// parse it again.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StatusEntry {
+    pub state: AttentionState,
+    pub summary: Summary,
+    pub title: Summary,
+    /// Unix milliseconds, by the guest's clock.
+    pub at: i64,
+}
+
+/// What `iglu-guest git-state` prints for a checkout; `null` without one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitReport {
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub changed: u32,
+    pub untracked: u32,
+    pub conflicted: u32,
+}
+
+/// One entry of what `iglu-guest listeners` prints.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListenerReport {
+    pub port: u16,
+    pub address: std::net::IpAddr,
+    pub process: String,
+    /// The zmx session the process runs in, if it can be told.
+    pub session: Option<String>,
+}
+
+/// Written by `iglu-guest open --boot` once a boot has opened the
+/// workspace's columns.
+pub const COLUMNS_OPENED: &str = "iglu/columns-opened";
 
 /// The version of the interface between hosts and the guest tools: the
 /// tools' command line and the files above. An image records the version
 /// its tools speak, and a host only uses images that speak its own. Bump it
 /// with any change either side would notice.
-pub const INTERFACE: Interface = Interface(2);
+pub const INTERFACE: Interface = Interface(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]

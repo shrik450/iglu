@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -13,6 +14,7 @@ use hyper_util::rt::TokioIo;
 use iglu_domain::auth::{Action, Decision, DenyReason, Resource, authorize};
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::{PREVIEW_AUTH_LABEL, RouteName};
+use iglu_domain::lifecycle::Phase;
 use iglu_domain::port::GuestPort;
 use iglu_domain::preview::{
     MethodClass, PreviewAccess, RequestSource, Transport, preview_access, preview_may_set_cookie,
@@ -161,6 +163,36 @@ fn strip_platform_cookie(headers: &mut HeaderMap) {
     }
 }
 
+/// How long a preview request waits for a frozen workspace to thaw.
+const THAW: Duration = Duration::from_secs(25);
+
+/// A page that retries while the workspace comes up, or says why it won't.
+fn thawing(phase: Phase) -> Response {
+    let (text, retry) = match phase {
+        Phase::Stopped | Phase::Stopping => (
+            "This workspace is stopped. Start it from the console.",
+            false,
+        ),
+        Phase::Deleting | Phase::Deleted => ("This workspace is being deleted.", false),
+        Phase::Creating | Phase::Starting | Phase::Running | Phase::Freezing | Phase::Frozen => {
+            ("Thawing…", true)
+        }
+    };
+    let refresh = if retry {
+        "<meta http-equiv=\"refresh\" content=\"3\">"
+    } else {
+        ""
+    };
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        format!(
+            "<!doctype html><meta charset=\"utf-8\">{refresh}<title>{text}</title><p>{text}</p>"
+        ),
+    )
+        .into_response()
+}
+
 fn reject(status: StatusCode, message: &str) -> Response {
     (status, message.to_owned()).into_response()
 }
@@ -237,6 +269,10 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
     let Some(host) = app.host(&ws.host) else {
         return reject(StatusCode::SERVICE_UNAVAILABLE, "host unavailable");
     };
+    // A request is a use, and one to a frozen workspace thaws it.
+    if !crate::idle::thaw(&app, &ws, THAW).await {
+        return thawing(ws.phase());
+    }
     match forward(&app, &host, ws.id, route.port, &name, request, kind).await {
         Ok(response) => response,
         Err(error) => {

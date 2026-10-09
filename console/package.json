@@ -4,12 +4,19 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "build": "tsc --noEmit && node build.mjs"
+    "test": "node --test 'src/**/*.test.ts'",
+    "build": "tsc --noEmit && node --test 'src/**/*.test.ts' && node build.mjs"
   },
   "dependencies": {
-    "ghostty-web": "0.4.0"
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/unbounded": "5.3.0",
+    "@preact/signals": "2.11.3",
+    "ghostty-web": "0.4.0",
+    "preact": "11.0.0"
   },
   "devDependencies": {
+    "@types/node": "24.19.1",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.0"
   }

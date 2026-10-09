@@ -3,9 +3,19 @@ import type { AttentionState } from "./AttentionState";
 import type { Seen } from "./Seen";
 import type { SessionName } from "./SessionName";
 import type { Summary } from "./Summary";
+import type { ThreadKey } from "./ThreadKey";
 import type { Timestamp } from "./Timestamp";
 
 /**
  * What one terminal session last reported.
  */
-export type AttentionView = { session: SessionName, state: AttentionState, summary: Summary, updated_at: Timestamp, seen: Seen, };
+export type AttentionView = { session: SessionName, 
+/**
+ * One conversation of the session's agent, or `session` for the
+ * session itself.
+ */
+thread: ThreadKey, 
+/**
+ * What the thread was started to do, or empty.
+ */
+title: Summary, state: AttentionState, summary: Summary, updated_at: Timestamp, seen: Seen, };

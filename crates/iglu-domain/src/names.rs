@@ -1,4 +1,5 @@
-//! Generated `adjective-verbing` names for workspaces and routes.
+//! Generated `adjective-verbing` names for workspaces and routes, and names
+//! taken from what a workspace was started to do.
 //!
 //! The shell supplies entropy and checks uniqueness against storage; this
 //! module only turns entropy into a well-formed name.
@@ -26,6 +27,43 @@ pub fn candidate(entropy: u64, attempt: u32) -> DnsLabel {
     };
     text.parse()
         .expect("word lists are lowercase ASCII, so every candidate is a DNS label")
+}
+
+/// Words that say little about a task, skipped when naming it.
+const FILLER: &[&str] = &[
+    "about", "add", "all", "and", "any", "are", "but", "can", "could", "for", "from", "get",
+    "have", "help", "into", "it's", "its", "let", "lets", "make", "need", "our", "please",
+    "should", "some", "that", "the", "then", "this", "use", "want", "was", "what", "when", "with",
+    "would", "you", "your",
+];
+
+/// A name from a prompt's first two telling words, such as `login-bug` for
+/// "Fix the login bug". Attempts after the first add `-2`, `-3` and so on.
+/// `None` when the prompt has no such words.
+#[must_use]
+pub fn from_prompt(prompt: &str, attempt: u32) -> Option<DnsLabel> {
+    let words: Vec<String> = prompt
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '\'')
+        .map(|word| word.trim_matches('\'').to_ascii_lowercase())
+        .filter(|word| {
+            word.len() >= 3
+                && word.len() <= 20
+                && word.starts_with(|c: char| c.is_ascii_lowercase())
+                && word.bytes().all(|b| b.is_ascii_alphanumeric())
+                && !FILLER.contains(&word.as_str())
+        })
+        .take(2)
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    let stem = words.join("-");
+    let text = if attempt == 0 {
+        stem
+    } else {
+        format!("{stem}-{}", attempt + 1)
+    };
+    text.parse().ok()
 }
 
 fn pick(words: &'static [&'static str], value: u64) -> &'static str {
@@ -213,6 +251,29 @@ mod tests {
                 assert!(WorkspaceName::try_from(label).is_ok());
             }
         }
+    }
+
+    #[test]
+    fn prompts_name_by_their_telling_words() {
+        let named =
+            |prompt: &str, attempt| from_prompt(prompt, attempt).map(|l| l.as_str().to_owned());
+        assert_eq!(named("Fix the login bug", 0).as_deref(), Some("fix-login"));
+        assert_eq!(
+            named("please add dark mode to the console", 0).as_deref(),
+            Some("dark-mode")
+        );
+        assert_eq!(
+            named("Can you make it faster?", 0).as_deref(),
+            Some("faster")
+        );
+        assert_eq!(
+            named("Fix the login bug", 2).as_deref(),
+            Some("fix-login-3")
+        );
+        assert_eq!(named("修正 the 2024 bug", 0).as_deref(), Some("bug"));
+        assert_eq!(named("do it", 0), None);
+        let label = from_prompt("Fix the login bug", 0).expect("a name");
+        assert!(WorkspaceName::try_from(label).is_ok());
     }
 
     #[test]

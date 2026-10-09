@@ -5,16 +5,20 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use iglu_domain::agent;
 use iglu_domain::capacity::Room;
+use iglu_domain::column::ColumnKind;
 use iglu_domain::id::WorkspaceId;
+use iglu_domain::idle;
 use iglu_domain::lifecycle::{
     AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
 use iglu_domain::secret::bundle;
+use iglu_domain::terminal::SessionName;
 use iglu_domain::time::Timestamp;
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
-    Limits, ProvisionSpec,
+    Limits, ProvisionSpec, SessionSpec,
 };
 
 use crate::app::{App, now, open_secrets};
@@ -187,6 +191,18 @@ async fn reconcile_host(
         let (principal, observed) = observe(app, &ws, instance, report, asked_at).await?;
         changed |= observed;
         let Some(principal) = principal else { continue };
+        let busy = idle::busy(
+            report
+                .into_iter()
+                .flat_map(|r| &r.sessions)
+                .map(|s| s.state),
+        );
+        if crate::idle::apply(app, &ws, busy).await? {
+            // Planned next tick, from the new desired state.
+            reconciler.kick.notify_one();
+            changed = true;
+            continue;
+        }
         let desired = Desired {
             state: ws.desired,
             secrets: principal.secrets_generation,
@@ -391,6 +407,7 @@ const fn effect_name(effect: Effect) -> &'static str {
         Effect::Start => "started",
         Effect::DeliverSecrets => "secrets-delivered",
         Effect::Provision => "provisioned",
+        Effect::OpenColumns => "columns-opened",
         Effect::Freeze => "frozen",
         Effect::Thaw => "thawed",
         Effect::Stop => "stopped",
@@ -418,6 +435,15 @@ async fn perform(
         Ok(CommandOutcome::Failed(error)) | Err(error) => Err(error),
     };
     let succeeded = result.is_ok();
+    // Only the columns whose sessions are open now have started their agents.
+    let opened: Vec<SessionName> = match (&result, effect) {
+        (Ok(_), Effect::OpenColumns) => host
+            .terminals(id)
+            .await
+            .map(|open| open.into_iter().map(|t| t.name).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
     let stored = app
         .db
         .call(move |tx| {
@@ -425,11 +451,13 @@ async fn perform(
                 Ok(instance) => {
                     db::record_observation(tx, id, instance, None, now())?;
                     db::set_condition(tx, id, None)?;
+                    db::clear_prompts(tx, id, &opened)?;
                     if !matches!(effect, Effect::DeliverSecrets) {
                         db::add_activity(tx, Some(id), None, effect_name(effect), "", now())?;
                     }
                 }
                 Err(error) => {
+                    tracing::warn!(workspace = %id, effect = effect_name(effect), error = %error.message, "a step failed");
                     let condition = Condition::Error {
                         code: error.code,
                         message: error.message.clone(),
@@ -453,6 +481,48 @@ async fn perform(
         tracing::error!(workspace = %id, %error, "couldn't record a command result");
     }
     succeeded
+}
+
+/// What each of a workspace's columns runs, for this boot's opening. A
+/// column whose agent the environment doesn't declare is left out, and
+/// recorded, rather than stopping the others.
+async fn sessions_for(app: &App, ws: &WorkspaceRecord) -> Result<Vec<SessionSpec>, CommandError> {
+    let id = ws.id;
+    let revision = ws.env_revision;
+    app.db
+        .call(move |tx| {
+            let columns = db::columns(tx, id)?;
+            let agents = db::revision_image(tx, revision)?
+                .map(|image| image.agents)
+                .unwrap_or_default();
+            let mut sessions = Vec::with_capacity(columns.len());
+            for column in columns {
+                let command = match &column.spec.kind {
+                    ColumnKind::Shell => Ok(None),
+                    ColumnKind::Server { command } => Ok(Some(command.clone())),
+                    ColumnKind::Agent { agent } => agent::find(&agents, agent)
+                        .and_then(|spec| agent::command(spec, column.prompt.as_ref()))
+                        .map(Some),
+                };
+                match command {
+                    Ok(command) => sessions.push(SessionSpec {
+                        name: column.spec.name,
+                        command,
+                    }),
+                    Err(error) => db::add_activity(
+                        tx,
+                        Some(id),
+                        None,
+                        "error",
+                        &format!("{} didn't open: {error}", column.spec.name),
+                        now(),
+                    )?,
+                }
+            }
+            Ok(sessions)
+        })
+        .await
+        .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))
 }
 
 async fn command_for(
@@ -499,10 +569,11 @@ async fn command_for(
             Command::DeliverSecrets(bundle)
         }
         Effect::Provision => Command::Provision(ProvisionSpec {
-            repo: ws.repo.clone(),
-            branch: ws.branch.clone(),
-            base: ws.base.clone(),
+            checkout: ws.checkout.clone(),
         }),
+        Effect::OpenColumns => Command::OpenColumns {
+            sessions: sessions_for(app, ws).await?,
+        },
         Effect::Freeze => Command::Freeze,
         Effect::Thaw => Command::Thaw,
         Effect::Stop => Command::Stop,

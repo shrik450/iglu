@@ -44,6 +44,7 @@ pub struct App {
     pub host_seen: Mutex<HashMap<HostId, Timestamp>>,
     pub reconciler: Arc<crate::reconcile::Reconciler>,
     pub pool: crate::gateway::Pool,
+    pub usage: crate::idle::Usage,
 }
 
 impl App {
