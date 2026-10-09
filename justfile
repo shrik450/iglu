@@ -17,6 +17,7 @@ lint:
     cargo clippy --workspace --all-targets -- -D warnings
     git ls-files -z '*.nix' | xargs -0 nixfmt --check
     actionlint
+    shellcheck dev/agents/*
 
 # Run the unit tests, and the local runtime's conformance suite.
 test:
@@ -60,7 +61,7 @@ dev_compose := "IGLU_DEV_SHARED='" + dev_shared + "' docker compose -f dev/compo
 dev-setup:
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p '{{ dev_shared }}/ca' '{{ dev_shared }}/authelia/data'
+    mkdir -p '{{ dev_shared }}/ca' '{{ dev_shared }}/authelia/data' '{{ dev_shared }}/git'
     cd '{{ dev_shared }}'
     if [ ! -f ca/ca.crt ]; then
         openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
@@ -155,8 +156,11 @@ dev:
         "runtime_dir": "{{ dev_runtime }}",
         "guest_tools": "{{ justfile_directory() }}/target/debug",
         "memory_available": 68719476736,
+        "localhost_ca": "{{ dev_shared }}/ca/ca.crt",
         "agents": [
-          { "name": "claude", "command": ["claude"], "prompt": "argument", "attention": "claude-hooks" }
+          { "name": "claude", "command": ["claude"], "prompt": "argument", "attention": "claude-hooks" },
+          { "name": "haiku", "command": ["claude", "--model", "claude-haiku-5-5"], "prompt": "argument", "attention": "claude-hooks" },
+          { "name": "scripted", "command": ["{{ justfile_directory() }}/dev/agents/scripted"], "prompt": "argument", "attention": "status-command" }
         ]
       }
     }
@@ -171,6 +175,22 @@ dev:
     trap 'kill $watcher $devhost 2>/dev/null' EXIT
     echo "iglu: https://iglu.localhost (alice or bob, password \"password\")"
     target/debug/iglud --config "$state/iglud.json"
+
+# Fill the running dev stack with workspaces in every state worth seeing; run it after dev-reset.
+dev-seed:
+    python3 dev/ui/seed.py
+
+# Screenshot every view of the seeded console, with its accessibility tree, audit and errors: just dev-tour --quick
+dev-tour *args:
+    python3 dev/ui/tour.py {{ args }}
+
+# Show what changed between two tours: just dev-compare before after
+dev-compare before after:
+    python3 dev/ui/compare.py {{ before }} {{ after }}
+
+# Run the VM test's browser steps against the running dev stack.
+dev-check:
+    python3 dev/ui/check.py
 
 # Run the CLI against the dev stack, signed in separately from your real iglu: just dev-cli login https://iglu.localhost
 [positional-arguments]

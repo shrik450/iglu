@@ -22,3 +22,11 @@ auth.localhost {
 iglu.localhost, *.preview.localhost {
 	reverse_proxy host.docker.internal:7100
 }
+
+# Fixture repositories for local workspaces to clone, read-only over Git's
+# dumb HTTP protocol. `just dev-seed` writes them; the devhost has workspaces'
+# Git trust the dev CA for *.localhost.
+git.localhost {
+	root * /srv/git
+	file_server
+}

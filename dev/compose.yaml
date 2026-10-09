@@ -14,6 +14,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${IGLU_DEV_SHARED:?start the services with just dev-services}/ca:/ca:ro
+      - ${IGLU_DEV_SHARED:?start the services with just dev-services}/git:/srv/git:ro
       - caddy-data:/data
     # iglud runs natively on the Mac.
     extra_hosts:

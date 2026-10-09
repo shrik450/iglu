@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# A stand-in agent for the dev stack. It does no work: it reports whichever
+# attention state you tell it to, so the console's agent states can be seen,
+# tried and tested without a real agent. Give it a line as its prompt, or type
+# lines into its terminal:
+#
+#   work <summary>   working on something
+#   wait <summary>   waiting for you
+#   done <summary>   finished
+#   idle             nothing to do
+#   fail <message>   exits with an error, like a crashed agent
+#   exit             exits cleanly
+set -u
+
+report() { iglu-status set "$@" || true; }
+
+handle() {
+    local verb=${1%% *} rest=""
+    [[ $1 == *" "* ]] && rest=${1#* }
+    case $verb in
+    work) report working "$rest" && echo "working: $rest" ;;
+    wait) report waiting "$rest" && echo "waiting: $rest" ;;
+    done) report "done" "$rest" && echo "done: $rest" ;;
+    idle) report idle && echo "idle" ;;
+    fail) report exited "$rest" && echo "failed: $rest" >&2 && exit 1 ;;
+    exit) report exited && exit 0 ;;
+    "") ;;
+    *) echo "say work, wait, done, idle, fail or exit" ;;
+    esac
+}
+
+echo "scripted agent: work, wait or done <summary>; idle; fail <message>; exit"
+[[ $# -gt 0 ]] && handle "$*"
+while IFS= read -r -p "> " line; do
+    handle "$line"
+done
+report exited

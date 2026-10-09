@@ -111,8 +111,18 @@
             # The dev stack's clients. The Docker daemon is yours to run.
             docker-client
             openssl
+            # Seeding, touring and checking the console in real browsers;
+            # see DEVELOPMENT.md.
+            (python3.withPackages (ps: [
+              ps.playwright
+              ps.pillow
+            ]))
           ];
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          # Chromium and WebKit, at the version the Python package drives.
+          PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers.override { withFirefox = false; };
+          # NixOS has none of the paths Playwright checks for; empty elsewhere.
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "true";
         };
       });
 
