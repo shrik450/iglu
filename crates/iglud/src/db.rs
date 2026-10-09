@@ -14,7 +14,7 @@ use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::VerifiedIdentity;
 use iglu_domain::capacity::Bytes;
-use iglu_domain::column::ColumnSpec;
+use iglu_domain::column::{ColumnLabel, ColumnSpec};
 use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
@@ -52,6 +52,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Data(projects_for_existing_workspaces),
     Migration::Sql(include_str!("migrations/0005_threads.sql")),
     Migration::Sql(include_str!("migrations/0006_stored_shapes.sql")),
+    Migration::Sql(include_str!("migrations/0007_column_labels.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -1315,6 +1316,7 @@ fn column_row(row: &Row<'_>) -> rusqlite::Result<ColumnRecord> {
             name: text(row, 0)?,
             kind: json(row, 1)?,
             width: text(row, 2)?,
+            label: opt_text(row, 4)?,
         },
         prompt: opt_text(row, 3)?,
     })
@@ -1323,7 +1325,7 @@ fn column_row(row: &Row<'_>) -> rusqlite::Result<ColumnRecord> {
 /// A workspace's columns, in order.
 pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnRecord>, DbError> {
     let mut statement = tx.prepare(
-        "SELECT name, kind, width, prompt FROM workspace_column WHERE workspace_id = ?1 ORDER BY position",
+        "SELECT name, kind, width, prompt, label FROM workspace_column WHERE workspace_id = ?1 ORDER BY position",
     )?;
     Ok(statement
         .query_map([workspace.to_string()], column_row)?
@@ -1341,8 +1343,8 @@ pub fn replace_columns(
         [workspace.to_string()],
     )?;
     let mut insert = tx.prepare(
-        "INSERT INTO workspace_column (workspace_id, position, name, kind, width, prompt)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO workspace_column (workspace_id, position, name, kind, width, prompt, label)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for (position, column) in columns.iter().enumerate() {
         insert.execute(params![
@@ -1352,9 +1354,29 @@ pub fn replace_columns(
             to_json(&column.spec.kind)?,
             column.spec.width.as_str(),
             column.prompt.as_ref().map(Prompt::as_str),
+            column.spec.label.as_ref().map(ColumnLabel::as_str),
         ])?;
     }
     Ok(())
+}
+
+/// Names a column, or forgets its name with `None`. False when the
+/// workspace has no such column.
+pub fn label_column(
+    tx: &Connection,
+    workspace: WorkspaceId,
+    column: &SessionName,
+    label: Option<&ColumnLabel>,
+) -> Result<bool, DbError> {
+    let changed = tx.execute(
+        "UPDATE workspace_column SET label = ?3 WHERE workspace_id = ?1 AND name = ?2",
+        params![
+            workspace.to_string(),
+            column.as_str(),
+            label.map(ColumnLabel::as_str)
+        ],
+    )?;
+    Ok(changed > 0)
 }
 
 /// Forgets the prompts of the columns whose sessions opened: a restart
@@ -2047,6 +2069,7 @@ mod tests {
                 name: name.parse().expect("a session"),
                 kind: iglu_domain::column::ColumnKind::Shell,
                 width: iglu_domain::column::ColumnWidth::Half,
+                label: None,
             },
             prompt: Some("fix the login bug".parse().expect("a prompt")),
         };

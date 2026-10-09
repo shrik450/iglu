@@ -14,7 +14,7 @@ use axum::routing::{any, delete, get, post, put};
 use futures_util::Stream;
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnStatus, CreateEnvironment, CreateWorkspace,
-    EnvironmentView, ListenerView, LiveView, Me, PublishPort, PutLayout, PutSecret,
+    EnvironmentView, LabelColumn, ListenerView, LiveView, Me, PublishPort, PutLayout, PutSecret,
     RenameWorkspace, RouteView, SecretView, SetDesiredState, Snapshot, WorkspaceView,
 };
 use iglu_domain::agent::{self, Prompt};
@@ -64,6 +64,10 @@ pub fn router() -> Router<Arc<App>> {
         .route(
             "/v1/workspaces/{id}/columns/{session}",
             delete(close_column),
+        )
+        .route(
+            "/v1/workspaces/{id}/columns/{session}/label",
+            put(label_column),
         )
         .route(
             "/v1/workspaces/{id}/columns/{session}/restart",
@@ -640,6 +644,7 @@ async fn add_column(
         name,
         kind: request.kind,
         width: request.width.unwrap_or(ColumnWidth::Half),
+        label: None,
     };
     host.open_terminal(id, &session_for(&app, &ws, &spec, None).await?)
         .await
@@ -704,6 +709,24 @@ async fn put_layout(
         })
         .await?;
     arranged.map_err(|e| ApiError::Conflict(e.to_string().into()))?;
+    app.changed();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn label_column(
+    caller: Caller,
+    State(app): State<Arc<App>>,
+    Path((id, name)): Path<(WorkspaceId, SessionName)>,
+    Body(request): Body<LabelColumn>,
+) -> Result<StatusCode, ApiError> {
+    owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    let found = app
+        .db
+        .call(move |tx| db::label_column(tx, id, &name, request.label.as_ref()))
+        .await?;
+    if !found {
+        return Err(ApiError::NotFound);
+    }
     app.changed();
     Ok(StatusCode::NO_CONTENT)
 }

@@ -12,6 +12,8 @@ import {
   columnsOf,
   cycleWidth,
   focusColumn,
+  labelColumn,
+  labelOrSay,
   loadColumns,
   loadLive,
   markActive,
@@ -27,7 +29,7 @@ import {
   unpublish,
 } from "../actions.ts";
 import { api } from "../api/client.ts";
-import { FieldError, type Form, FormError, InputError, invalid, useForm, useGrab } from "../components/forms.tsx";
+import { FieldError, type Form, FormError, InputError, invalid, textOf, useForm, useGrab } from "../components/forms.tsx";
 import { Previews } from "../components/Previews.tsx";
 import {
   attentionGlyph,
@@ -47,7 +49,7 @@ import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { keysFor, terminalKey } from "../keyboard.ts";
-import { FRACTION, inView, LABEL, scrollTarget, type Shown } from "../state/layout.ts";
+import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
@@ -338,7 +340,9 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             onClick={() => focusColumn(ws, c.name)}
           >
             <Glyph kind={attentionGlyph(threads.get(c.name)?.[0] ?? null)} />
-            <span translate={false}>{c.name}</span>
+            <span translate={false} title={c.label ? `${c.label} (session ${c.name})` : undefined}>
+              {titleOf(c)}
+            </span>
           </button>
         ))}
       </nav>
@@ -426,13 +430,38 @@ function CommandInput({ form }: { form: Form }) {
   return <input ref={ref} name="command" aria-label="Server command" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
 }
 
+/** Naming a column: Enter keeps the name, an empty one goes back to the
+ * session's, and Escape leaves it as it was. */
+function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
+  const ref = useGrab<HTMLInputElement>(true);
+  const naming = useForm(async (data) => labelColumn(ws, column.name, textOf(data)("label") ?? ""));
+  return (
+    <form class="col-rename" onSubmit={naming.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+      <input
+        ref={ref}
+        name="label"
+        aria-label={`Name of ${titleOf(column)}`}
+        placeholder={column.name}
+        defaultValue={titleOf(column)}
+        maxLength={40}
+        autocomplete="off"
+        spellcheck={false}
+        disabled={naming.busy}
+        {...invalid(naming, "label")}
+      />
+      <FieldError form={naming} input="label" />
+      <FormError form={naming} />
+    </form>
+  );
+}
+
 /** Ending a column asks first; the question takes the keyboard, and Escape keeps the column. */
-function Ending({ ws, name }: { ws: WorkspaceView; name: string }) {
+function Ending({ ws, name, title }: { ws: WorkspaceView; name: string; title: string }) {
   const end = useGrab<HTMLButtonElement>();
   return (
     <span class="col-ctl" style={{ opacity: 1 }} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
       <button type="button" class="end" ref={end} onClick={() => void closeColumn(ws, name)}>
-        End {name}
+        End {title}
       </button>
       <button type="button" onClick={() => settle(ws)}>
         Keep
@@ -514,13 +543,15 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
   const attention = threads[0] ?? null;
   const [listing, setListing] = useState(false);
   const { name } = column;
+  const title = titleOf(column);
   const state = attention ? attentionText(attention) : null;
   const arranged = arrangeable(column.state);
   const [status, setStatus] = useState("");
   const asked = question.value;
   const ending = asked?.kind === "end" && asked.column === name;
+  const naming = asked?.kind === "label" && asked.column === name;
   return (
-    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[column.width]) }} data-column={name} aria-label={`Column ${name}`}>
+    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[column.width]) }} data-column={name} aria-label={`Column ${title}`}>
       <header
         class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}
         onMouseDown={(e) => {
@@ -530,7 +561,17 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
         }}
       >
         <Glyph kind={attentionGlyph(attention)} />
-        <b translate={false}>{name}</b>
+        {naming ? (
+          <Naming ws={ws} column={column} />
+        ) : (
+          <b
+            translate={false}
+            title={column.state === "adopted" ? undefined : `${column.label ? `Session ${name}. ` : ""}Double-click to rename (${keysFor("label-column")})`}
+            onDblClick={() => labelOrSay(ws, name)}
+          >
+            {title}
+          </b>
+        )}
         {attention?.summary ? <span class="ct">{attention.summary}</span> : null}
         {state && state.text !== "idle" ? <span class={`state ${state.tone}`}>{state.text}</span> : null}
         {threads.length > 1 ? (
@@ -540,30 +581,30 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; threads:
         ) : null}
         {status && column.state !== "ended" ? <span class="status">{status}</span> : null}
         {ending ? (
-          <Ending ws={ws} name={name} />
+          <Ending ws={ws} name={name} title={title} />
         ) : (
           <span class="col-ctl">
             {arranged ? (
               <>
-                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${name}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
+                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${title}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
                   {LABEL[column.width]}
                 </button>
-                <button type="button" aria-label={`Move ${name} left`} onClick={() => (markActive(ws, name), void moveColumn(ws, -1))}>
-                  ‹
+                <button type="button" aria-label={`Move ${title} left`} onClick={() => (markActive(ws, name), void moveColumn(ws, -1))}>
+                  <Icon name="back" size={11} />
                 </button>
-                <button type="button" aria-label={`Move ${name} right`} onClick={() => (markActive(ws, name), void moveColumn(ws, 1))}>
-                  ›
+                <button type="button" aria-label={`Move ${title} right`} onClick={() => (markActive(ws, name), void moveColumn(ws, 1))}>
+                  <Icon name="chevron" size={11} />
                 </button>
               </>
             ) : null}
-            <button type="button" aria-label={`End ${name}`} title={`End this column (${keysFor("close-column")})`} onClick={() => ask(ws, { kind: "end", column: name })}>
-              ×
+            <button type="button" aria-label={`End ${title}`} title={`End this column (${keysFor("close-column")})`} onClick={() => ask(ws, { kind: "end", column: name })}>
+              <Icon name="close" size={11} />
             </button>
           </span>
         )}
       </header>
       {listing && threads.length > 1 ? (
-        <ul class="threads" aria-label={`Threads in ${name}`}>
+        <ul class="threads" aria-label={`Threads in ${title}`}>
           {threads.map((t) => {
             const text = attentionText(t);
             return (

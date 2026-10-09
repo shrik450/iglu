@@ -22,6 +22,8 @@ export interface Shown {
   name: string;
   kind: ColumnKind;
   width: ColumnWidth;
+  /** What the person calls it; its session name when null. */
+  label: string | null;
   /** Null until the host has said. */
   state: ColumnState | null;
 }
@@ -36,7 +38,7 @@ export function shown(asked: readonly ColumnSpec[], statuses: readonly ColumnSta
   for (const status of statuses ?? []) {
     switch (status.state) {
       case "adopted":
-        columns.push({ name: status.name, kind: { kind: "shell" }, width: "half", state: "adopted" });
+        columns.push({ name: status.name, kind: { kind: "shell" }, width: "half", label: null, state: "adopted" });
         break;
       case "open":
       case "ended":
@@ -47,6 +49,9 @@ export function shown(asked: readonly ColumnSpec[], statuses: readonly ColumnSta
   }
   return columns;
 }
+
+/** What a column is called where it shows: its label, else its session name. */
+export const titleOf = (column: { name: string; label: string | null }): string => column.label ?? column.name;
 
 export function layoutOf(columns: readonly ColumnSpec[]): LayoutEntry[] {
   return columns.map(({ name, width }) => ({ name, width }));

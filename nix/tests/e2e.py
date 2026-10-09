@@ -270,6 +270,7 @@ try:
         browser("dialogs-hold-focus", "demo")
         browser("enter-presses-buttons")
         browser("prefix-cancels", "demo")
+        browser("names-column", "demo")
         browser("renames-follow", "demo")
         browser("drafts-survive", "app")
         browser("adds-at-once", "demo")

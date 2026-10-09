@@ -21,6 +21,7 @@ export type Action =
   | { kind: "move-column"; step: -1 | 1 }
   | { kind: "width" }
   | { kind: "close-column" }
+  | { kind: "label-column" }
   | { kind: "add-column" }
   | { kind: "rename" }
   | { kind: "freeze" }
@@ -133,6 +134,7 @@ export const BINDINGS: readonly Binding[] = [
   { action: { kind: "move-column", step: 1 }, does: "Move the column right", group: "Columns", after: letter("l", true) },
   { action: { kind: "width" }, does: "Change its width", group: "Columns", after: letter("w") },
   { action: { kind: "add-column" }, does: "New column", group: "Columns", after: letter("c") },
+  { action: { kind: "label-column" }, does: "Rename the column", group: "Columns", after: { code: "Comma", label: "," } },
   { action: { kind: "close-column" }, does: "End the column", group: "Columns", after: letter("x") },
 ];
 

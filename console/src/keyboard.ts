@@ -2,7 +2,7 @@
 
 import { signal } from "@preact/signals";
 
-import { activeOf, back, columnsOf, cycleWidth, focusColumn, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze } from "./actions.ts";
+import { activeOf, back, columnsOf, cycleWidth, focusColumn, labelOrSay, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze } from "./actions.ts";
 import { type Action, BINDINGS, chordLabel, type Focus, type KeyInput, metaBytes, onKeyboard, prefixBytes, resolve } from "./state/keys.ts";
 import { type KeyboardPrefs, loadKeyboard, saveKeyboard, watch } from "./state/prefs.ts";
 import { unreachable } from "./state/unsaved.ts";
@@ -86,6 +86,11 @@ export function perform(action: Action): void {
     case "add-column":
       if (ws?.phase === "running") ask(ws, { kind: "add-column" });
       return;
+    case "label-column": {
+      const column = ws && activeOf(ws);
+      if (ws && column) labelOrSay(ws, column);
+      return;
+    }
     case "rename":
       if (ws) ask(ws, { kind: "rename" });
       return;

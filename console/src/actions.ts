@@ -13,6 +13,7 @@ import type { WorkspaceView } from "./generated/WorkspaceView.ts";
 import { layoutOf, moved, type Shown, shown, stepIndex, widened } from "./state/layout.ts";
 import {
   activeColumn,
+  ask,
   columnStates,
   current,
   cursor,
@@ -96,6 +97,24 @@ export async function rename(ws: WorkspaceView, name: string): Promise<void> {
   const renamed = await api.rename(ws.id, name);
   workspaces.value = workspaces.value.map((w) => (w.id === renamed.id ? renamed : w));
   settle(ws, "rename");
+}
+
+/** Names a column, or gives it back its session name with an empty `label`
+ * or that name;
+ * throws what iglu refused, for the form to show. */
+export async function labelColumn(ws: WorkspaceView, column: string, label: string): Promise<void> {
+  // Its own session name, or nothing, is no name of its own.
+  const trimmed = label.trim();
+  const named = trimmed && trimmed !== column ? trimmed : null;
+  await api.labelColumn(ws.id, column, named);
+  workspaces.value = workspaces.value.map((w) => (w.id === ws.id ? { ...w, columns: w.columns.map((c) => (c.name === column ? { ...c, label: named } : c)) } : w));
+  settle(ws, "label");
+}
+
+/** Asks for a column's name; a session nobody asked iglu for has no column to name. */
+export function labelOrSay(ws: WorkspaceView, column: string): void {
+  if (ws.columns.some((c) => c.name === column)) ask(ws, { kind: "label", column });
+  else say(`${column} was opened inside the workspace, not by iglu, so it can't be renamed.`);
 }
 
 /** Creates a workspace; throws what iglu refused, for the form to show. */

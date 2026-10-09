@@ -91,8 +91,15 @@ export const newIn = signal<ProjectId | null>(null);
 export const details = signal(false);
 
 /** Something a workspace is asking the person: its new name, whether to
- * delete it or end a column, a port to publish, or a column to add. */
-export type Question = { kind: "rename" } | { kind: "delete" } | { kind: "end"; column: string } | { kind: "port" } | { kind: "add-column" };
+ * delete it or end a column, a column's name, a port to publish, or a column
+ * to add. */
+export type Question =
+  | { kind: "rename" }
+  | { kind: "delete" }
+  | { kind: "end"; column: string }
+  | { kind: "label"; column: string }
+  | { kind: "port" }
+  | { kind: "add-column" };
 
 /** One question at a time, held with the workspace that asked it, so it never
  * carries over to another: an armed delete stays with its own workspace. */

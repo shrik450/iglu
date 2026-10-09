@@ -295,7 +295,11 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .col { --waiting: #ffc46b; --done: #7eedbd; --working: #8fd8ff; --error: #ff8f8f; --accent: #8fd8ff; --muted: var(--term-dim); --ink: var(--term-ink); --cw: .5; flex: 0 0 calc((100% + 10px) * var(--cw) - 10px); min-width: 0; display: flex; flex-direction: column; background: var(--term-bg); border: 1px solid var(--term-line); border-radius: 8px; overflow: hidden; scroll-snap-align: start; transition: border-color .15s; }
 .col.on { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
 .col-h { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 10px; font: 12px/1 var(--mono); color: var(--term-dim); border-bottom: 1px solid var(--term-line); min-width: 0; }
-.col-h b { color: var(--term-ink); font-weight: 600; }
+.col-h b { color: var(--term-ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; flex: none; }
+.col-rename { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.col-rename input:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.col-rename input { width: 22ch; min-width: 0; padding: 3px 6px; font: 600 12px/1.2 var(--mono); background: var(--term-bg); color: var(--term-ink); border: 1px solid var(--accent); border-radius: 5px; }
+.col-rename .field-err { font: 11.5px/1.2 var(--ui); color: var(--error); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .col-h .ct { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* What an agent asks is the point of opening it: shown whole, up to three lines. */
 .col-h.asks { align-items: flex-start; }

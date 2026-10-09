@@ -3,16 +3,17 @@
 import { useEffect, useId, useMemo, useState } from "preact/hooks";
 
 import { api } from "../api/client.ts";
-import { addColumn, nextWaiting, open, toggleFreeze } from "../actions.ts";
+import { activeOf, addColumn, columnsOf, labelOrSay, nextWaiting, open, toggleFreeze } from "../actions.ts";
 import { keysFor } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
+import { titleOf } from "../state/layout.ts";
 import { search } from "../state/search.ts";
 import { ask, current, details, listed, look, navigate, overlay, projects, say } from "../state/store.ts";
 import { Modal } from "./Modal.tsx";
 
 interface Item {
   label: string;
-  sub?: string;
+  sub?: string | undefined;
   hint?: string | undefined;
   run: () => void;
 }
@@ -31,6 +32,12 @@ function items(): Item[] {
   ];
   if (ws) {
     list.push({ label: `Rename ${ws.name}`, hint: keysFor("rename"), run: () => ask(ws, { kind: "rename" }) });
+    const active = activeOf(ws);
+    for (const c of columnsOf(ws)) {
+      if (c.state === "adopted") continue;
+      const title = titleOf(c);
+      list.push({ label: `Rename column ${title}`, sub: c.label ? `session ${c.name}` : undefined, hint: c.name === active ? keysFor("label-column") : undefined, run: () => labelOrSay(ws, c.name) });
+    }
     list.push({ label: `Details of ${ws.name}`, hint: keysFor("details"), run: () => (details.value = true) });
     if (ws.phase === "running") {
       list.push({ label: `Shell in ${ws.name}`, run: () => void addColumn(ws, { kind: "shell" }) });

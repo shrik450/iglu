@@ -207,6 +207,7 @@ pub fn start(
             name: name.clone(),
             kind,
             width: ColumnWidth::TwoThirds,
+            label: None,
         });
         (name, chosen)
     };

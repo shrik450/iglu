@@ -35,7 +35,8 @@ def open_workspace(page: Page, name: str) -> None:
 
 
 def column(page: Page, name: str) -> Locator:
-    return page.get_by_role("region", name=f"Column {name}", exact=True)
+    """A column by its session name, which stays when the column is renamed."""
+    return page.locator(f'section[data-column="{name}"]')
 
 
 def columns(page: Page) -> list[str]:
@@ -502,6 +503,34 @@ def prefix_cancels(page: Page, name: str) -> Any:
     return {"typed": "previews"}
 
 
+def names_column(page: Page, name: str) -> Any:
+    """A column can be called what it's for: the name shows on it and its
+    chip, stays after a reload, and an empty one gives back the session's.
+    The keyboard comes back to the terminal after."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    prefix(page, "Comma")
+    field = page.get_by_role("textbox", name=f"Name of {first}")
+    expect(field).to_be_focused()
+    expect(field).to_have_value(first)
+    field.fill("the tests")
+    page.keyboard.press("Enter")
+    header = column(page, first).locator(".col-h b")
+    expect(header).to_have_text("the tests")
+    expect(page.get_by_role("navigation", name="Columns").get_by_role("button", name="the tests")).to_be_visible()
+    reaches(page, first)
+    page.reload()
+    expect(header).to_have_text("the tests")
+    header.dblclick()
+    field = page.get_by_role("textbox", name="Name of the tests")
+    expect(field).to_have_value("the tests")
+    field.fill("")
+    page.keyboard.press("Enter")
+    expect(header).to_have_text(first)
+    return {"column": first}
+
+
 def renames_follow(page: Page, name: str) -> Any:
     """Renaming keeps the same workspace open: its column keeps the keyboard,
     and another tab showing it follows to the new name, terminals and all."""
@@ -690,6 +719,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "dialogs-hold-focus": dialogs_hold_focus,
     "enter-presses-buttons": enter_presses_buttons,
     "prefix-cancels": prefix_cancels,
+    "names-column": names_column,
     "renames-follow": renames_follow,
     "drafts-survive": drafts_survive,
     "adds-at-once": adds_at_once,

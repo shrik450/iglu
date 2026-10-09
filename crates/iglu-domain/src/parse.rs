@@ -54,7 +54,30 @@ macro_rules! text_type {
 
 pub(crate) use text_type;
 
-/// True for characters that are safe to show in a UI or log line.
+/// True for characters that are safe to show in a UI or log line: not
+/// control characters, line or paragraph separators, or the invisible marks
+/// that reorder text around them.
 pub(crate) fn is_printable(c: char) -> bool {
     !c.is_control()
+        && !matches!(
+            c,
+            '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_printable;
+
+    #[test]
+    fn printable_leaves_out_what_breaks_or_reorders_a_line() {
+        for c in ['a', 'é', '漢', '🧊', ' ', '-'] {
+            assert!(is_printable(c), "{c:?}");
+        }
+        for c in [
+            '\n', '\t', '\u{1b}', '\u{2028}', '\u{202e}', '\u{2067}', '\u{200f}',
+        ] {
+            assert!(!is_printable(c), "{c:?}");
+        }
+    }
 }
