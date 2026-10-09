@@ -41,6 +41,7 @@ import {
 } from "../components/bits.tsx";
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
+import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
@@ -380,6 +381,13 @@ function Strip({ ws }: { ws: WorkspaceView }) {
 
 function AddMenu({ ws }: { ws: WorkspaceView }) {
   const [command, setCommand] = useState(false);
+  // What's opening: the menu stays, says so, and takes no second click until
+  // the column is there (which puts the menu away) or iglu refuses it.
+  const [opening, setOpening] = useState<string | null>(null);
+  const add = (label: string, kind: ColumnKind) => {
+    setOpening(label);
+    void addColumn(ws, kind).finally(() => setOpening(null));
+  };
   const first = useGrab<HTMLButtonElement>();
   useEffect(() => {
     const away = (e: PointerEvent) => {
@@ -406,16 +414,16 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
     );
   }
   return (
-    <div class="add-menu" role="group" aria-label="Add a column" onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
-      <button type="button" ref={first} onClick={() => void addColumn(ws, { kind: "shell" })}>
-        Shell
+    <div class="add-menu" role="group" aria-label="Add a column" aria-busy={opening !== null} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+      <button type="button" ref={first} disabled={opening !== null} onClick={() => add("Shell", { kind: "shell" })}>
+        {opening === "Shell" ? "Opening a shell…" : "Shell"}
       </button>
       {ws.agents.map((agent) => (
-        <button type="button" key={agent} translate={false} onClick={() => void addColumn(ws, { kind: "agent", agent })}>
-          {agent}
+        <button type="button" key={agent} translate={false} disabled={opening !== null} onClick={() => add(agent, { kind: "agent", agent })}>
+          {opening === agent ? `Opening ${agent}…` : agent}
         </button>
       ))}
-      <button type="button" onClick={() => setCommand(true)}>
+      <button type="button" disabled={opening !== null} onClick={() => setCommand(true)}>
         Command…
       </button>
     </div>

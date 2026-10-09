@@ -11,7 +11,7 @@ import type { ProjectView } from "../generated/ProjectView.ts";
 import type { WorkspaceId } from "../generated/WorkspaceId.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { groupByProject } from "./groups.ts";
-import { type Look, loadCollapsed, loadLook, saveCollapsed, saveLook } from "./prefs.ts";
+import { type Look, loadCollapsed, loadLook, saveCollapsed, saveLook, watch } from "./prefs.ts";
 import { formatRoute, parseRoute, type Route } from "./route.ts";
 
 export const me = signal<Me | null>(null);
@@ -72,9 +72,11 @@ effect(() => {
   else document.documentElement.dataset["look"] = value;
   saveLook(value);
 });
+watch("look", () => (look.value = loadLook()));
 
 export const collapsed = signal<ReadonlySet<string>>(loadCollapsed());
 effect(() => saveCollapsed(collapsed.value));
+watch("collapsed", () => (collapsed.value = loadCollapsed()));
 
 /** Each workspace's columns as its host last reported them. */
 export const columnStates = signal<Record<WorkspaceId, ColumnStatus[]>>({});

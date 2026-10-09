@@ -618,6 +618,7 @@ async fn add_column(
 ) -> Result<(StatusCode, Json<ColumnSpec>), ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let host = host_for(&app, &ws)?;
+    let _editing = app.column_edits.lock(id).await;
     let columns = app.db.call(move |tx| db::columns(tx, id)).await?;
     let open = host.terminals(id).await.map_err(host_error)?;
     let taken: Vec<SessionName> = columns
@@ -741,6 +742,7 @@ async fn close_column(
 ) -> Result<StatusCode, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let host = host_for(&app, &ws)?;
+    let _editing = app.column_edits.lock(id).await;
     let open = host.terminals(id).await.map_err(host_error)?;
     if open.iter().any(|t| t.name == name) {
         host.close_terminal(id, &name).await.map_err(host_error)?;

@@ -4,7 +4,7 @@ import { signal } from "@preact/signals";
 
 import { activeOf, back, columnsOf, cycleWidth, focusColumn, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze } from "./actions.ts";
 import { type Action, BINDINGS, chordLabel, type Focus, type KeyInput, metaBytes, onKeyboard, prefixBytes, resolve } from "./state/keys.ts";
-import { type KeyboardPrefs, loadKeyboard, saveKeyboard } from "./state/prefs.ts";
+import { type KeyboardPrefs, loadKeyboard, saveKeyboard, watch } from "./state/prefs.ts";
 import { unreachable } from "./state/unsaved.ts";
 import { ask, current, cursor, details, listed, navigate, overlay, route } from "./state/store.ts";
 
@@ -13,6 +13,7 @@ export const mac = /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** This browser's keyboard settings. */
 export const keyboard = signal<KeyboardPrefs>(loadKeyboard());
+watch("keyboard", () => (keyboard.value = loadKeyboard()));
 
 export function setKeyboard(prefs: KeyboardPrefs): void {
   keyboard.value = prefs;

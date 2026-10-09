@@ -81,6 +81,8 @@ def main() -> None:
             step("enter-presses-buttons", browser.enter_presses_buttons, page)
             step("prefix-cancels", browser.prefix_cancels, page, NAME)
             step("renames-follow", browser.renames_follow, page, NAME)
+            step("drafts-survive", browser.drafts_survive, page, PROJECT)
+            step("adds-at-once", browser.adds_at_once, page, NAME)
             step("questions-end", browser.questions_end, page, NAME)
             step("card", browser.card, page, NAME, "Check needs you")
             step("lands-on-waiting", browser.lands_on_waiting, page, NAME, "shell", added)

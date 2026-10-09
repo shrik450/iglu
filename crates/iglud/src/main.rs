@@ -170,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
         pool: gateway::Pool::default(),
         usage: idle::Usage::new(app::now()),
         boot: iglu_api::BootId::from_uuid(uuid::Uuid::new_v4()),
+        column_edits: app::ColumnEdits::default(),
     });
     tokio::spawn(reconcile::run(app.clone()));
     if let Some(policy) = app.config.backups.clone() {

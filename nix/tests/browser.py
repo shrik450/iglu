@@ -494,6 +494,55 @@ def renames_follow(page: Page, name: str) -> Any:
     return {"renamed": renamed}
 
 
+def drafts_survive(page: Page, project: str) -> Any:
+    """An edit in progress on a project's settings survives a save made in
+    another tab, which the form says, rather than vanishing; an untouched
+    form takes the saved settings."""
+    other = page.context.new_page()
+    for p in (page, other):
+        p.goto(f"{CONSOLE}/p/{project}")
+    form = page.get_by_role("form", name=f"Settings for {project}")
+    theirs = other.get_by_role("form", name=f"Settings for {project}")
+    idle = theirs.get_by_label("When unused")
+    before = idle.input_value()
+    previews = form.get_by_label("Previews")
+    previews.fill("18480")
+    idle.select_option("never" if before != "never" else "default")
+    theirs.get_by_role("button", name="Save").click()
+    notice = form.get_by_role("status")
+    expect(notice).to_contain_text("saved elsewhere")
+    expect(previews).to_have_value("18480")
+    notice.get_by_role("button", name="Show the saved settings").click()
+    expect(form.get_by_label("When unused")).to_have_value(idle.input_value())
+    # Put it back, from the tab that changed it; this one, untouched, follows.
+    idle.select_option(before)
+    theirs.get_by_role("button", name="Save").click()
+    expect(form.get_by_label("When unused")).to_have_value(before)
+    other.close()
+    return {"kept": "18480"}
+
+
+def adds_at_once(page: Page, name: str) -> Any:
+    """Two columns asked for at once both open, under different names; they
+    once picked the same free name, and one failed."""
+    open_workspace(page, name)
+    added = page.evaluate(
+        """async (name) => {
+          const me = await (await fetch('/v1/me')).json();
+          const ws = (await (await fetch('/v1/workspaces')).json()).find((w) => w.name === name);
+          const headers = { 'content-type': 'application/json', 'x-csrf-token': me.csrf_token };
+          const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'shell' } }) });
+          const answers = await Promise.all([add(), add()]);
+          const made = await Promise.all(answers.map(async (a) => (a.ok ? (await a.json()).name : `${a.status} ${await a.text()}`)));
+          for (const a of answers.keys()) if (answers[a].ok) await fetch(`/v1/workspaces/${ws.id}/columns/${made[a]}`, { method: 'DELETE', headers });
+          return { statuses: answers.map((a) => a.status), made };
+        }""",
+        name,
+    )
+    assert added["statuses"] == [201, 201] and len(set(added["made"])) == 2, added
+    return added
+
+
 def questions_end(page: Page, name: str) -> Any:
     """A question ends with the visit that asked it: a Delete armed and left
     unanswered is gone on coming back, so no later click can answer it."""
@@ -601,6 +650,8 @@ STEPS: dict[str, Callable[..., Any]] = {
     "enter-presses-buttons": enter_presses_buttons,
     "prefix-cancels": prefix_cancels,
     "renames-follow": renames_follow,
+    "drafts-survive": drafts_survive,
+    "adds-at-once": adds_at_once,
     "questions-end": questions_end,
     "card": card,
     "lands-on-waiting": lands_on_waiting,

@@ -109,8 +109,9 @@ export function NewWorkspace() {
         ) : null}
         <FormError form={start} />
         <div class="nbtns">
+          {/* Once asked for, the workspace is made either way; closing only stops waiting for it. */}
           <button type="button" class="btn" onClick={close}>
-            Cancel
+            {start.busy ? "Close" : "Cancel"}
           </button>
           <button type="submit" class="btn primary" disabled={start.busy || !project}>
             {start.busy ? "Creating…" : "Create"}

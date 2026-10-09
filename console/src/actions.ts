@@ -98,11 +98,15 @@ export async function rename(ws: WorkspaceView, name: string): Promise<void> {
   settle(ws, "rename");
 }
 
-/** Creates a workspace and opens it; throws what iglu refused, for the form to show. */
+/** Creates a workspace; throws what iglu refused, for the form to show. */
 export async function create(body: CreateWorkspace): Promise<void> {
   const ws = await api.create(body);
-  overlay.value = null;
-  open(ws);
+  // Opened only for someone still waiting on the form; one who closed it and
+  // moved on hears about it instead of being taken away.
+  if (overlay.peek() === "new") {
+    overlay.value = null;
+    open(ws);
+  } else say(`${ws.name} is being made; it's in the list.`);
 }
 
 /** Publishes a port; throws what iglu refused, for a form to show. */
@@ -250,7 +254,6 @@ export async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<v
 
 /** openColumn for buttons and keys. */
 export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
-  settle(ws, "add-column");
   await attempt(() => openColumn(ws, kind));
 }
 
