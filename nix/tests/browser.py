@@ -266,11 +266,13 @@ def answers_queries(page: Page, name: str) -> Any:
 
 
 # Four quadrants in red that meet in a square across two cells and two
-# rows, and a box cross in green, written as octal UTF-8 so typing them is
-# plain ASCII in any shell.
+# rows, and box crosses, light and double, in green, written as octal UTF-8
+# so typing them is plain ASCII in any shell; then dim and concealed text on
+# a blue background.
 BLOCKS = (
     "clear; printf '\\e[38;2;255;0;0m\\342\\226\\227\\342\\226\\226\\n\\342\\226\\235\\342\\226\\230 "
-    "\\e[38;2;0;255;0m\\342\\225\\266\\342\\224\\200\\342\\224\\274\\342\\224\\200\\342\\225\\264\\e[0m\\nblocks-%s\\n' {mark}"
+    "\\e[38;2;0;255;0m\\342\\225\\266\\342\\224\\200\\342\\224\\274\\342\\224\\200\\342\\225\\264\\342\\225\\254\\e[0m\\n"
+    "\\e[2;48;2;0;0;200m dim \\e[0m \\e[8;48;2;0;0;200m hid \\e[0m\\nblocks-%s\\n' {mark}"
 )
 
 
@@ -278,7 +280,8 @@ def draws_blocks(page: Page, name: str) -> Any:
     """Block glyphs that meet across cells meet without a seam, and box
     strokes are whole pixels: wterm split quadrants at 8.5px, so Claude
     Code's logo showed a faint line under each eye and arm, and drew 1px
-    strokes across two pixels at half strength."""
+    strokes across two pixels at half strength. Dim and concealed text keep
+    their background, which faded and vanished with the text."""
     open_workspace(page, name)
     first = columns(page)[0]
     mark = str(time.time_ns())
@@ -298,6 +301,11 @@ def draws_blocks(page: Page, name: str) -> Any:
         assert hits, f"no {label} drawn"
         assert not blended, {label: len(blended), "of": len(hits), "some": sorted(set(blended))[:5]}
         found[label] = len(hits)
+    # Ten cells of background, less the dim text's ink.
+    backed = Image.open(io.BytesIO(rows.nth(2).screenshot())).convert("RGB").getdata()
+    found["backgrounds"] = sum(px == (0, 0, 200) for px in backed)
+    cell = rows.nth(2).evaluate("(r) => r.getBoundingClientRect().height") * 8
+    assert found["backgrounds"] > 7.5 * cell, found
     return found
 
 

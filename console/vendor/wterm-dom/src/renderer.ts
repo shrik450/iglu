@@ -4,6 +4,8 @@
 //   cells meet without a seam.
 // - Box strokes sit on whole pixels rather than centred between two, so a
 //   1px line is drawn sharp and its arms meet it.
+// - Dim and concealed text change only the text, leaving the background.
+// - Double-line box glyphs are painted, as the single and heavy ones are.
 
 import type {
   CellData,
@@ -97,7 +99,10 @@ function buildCellStyle({
   if (fgCSS) style += `color:${fgCSS};`;
   if (bgCSS) style += `background:${bgCSS};`;
   if (flags & FLAG_BOLD) style += "font-weight:bold;";
-  if (flags & FLAG_DIM) style += "opacity:0.5;";
+  // Dim mixes the text halfway to its background; opacity would fade the
+  // background too.
+  if (flags & FLAG_DIM)
+    style += `color:color-mix(in srgb,${fgCSS ?? DEFAULT_FG_CSS} 50%,${bgCSS ?? DEFAULT_BG_CSS});`;
   if (flags & FLAG_ITALIC) style += "font-style:italic;";
 
   const decorations: string[] = [];
@@ -120,7 +125,8 @@ function buildCellStyle({
       style += `text-decoration-color:${rgbToCSS(underlineRgb)};`;
   }
 
-  if (flags & FLAG_INVISIBLE) style += "visibility:hidden;";
+  // Concealed text keeps its background, as hiding the cell wouldn't.
+  if (flags & FLAG_INVISIBLE) style += "color:transparent;";
   return style;
 }
 
@@ -394,6 +400,65 @@ function addBoxStyles(
 
 addBoxStyles(LIGHT_BOX_ARMS, "term-box");
 addBoxStyles(HEAVY_BOX_ARMS, "term-box term-box-heavy");
+// Double lines are two light strokes a stroke apart, placed from the cell's
+// own size so their edges land on whole pixels and meet their neighbours'.
+// Each glyph lists its segments: a stroke along "h" or "v", at the first
+// line ("1") or second ("2") across it, and from where to where along it:
+// "-" the whole way, "<" from the start to past the crossing line, ">" from
+// the crossing line to the end.
+const DOUBLE_BOX: Record<number, string[]> = {
+  0x2550: ["h1-", "h2-"], // ═
+  0x2551: ["v1-", "v2-"], // ║
+  0x2554: ["h1>1", "v1>1", "h2>2", "v2>2"], // ╔
+  0x2557: ["h1<2", "v2>1", "h2<1", "v1>2"], // ╗
+  0x255a: ["v1<2", "h2>1", "v2<1", "h1>2"], // ╚
+  0x255d: ["v2<2", "h2<2", "v1<1", "h1<1"], // ╝
+  0x2560: ["v1-", "v2<1", "v2>2", "h1>2", "h2>2"], // ╠
+  0x2563: ["v2-", "v1<1", "v1>2", "h1<1", "h2<1"], // ╣
+  0x2566: ["h1-", "h2<1", "h2>2", "v1>2", "v2>2"], // ╦
+  0x2569: ["h2-", "h1<1", "h1>2", "v1<1", "v2<1"], // ╩
+  0x256c: ["v1<1", "v1>2", "v2<1", "v2>2", "h1<1", "h1>2", "h2<1", "h2>2"], // ╬
+};
+
+function addDoubleBoxStyles(): void {
+  const s = "var(--term-box-stroke)";
+  // Where each direction's first line sits; the second is two strokes on.
+  const first = {
+    v: `round(calc((var(--term-cell-width, 1ch) - 3 * ${s}) / 2), 1px)`,
+    h: `round(calc((var(--term-row-height) - 3 * ${s}) / 2), 1px)`,
+  };
+  const at = (dir: "h" | "v", line: string) =>
+    line === "1" ? first[dir] : `calc(${first[dir]} + 2 * ${s})`;
+  for (const [codepoint, segments] of Object.entries(DOUBLE_BOX)) {
+    const layers = segments.map((segment) => {
+      const [dir, line, extent, crossing = ""] = segment as unknown as [
+        "h" | "v",
+        string,
+        "-" | "<" | ">",
+        string,
+      ];
+      // A horizontal stroke ends at the vertical lines it crosses, and a
+      // vertical one at the horizontal lines.
+      const offset = at(dir, line);
+      const cross = crossing ? at(dir === "h" ? "v" : "h", crossing) : "0px";
+      const [start, length] =
+        extent === "-"
+          ? ["0px", "100%"]
+          : extent === "<"
+            ? ["0px", `calc(${cross} + ${s})`]
+            : [cross, `calc(100% - ${cross})`];
+      return dir === "h"
+        ? { position: `${start} ${offset}`, size: `${length} ${s}` }
+        : { position: `${offset} ${start}`, size: `${s} ${length}` };
+    });
+    BOX_STYLES[Number(codepoint)] = {
+      className: "term-box",
+      style: `background-image:${layers.map(() => "linear-gradient(currentColor,currentColor)").join(",")};background-position:${layers.map((l) => l.position).join(",")};background-size:${layers.map((l) => l.size).join(",")};background-repeat:no-repeat;`,
+    };
+  }
+}
+
+addDoubleBoxStyles();
 for (const [codepoint, corner] of Object.entries(ROUNDED_BOX_CORNERS)) {
   BOX_STYLES[Number(codepoint)] = {
     className: `term-box term-box-round term-box-round-${corner}`,
