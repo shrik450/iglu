@@ -1,0 +1,13 @@
+wterm's DOM renderer, vendored so iglu can change it. Changes are iglu's own
+and are never sent upstream; each changed file says so at its top.
+
+repository  https://github.com/vercel-labs/wterm
+tag         v0.5.4
+commit      cc067a20a616fe62f0893ec94005943c349bb492
+imported    packages/@wterm/dom/src, without src/__tests__
+licence     Apache-2.0, in LICENSE; upstream ships no NOTICE
+pairs with  @wterm/core and @wterm/ghostty 0.5.4 from npm, pinned exactly
+
+To take a new release: import its src over this one in a commit of its own
+on top of the previous import, then merge that into the current tree, so
+iglu's changes carry over.
