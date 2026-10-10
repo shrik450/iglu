@@ -464,6 +464,59 @@ def selected_keys(page: Page, name: str) -> Any:
     return {"screen": shows(page, f"read-{mark} $'\\E\\021x'")}
 
 
+# The terminal's background, as a program asks for it, and its size, as the
+# shell has it.
+STYLE = (
+    "bash -c 'printf \"\\e]11;?\\a\" >/dev/tty; IFS= read -rs -t 5 -d $(printf \"\\a\") a </dev/tty; "
+    "printf \"style-{mark} %s \" \"${{a#?}}\"; stty size'"
+)
+
+
+def styles_terminal(page: Page, name: str) -> Any:
+    """A terminal takes the type and colours chosen in Settings as they're
+    chosen, in another tab too: its cells grow whole pixels at a time, the
+    shell learns its new size, and a program asking for the background gets
+    the theme's. A theme pasted in Ghostty's format works the same."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    term = column(page, first).locator(".term-host > .wterm")
+
+    def cell_is(width: int, height: int) -> None:
+        deadline = time.monotonic() + 5
+        cell = "e => [getComputedStyle(e).getPropertyValue('--term-cell-width'), e.querySelector('.term-row').getBoundingClientRect().height]"
+        while (now := term.evaluate(cell)) != [f"{width}px", height]:
+            assert time.monotonic() < deadline, {"cell": now, "wanted": [width, height]}
+            time.sleep(0.05)
+
+    def style(expected: str = "") -> tuple[str, int]:
+        mark = str(time.time_ns())
+        shown = run_in_column(page, first, STYLE.format(mark=mark), f"style-{mark} {expected}")
+        found = re.search(rf"style-{mark} (\S+) (\d+) (\d+)", shown.replace("\n", ""))
+        assert found, shown
+        return found[1], int(found[3])
+
+    cell_is(8, 17)
+    _, before = style()
+    settings = page.context.new_page()
+    try:
+        settings.goto(f"{CONSOLE}/settings")
+        section = settings.locator("section", has=settings.get_by_role("heading", name="Terminal"))
+        section.get_by_label("Colours").select_option("Dracula")
+        section.get_by_label("Size").select_option(label="17px")
+        expect(term).to_have_css("background-color", "rgb(40, 42, 54)")
+        cell_is(10, 21)
+        background, after = style("]11;rgb:2828/2a2a/3636")
+        assert after < before, {"before": before, "after": after}
+        section.get_by_label("Colours").select_option("pasted")
+        section.get_by_label("A theme in Ghostty's format").fill("background = #102030\nforeground = #e0e0e0\n")
+        expect(term).to_have_css("background-color", "rgb(16, 32, 48)")
+    finally:
+        settings.evaluate("localStorage.removeItem('iglu.terminal')")
+        settings.close()
+    cell_is(8, 17)
+    return {"background": background, "cols": [before, after]}
+
+
 def mac_keys(page: Page, name: str) -> Any:
     """On a Mac, where Cmd copies and pastes, Ctrl+C and Ctrl+V reach the
     program even with text selected: the terminal ate Ctrl+C while anything
@@ -1188,6 +1241,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "copies-history": copies_history,
     "mac-keys": mac_keys,
     "selected-keys": selected_keys,
+    "styles-terminal": styles_terminal,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,

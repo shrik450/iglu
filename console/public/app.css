@@ -338,16 +338,18 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 /* Positioned, so the terminal's hidden input sits inside its own column:
    focusing it otherwise scrolled the strip back to its start. */
 .term-host { position: relative; flex: 1; min-height: 0; }
-/* wterm fills its column in the console's face. At 13⅓px JetBrains Mono advances exactly 8px,
-   so every cell, and the block and box glyphs drawn in them, lands on whole pixels. */
+/* wterm fills its column in the console's face, or the one chosen in Settings (termstyle.ts).
+   At 13⅓px JetBrains Mono advances exactly 8px, so every cell, and the block and box glyphs
+   drawn in them, lands on whole pixels; other sizes are nudged to do the same. */
 .term-host > .wterm {
   position: absolute; inset: 0; padding: 4px 6px; border-radius: 0; box-shadow: none;
-  --term-font-family: var(--mono); --term-font-size: 13.333px; --term-row-height: 17px;
-  --term-selection-bg: rgba(143,216,255,.25);
+  --term-font-family: var(--term-face, var(--mono)); --term-font-size: var(--term-size, 13.333px); --term-row-height: var(--term-row, 17px);
+  --term-selection-bg: var(--term-veil, rgba(143,216,255,.25));
   --term-search-match: rgba(255,196,107,.28); --term-search-active: rgba(255,196,107,.6); --term-search-border: #ffc46b;
   scrollbar-width: thin; scrollbar-color: var(--term-line) transparent;
 }
-.term-host > .wterm ::selection { background: rgba(143,216,255,.25); }
+.term-host > .wterm ::selection { background: var(--term-pick, rgba(143,216,255,.25)); }
+:root[data-term-pick-ink] .term-host > .wterm ::selection { color: var(--term-pick-ink); }
 /* Only the terminal with the keyboard shows a block; the others keep a still underline,
    so it's plain where typing goes. */
 .term-host > .wterm:not(.focused, :active) .term-cursor { outline: none; box-shadow: inset 0 -2px 0 var(--term-app-cursor, var(--term-cursor)); }
@@ -397,6 +399,14 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .set-form label { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); min-width: 0; }
 .set-form label.grow { flex: 1; min-width: 200px; }
 .set-form input, .set-form select { width: 100%; min-height: 32px; padding: 0 9px; font-size: 13px; }
+.theme-paste { width: 100%; min-height: 120px; padding: 6px 9px; font: 12px/1.45 var(--mono); resize: vertical; }
+/* The chosen type and colours, set on the page by termstyle.ts, as a terminal draws them. */
+.term-sample { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--term-bg); color: var(--term-ink); border: 1px solid var(--line);
+  font-family: var(--term-face, var(--mono)); font-size: var(--term-size, 13.333px); line-height: var(--term-row, 17px); white-space: pre; overflow: hidden; }
+.term-sample-pick { background: var(--term-pick, rgba(143,216,255,.25)); color: var(--term-pick-ink, inherit); }
+.term-sample-caret { display: inline-block; width: 1ch; background: var(--term-caret, var(--accent)); }
+.term-sample-colours { display: flex; margin-top: 6px; }
+.term-sample-colours span { width: 2ch; height: var(--term-row, 17px); }
 .set-form .field-err { flex-basis: 100%; margin: 0; }
 .log pre { margin: 0 4px 8px; padding: 8px; max-height: 260px; overflow: auto; background: var(--raised); border-radius: 6px; font: 11.5px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .log summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 0 4px 8px; }

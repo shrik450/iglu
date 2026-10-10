@@ -10,50 +10,58 @@ import { GhosttyCore } from "@wterm/ghostty";
 
 import { withCtrl } from "./state/keys.ts";
 import { scan } from "./state/replies.ts";
+import { type Colors, XTERM } from "./state/themes.ts";
+import { styleApplied } from "./termstyle.ts";
 
 const WASM = "/ghostty-vt.wasm";
 /** Each terminal's history, in bytes: ghostty keeps it in pages, so the rows
  * it holds depend on the width. */
 const SCROLLBACK = 10_000_000;
 
-let loaded: Promise<unknown> | null = null;
+let wasm: Promise<void> | null = null;
 
-/** The terminal font and ghostty's WebAssembly, loaded once for every pane:
- * a terminal measures its cells with whatever font is there when it opens. */
+/** The terminal's style and ghostty's WebAssembly, loaded before any pane
+ * opens: a terminal measures its cells with whatever font is there then. */
 export function loadTerminals(): Promise<unknown> {
-  loaded ??= Promise.all([document.fonts.load("13px 'JetBrains Mono'").catch(() => []), GhosttyCore.load({ wasmPath: WASM }).then((core) => core.dispose())]);
-  return loaded;
+  wasm ??= GhosttyCore.load({ wasmPath: WASM }).then((core) => core.dispose());
+  return Promise.all([styleApplied(), wasm]);
 }
-
-/** xterm's 16 colours, which ghostty-web drew with before. */
-const PALETTE = [
-  0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db,
-  0xffffff,
-];
 
 interface Theme {
   background: string;
   foreground: string;
   cursor: string;
+  palette: readonly string[];
 }
 
-/** A terminal's colours, read from the page's look where it sits, so it
- * matches its column in either look. */
+/** A terminal's colours, read from the page where it sits: the look's, so it
+ * matches its column in either, or the theme's chosen in Settings. */
 function themeOf(where: Element): Theme {
   const css = getComputedStyle(where);
   const color = (name: string, otherwise: string) => {
     const value = css.getPropertyValue(name).trim();
     return /^#[0-9a-f]{6}$/i.test(value) ? value : otherwise;
   };
-  return { background: color("--term-bg", "#070c18"), foreground: color("--term-ink", "#d4e0f4"), cursor: color("--accent", "#8fd8ff") };
+  return {
+    background: color("--term-bg", "#070c18"),
+    foreground: color("--term-ink", "#d4e0f4"),
+    cursor: color("--term-caret", color("--accent", "#8fd8ff")),
+    palette: XTERM.map((otherwise, index) => color(`--term-ansi-${index}`, otherwise)),
+  };
 }
 
 function colorsOf(theme: Theme): TerminalThemeColors {
   const rgb = (hex: string) => parseInt(hex.slice(1), 16);
-  return { foreground: rgb(theme.foreground), background: rgb(theme.background), cursor: rgb(theme.cursor), palette: PALETTE };
+  return { foreground: rgb(theme.foreground), background: rgb(theme.background), cursor: rgb(theme.cursor), palette: theme.palette.map(rgb) };
 }
 
-/** Recolours every terminal after the look changes. */
+/** The colours terminals draw with now, as a theme. */
+export function pageColors(): Colors {
+  const theme = themeOf(document.documentElement);
+  return { ...theme, selection: null, selectionText: null };
+}
+
+/** Recolours every terminal after the look or the theme changes. */
 export function restyleTerminals(): void {
   for (const pane of panes.values()) pane.restyle();
 }

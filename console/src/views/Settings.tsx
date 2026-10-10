@@ -14,9 +14,12 @@ import type { SecretTarget } from "../generated/SecretTarget.ts";
 import type { SecretView } from "../generated/SecretView.ts";
 import { repoLabel } from "../state/groups.ts";
 import { type Chord, chordLabel, usablePrefix } from "../state/keys.ts";
-import type { OptionAsMeta } from "../state/prefs.ts";
+import type { OptionAsMeta, TerminalPrefs } from "../state/prefs.ts";
 import { environments, look, me, navigate, projects, say, workspaces } from "../state/store.ts";
+import { THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, isLight, parseTheme } from "../state/themes.ts";
 import { oneOf, unreachable } from "../state/unsaved.ts";
+import { pageColors } from "../terminal.ts";
+import { advance, fontMissing, setTermStyle, termStyle } from "../termstyle.ts";
 
 const when = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
@@ -28,6 +31,7 @@ export function Settings() {
       <Projects />
       <Secrets />
       <Keyboard />
+      <Terminal />
       <Account />
     </div>
   );
@@ -345,6 +349,137 @@ function Keyboard() {
         </label>
       ) : null}
     </section>
+  );
+}
+
+/** The terminal's type and colours, for this browser: a phone and a desk
+ * want different sizes. */
+function Terminal() {
+  const prefs = termStyle.value;
+  const set = (change: Partial<TerminalPrefs>) => setTermStyle({ ...prefs, ...change });
+  const [font, setFont] = useState(prefs.font ?? "");
+  const [fontRefused, setFontRefused] = useState(false);
+  useEffect(() => setFont(prefs.font ?? ""), [prefs.font]);
+  const keepFont = () => {
+    const name = fontName(font);
+    setFontRefused(Boolean(font.trim()) && !name);
+    if (!font.trim() || name) set({ font: name });
+  };
+  const names = Object.keys(THEMES);
+  const sizes = cellSizes(advance.value);
+  const size = cellSize(advance.value, prefs.size);
+  const pasted = prefs.theme === "pasted" ? parseTheme(prefs.pasted) : null;
+  const choose = (theme: string) => {
+    // A theme of one's own starts from the one it takes over from.
+    if (theme === "pasted" && !prefs.pasted.trim()) set({ theme, pasted: formatTheme(colorsOf(prefs.theme, "") ?? pageColors()) });
+    else set({ theme });
+  };
+  return (
+    <section class="set" aria-labelledby="terminal-h">
+      <h2 id="terminal-h">Terminal</h2>
+      <p class="muted">For this browser, so a phone and a desk can differ.</p>
+      <label class="set-row">
+        <span>Colours</span>
+        <select value={prefs.theme} onChange={(e) => choose(e.currentTarget.value)}>
+          <option value="iglu">iglu's own</option>
+          {[false, true].map((light) => (
+            <optgroup key={String(light)} label={light ? "Light" : "Dark"}>
+              {names
+                .filter((name) => isLight(THEMES[name]!) === light)
+                .map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+            </optgroup>
+          ))}
+          <option value="pasted">Pasted from Ghostty</option>
+        </select>
+      </label>
+      {pasted ? (
+        <div class="set-form">
+          <label class="grow">
+            <span>
+              A theme in Ghostty's format: a theme file, or <code>ghostty +show-config</code>
+            </span>
+            <textarea
+              class="theme-paste"
+              rows={8}
+              value={prefs.pasted}
+              spellcheck={false}
+              autocomplete="off"
+              aria-invalid={"error" in pasted}
+              aria-describedby={"error" in pasted ? "theme-err" : undefined}
+              onInput={(e) => set({ pasted: e.currentTarget.value })}
+            />
+          </label>
+          {"error" in pasted ? (
+            <span id="theme-err" class="field-err">
+              {pasted.error} Until it reads, terminals keep iglu's own colours.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      <label class="set-row">
+        <span>Font</span>
+        <input
+          value={font}
+          placeholder="JetBrains Mono"
+          autocomplete="off"
+          spellcheck={false}
+          aria-invalid={fontRefused}
+          onInput={(e) => setFont(e.currentTarget.value)}
+          onChange={keepFont}
+          onKeyDown={(e) => e.key === "Enter" && keepFont()}
+        />
+        {fontRefused ? (
+          <span class="field-err" role="alert">
+            A font's name is letters, digits, spaces, dots, dashes and underscores.
+          </span>
+        ) : fontMissing.value && prefs.font ? (
+          <span class="field-err" role="status">
+            {prefs.font} isn't installed in this browser, so terminals show JetBrains Mono.
+          </span>
+        ) : null}
+      </label>
+      <label class="set-row">
+        <span>Size</span>
+        <select value={String(size.font)} onChange={(e) => set({ size: Number(e.currentTarget.value) })}>
+          {sizes.map((s) => (
+            <option key={s.width} value={String(s.font)}>
+              {Math.round(s.font)}px
+            </option>
+          ))}
+        </select>
+      </label>
+      <Sample />
+    </section>
+  );
+}
+
+/** A few lines as a terminal would draw them, in the type and colours chosen. */
+function Sample() {
+  const ink = (index: number) => ({ color: `var(--term-ansi-${index})` });
+  return (
+    <div class="term-sample" aria-hidden="true" translate={false}>
+      <div>
+        <span style={ink(2)}>~/iglu</span> <span style={ink(4)}>main</span> <span style={ink(5)}>❯</span> git status --short
+      </div>
+      <div>
+        <span style={ink(1)}> M</span> console/src/<span class="term-sample-pick">terminal.ts</span>
+      </div>
+      <div>
+        <span style={ink(3)}>??</span> console/src/termstyle.ts
+      </div>
+      <div>
+        <span style={ink(2)}>~/iglu</span> <span style={ink(4)}>main</span> <span style={ink(5)}>❯</span> <span class="term-sample-caret"> </span>
+      </div>
+      <div class="term-sample-colours">
+        {XTERM.map((_, index) => (
+          <span key={index} style={{ background: `var(--term-ansi-${index})` }} />
+        ))}
+      </div>
+    </div>
   );
 }
 

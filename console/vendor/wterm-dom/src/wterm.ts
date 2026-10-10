@@ -4,6 +4,8 @@
 // - press() and type() send a key or text from the host as if typed.
 // - A copy spanning rows no longer mounted reads them from the core.
 // - Plain URLs in output open on a modifier-click, as marked links do.
+// - The row height isn't fixed inline at init, so the host's stylesheet can
+//   change it, with the font, while the terminal runs.
 
 import {
   WasmBridge,
@@ -400,7 +402,6 @@ export class WTerm {
       if (this._destroyed) return this;
       const initialCols = this.cols;
       const initialRows = this.rows;
-      this._setRowHeight();
       if (this.autoResize) {
         const size = this._measureGridSize();
         if (size) {
@@ -1331,21 +1332,6 @@ export class WTerm {
         (parseFloat(cs.borderBottomWidth) || 0);
     }
     this.element.style.height = `${gridHeight + extra}px`;
-  }
-
-  private _setRowHeight(): void {
-    const probe = document.createElement("div");
-    probe.className = "term-row";
-    probe.style.visibility = "hidden";
-    probe.style.position = "absolute";
-    probe.textContent = "W";
-    this._container.appendChild(probe);
-    const h = probe.getBoundingClientRect().height;
-    probe.remove();
-    if (h > 0) {
-      this._rowHeight = h;
-      this.element.style.setProperty("--term-row-height", `${h}px`);
-    }
   }
 
   private _measureCharSize(): {

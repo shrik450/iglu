@@ -11,6 +11,7 @@ import { onPageKey } from "./keyboard.ts";
 import "./notify.ts";
 import { look, me, say } from "./state/store.ts";
 import { activeScreen, loadTerminals, restyleTerminals } from "./terminal.ts";
+import { applyTermStyle, termStyle } from "./termstyle.ts";
 
 // Read-only access to the focused terminal's text, for the browser test.
 Object.assign(globalThis, { iglu: { screen: activeScreen } });
@@ -23,6 +24,8 @@ effect(() => {
   queueMicrotask(restyleTerminals);
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", restyleTerminals);
+// And the type and colours chosen for them, once those are on the page.
+effect(() => void applyTermStyle(termStyle.value).then(restyleTerminals));
 document.addEventListener("keydown", onPageKey);
 const root = document.getElementById("app");
 if (root) render(<App />, root);

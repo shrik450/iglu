@@ -1,7 +1,9 @@
-// Per-browser conveniences: the look, folded groups and the keyboard. Storage can be missing or refuse writes; everything works
-// without it.
+// Per-browser conveniences: the look, folded groups, the keyboard and the
+// terminal's type and colours. Storage can be missing or refuse writes;
+// everything works without it.
 
 import { type Chord, DEFAULT_PREFIX, usablePrefix } from "./keys.ts";
+import { THEMES, fontName } from "./themes.ts";
 
 export type Look = "auto" | "dark" | "light";
 
@@ -25,7 +27,7 @@ function write(key: string, value: unknown): void {
 
 /** Calls `changed` when another tab of this browser changes the preference,
  * so every tab follows it without a reload. */
-export function watch(key: "look" | "collapsed" | "keyboard", changed: () => void): void {
+export function watch(key: "look" | "collapsed" | "keyboard" | "terminal", changed: () => void): void {
   addEventListener("storage", (event) => {
     if (event.key === `iglu.${key}`) changed();
   });
@@ -77,3 +79,31 @@ export function loadKeyboard(): KeyboardPrefs {
 }
 
 export const saveKeyboard = (prefs: KeyboardPrefs) => write("keyboard", prefs);
+
+export interface TerminalPrefs {
+  /** A font installed where the browser runs; none is iglu's, JetBrains Mono. */
+  font: string | null;
+  /** The text's size, in pixels, before it's nudged to whole-pixel cells. */
+  size: number;
+  /** "iglu", a theme's name, or "pasted". */
+  theme: string;
+  /** A theme pasted in Ghostty's format, kept while another is tried. */
+  pasted: string;
+}
+
+export const DEFAULT_TERMINAL: TerminalPrefs = { font: null, size: 13, theme: "iglu", pasted: "" };
+
+export function loadTerminal(): TerminalPrefs {
+  const value = read("terminal");
+  if (typeof value !== "object" || value === null) return DEFAULT_TERMINAL;
+  const v = value as Record<string, unknown>;
+  const theme = typeof v.theme === "string" && (v.theme === "iglu" || v.theme === "pasted" || Object.hasOwn(THEMES, v.theme)) ? v.theme : DEFAULT_TERMINAL.theme;
+  return {
+    font: typeof v.font === "string" ? fontName(v.font) : null,
+    size: typeof v.size === "number" && v.size >= 6 && v.size <= 40 ? v.size : DEFAULT_TERMINAL.size,
+    theme,
+    pasted: typeof v.pasted === "string" ? v.pasted : "",
+  };
+}
+
+export const saveTerminal = (prefs: TerminalPrefs) => write("terminal", prefs);
