@@ -13,6 +13,11 @@ test("secondary device attributes are answered where the query ends", () => {
   assert.deepEqual(scan(none, bytes("\x1b[>0c"), cursor).replies, [{ end: 5, text: "\x1b[>1;10;0c" }]);
 });
 
+test("the terminal names itself when asked its version", () => {
+  assert.deepEqual(scan(none, bytes("\x1b[>q"), cursor).replies, [{ end: 4, text: "\x1bP>|iglu\x1b\\" }]);
+  assert.deepEqual(scan(none, bytes("\x1b[>0q"), cursor).replies, [{ end: 5, text: "\x1bP>|iglu\x1b\\" }]);
+});
+
 test("the cursor's colour is answered in X11 form, with the terminator it came with", () => {
   assert.deepEqual(scan(none, bytes("\x1b]12;?\x1b\\"), cursor).replies, [{ end: 8, text: "\x1b]12;rgb:8f8f/d8d8/ffff\x1b\\" }]);
   assert.deepEqual(scan(none, bytes("\x1b]12;?\x07"), cursor).replies, [{ end: 7, text: "\x1b]12;rgb:8f8f/d8d8/ffff\x07" }]);
@@ -39,7 +44,7 @@ test("a query split across chunks is answered once it completes", () => {
 });
 
 test("what wterm answers, and everything else, passes unanswered", () => {
-  for (const other of ["\x1b[c", "\x1b[0c", "\x1b]10;?\x07", "\x1b]11;?\x1b\\", "\x1b[6n", "\x1b[1;31m", "\x1b[?u", "\x1b]0;title\x07", "\x1b[>0q", "\x1b[1 c"]) {
+  for (const other of ["\x1b[c", "\x1b[0c", "\x1b]10;?\x07", "\x1b]11;?\x1b\\", "\x1b[6n", "\x1b[1;31m", "\x1b[?u", "\x1b]0;title\x07", "\x1b[>1q", "\x1b[1 c", "\x1b[0 q"]) {
     assert.deepEqual(scan(none, bytes(other), cursor), { replies: [], carry: none }, JSON.stringify(other));
   }
 });

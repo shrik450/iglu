@@ -11,6 +11,7 @@ import { GhosttyCore } from "@wterm/ghostty";
 import { api, failure } from "./api/client.ts";
 import { withCtrl } from "./state/keys.ts";
 import { MAX_FILE_BYTES, pastedPath } from "./state/paste.ts";
+import { programTitle } from "./state/program.ts";
 import { scan } from "./state/replies.ts";
 import { say } from "./state/store.ts";
 import { type Colors, XTERM } from "./state/themes.ts";
@@ -74,6 +75,18 @@ export const ctrlHeld = signal(false);
 
 /** Mounted panes by `workspace/session`, so keyboard actions can focus one. */
 export const panes = new Map<string, TerminalPane>();
+
+/** What each mounted pane's program calls itself (OSC 0 or 2), by
+ * `workspace/session`. zmx sends it again to each new attach. */
+export const titles = signal<ReadonlyMap<string, string>>(new Map());
+
+function setTitle(key: string, title: string): void {
+  if ((titles.peek().get(key) ?? "") === title) return;
+  const next = new Map(titles.peek());
+  if (title) next.set(key, title);
+  else next.delete(key);
+  titles.value = next;
+}
 
 /** The pane the person last focused, for `globalThis.iglu.screen()`. */
 let lastFocused: TerminalPane | null = null;
@@ -156,6 +169,10 @@ export class TerminalPane {
       onBinary: (data) => this.send(data),
       onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
       onPasteFiles: (files) => void this.pasteFiles(files),
+      onTitle: (title) => setTitle(this.key, programTitle(title)),
+      // Ghostty's own answer: a VT220 with colour, which can set the
+      // clipboard (OSC 52), so programs like nvim copy through it.
+      primaryAttributes: "\x1b[?62;22;52c",
       onSearchChange: (state) => (this.found.value = state.query ? state : null),
       // Every pane tells its session its own size when that changes, focused
       // or not. zmx applies the most recent size from any client, so a
@@ -348,6 +365,7 @@ export class TerminalPane {
     this.socket?.close(1000);
     this.socket = null;
     panes.delete(this.key);
+    setTitle(this.key, "");
     if (lastFocused === this) lastFocused = null;
     this.sight.disconnect();
     this.container.removeEventListener("keydown", this.keyDown, { capture: true });

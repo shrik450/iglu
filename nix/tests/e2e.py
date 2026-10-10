@@ -270,6 +270,7 @@ try:
         browser("selected-keys", "demo")
         browser("styles-terminal", "demo")
         browser("grants-access", "demo")
+        browser("names-itself", "demo")
         browser("pastes-files", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
         browser("palette-from-terminal", "demo")

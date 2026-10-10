@@ -6,6 +6,8 @@
 // - Plain URLs in output open on a modifier-click, as marked links do.
 // - Files pasted or dropped on the terminal go to `onPasteFiles`, and
 //   paste() pastes text from the host as a clipboard paste would.
+// - `primaryAttributes` answers primary device attributes in place of the
+//   core's VT100, so a host can say what it supports, such as OSC 52.
 // - The row height isn't fixed inline at init, so the host's stylesheet can
 //   change it, with the font, while the terminal runs; new cell metrics lay
 //   the grid out again even when its size in cells stays the same.
@@ -31,6 +33,9 @@ import {
   type SearchOptions,
   type SearchState,
 } from "./search.js";
+
+/** What the core answers to primary device attributes. */
+const CORE_PRIMARY_ATTRIBUTES = "\x1b[?1;2c";
 
 const SYNCHRONIZED_OUTPUT_TIMEOUT_MS = 1000;
 const PROGRAMMATIC_SCROLL_TOLERANCE = 1;
@@ -74,6 +79,9 @@ export interface WTermOptions {
   onClipboardWrite?: (text: string) => void;
   /** Files pasted or dropped on the terminal, with no text to paste. */
   onPasteFiles?: (files: File[]) => void;
+  /** The answer to primary device attributes (`CSI c`), in place of the
+   * core's, which says only "a VT100 with advanced video". */
+  primaryAttributes?: string;
   /** Latest shell-reported state per parser chunk. Requires a supporting core and OSC 133 markers. */
   onShellIntegration?: (state: ShellIntegrationState) => void;
   onResize?: (cols: number, rows: number) => void;
@@ -139,6 +147,7 @@ export class WTerm {
   onShellIntegration: ((state: ShellIntegrationState) => void) | null;
   onClipboardWrite: ((text: string) => void) | null;
   private readonly _onPasteFiles: ((files: File[]) => void) | null;
+  private readonly _primaryAttributes: string | null;
   onResize: ((cols: number, rows: number) => void) | null;
   onSearchChange: ((state: SearchState) => void) | null;
 
@@ -167,6 +176,7 @@ export class WTerm {
     this.onShellIntegration = options.onShellIntegration || null;
     this.onClipboardWrite = options.onClipboardWrite || null;
     this._onPasteFiles = options.onPasteFiles || null;
+    this._primaryAttributes = options.primaryAttributes || null;
     this.onResize = options.onResize || null;
     this.onSearchChange = options.onSearchChange || null;
     this._search = new SearchController((reveal) => {
@@ -1235,6 +1245,9 @@ export class WTerm {
     let firstError: unknown;
     let hasError = false;
     while ((response = this.bridge.getResponse()) !== null) {
+      if (response === CORE_PRIMARY_ATTRIBUTES && this._primaryAttributes) {
+        response = this._primaryAttributes;
+      }
       try {
         if (this.onData) this.onData(response);
       } catch (error) {

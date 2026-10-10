@@ -2,9 +2,10 @@
 //
 // Shells and TUIs query the terminal and wait for the answer. wterm answers
 // most of them: device attributes, cursor and status reports, modes, the
-// foreground and background colours, and the window's size. It leaves two
+// foreground and background colours, and the window's size. It leaves three
 // that programs ask for: the secondary device attributes, which nvim and
-// tmux send, and the cursor's colour. The console answers those.
+// tmux send, the terminal's name and version, which fish and tmux send, and
+// the cursor's colour. The console answers those.
 
 /** A reply, due once the terminal has been given `chunk[0..end)`. */
 export interface Reply {
@@ -27,6 +28,8 @@ const LONGEST = 32;
 const CURSOR_QUERY = "12;?";
 /** xterm's form: type 1, firmware version 10, no ROM cartridge. */
 const SECONDARY = "\x1b[>1;10;0c";
+/** XTVERSION's answer: the terminal's name. */
+const VERSION = "\x1bP>|iglu\x1b\\";
 
 /** `#rrggbb` as X11 colour, `rgb:rrrr/gggg/bbbb`. */
 export function xcolour(hex: string): string | null {
@@ -67,7 +70,9 @@ export function scan(carry: Uint8Array, chunk: Uint8Array, cursor: string): Scan
       const middle = j;
       while (j < bytes.length && bytes[j]! >= 0x20 && bytes[j]! <= 0x2f) j += 1;
       if (j >= bytes.length) return unfinished(start);
-      if (bytes[j] === 0x63 && middle === j && (params === ">" || params === ">0")) reply(j + 1, SECONDARY);
+      const asks = middle === j && (params === ">" || params === ">0");
+      if (asks && bytes[j] === 0x63) reply(j + 1, SECONDARY);
+      if (asks && bytes[j] === 0x71) reply(j + 1, VERSION);
       i = j + 1;
     } else if (kind === 0x5d) {
       // OSC, ended by BEL or by ST, which is answered in kind.

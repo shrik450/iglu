@@ -580,6 +580,42 @@ def pastes_files(page: Page, name: str) -> Any:
     return {"screen": shown}
 
 
+# A query's answer, read back raw from the terminal, then printed quoted on
+# one line that the command as typed can't be mistaken for.
+ANSWER = (
+    "bash -c 'printf \"{query}\" >/dev/tty; IFS= read -rs -t 5 {until} a </dev/tty; "
+    "printf \"answer-%s %q.\\n\" {mark} \"$a\"'"
+)
+
+
+def names_itself(page: Page, name: str) -> Any:
+    """A program's title shows in its column's header. Asked what it is,
+    the terminal says it can set the clipboard, which nvim checks before
+    copying through it, and gives its name to programs that ask."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    # Shells set their own title at each prompt, so it's looked for while
+    # the command runs.
+    at_prompt(page, first)
+    page.keyboard.type(f"printf '\\033]2;title-%s\\007' {mark}; sleep 4; printf 'set-%s\\n' {mark}")
+    page.keyboard.press("Enter")
+    expect(column(page, first).locator("header .ct")).to_have_text(f"title-{mark}")
+    shows(page, f"set-{mark}")
+    answers = {}
+    # Up to the final `c`; the version's answer, which ends in a backslash
+    # no shell passes on easily, by its length.
+    for asked, query, until in (("attributes", "\\e[c", "-d c"), ("version", "\\e[>q", "-N 10")):
+        mark = str(time.time_ns())
+        shown = run_in_column(page, first, ANSWER.format(query=query, until=until, mark=mark), f"answer-{mark} ")
+        found = re.search(rf"answer-{mark} (\S+)\.", shown.replace("\n", ""))
+        assert found, shown
+        answers[asked] = found[1]
+    assert "62;22;52" in answers["attributes"], answers
+    assert "iglu" in answers["version"], answers
+    return answers
+
+
 def grants_access(page: Page, name: str) -> Any:
     """What a workspace may do from inside shows in its details, starting
     with working on its own columns; a toggle there changes it, as iglud
@@ -1324,6 +1360,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "selected-keys": selected_keys,
     "styles-terminal": styles_terminal,
     "grants-access": grants_access,
+    "names-itself": names_itself,
     "pastes-files": pastes_files,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,

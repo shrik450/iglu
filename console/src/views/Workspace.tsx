@@ -62,7 +62,7 @@ import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
 import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
-import { ctrlHeld, newCore, panes, TerminalPane } from "../terminal.ts";
+import { ctrlHeld, newCore, panes, TerminalPane, titles } from "../terminal.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
   const r = route.value;
@@ -689,6 +689,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
   const [listing, setListing] = useState(false);
   const { name } = column;
   const title = titleOf(column);
+  const program = titles.value.get(`${ws.id}/${name}`);
   const state = attention ? attentionText(attention) : null;
   const arranged = arrangeable(column.state);
   const [status, setStatus] = useState("");
@@ -720,7 +721,13 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
             {title}
           </b>
         )}
-        {attention?.summary ? <span class="ct">{attention.summary}</span> : null}
+        {attention?.summary ? (
+          <span class="ct">{attention.summary}</span>
+        ) : program ? (
+          <span class="ct" translate={false} title="What the program here calls itself">
+            {program}
+          </span>
+        ) : null}
         {state && state.text !== "idle" ? <span class={`state ${state.tone}`}>{state.text}</span> : null}
         {threads.length > 1 ? (
           <button type="button" class="threads-btn" aria-expanded={listing} onClick={() => setListing(!listing)}>

@@ -81,6 +81,7 @@ def main() -> None:
             step("selected-keys", browser.selected_keys, page, NAME)
             step("styles-terminal", browser.styles_terminal, page, NAME)
             step("grants-access", browser.grants_access, page, NAME)
+            step("names-itself", browser.names_itself, page, NAME)
             step("pastes-files", browser.pastes_files, page, NAME)
             added = step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")["added"]
             step("attention", browser.terminal, page, NAME, "iglu-status set waiting Check needs you; printf 'set-%s\\n' 42", "set-42")
