@@ -424,10 +424,14 @@ def mac_keys(page: Page, name: str) -> Any:
     Escape on clearing the selection. Ctrl+Option and a letter is Meta with
     its control byte, which sent nothing, and an Option that isn't Meta
     types its character, which went as Meta anyway."""
-    prior = page.evaluate("localStorage.getItem('iglu.keyboard')")
     mac = page.context.new_page()
     mac.add_init_script("Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' })")
-    mac.add_init_script("localStorage.setItem('iglu.keyboard', JSON.stringify({ optionAsMeta: 'off' }))")
+    # The person's own keyboard setting is kept in the tab, to put back after.
+    mac.add_init_script(
+        "try { if (sessionStorage.getItem('iglu.test.keyboard') === null)"
+        " sessionStorage.setItem('iglu.test.keyboard', JSON.stringify(localStorage.getItem('iglu.keyboard')));"
+        " localStorage.setItem('iglu.keyboard', JSON.stringify({ optionAsMeta: 'off' })); } catch {}"
+    )
     try:
         open_workspace(mac, name)
         first = columns(mac)[0]
@@ -452,8 +456,11 @@ def mac_keys(page: Page, name: str) -> Any:
         mac.keyboard.press("Alt+b")
         return {"screen": shows(mac, f"read-{mark} $'\\E\\002b'")}
     finally:
+        mac.evaluate(
+            "() => { try { const prior = JSON.parse(sessionStorage.getItem('iglu.test.keyboard'));"
+            " if (prior === null) localStorage.removeItem('iglu.keyboard'); else localStorage.setItem('iglu.keyboard', prior); } catch {} }"
+        )
         mac.close()
-        page.evaluate("(prior) => prior === null ? localStorage.removeItem('iglu.keyboard') : localStorage.setItem('iglu.keyboard', prior)", prior)
 
 
 def finds_output(page: Page, name: str) -> Any:
