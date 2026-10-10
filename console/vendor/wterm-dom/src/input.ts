@@ -1,3 +1,7 @@
+// Changed by iglu, not upstream (see ../UPSTREAM):
+// - The wheel sends arrow keys on the alternate screen when the program
+//   isn't tracking the mouse, as xterm's alternate scroll mode does.
+
 import type { TerminalCore } from "@wterm/core";
 import { InputAccessibility } from "./input-accessibility.js";
 import { isLinkActivationModifier } from "./hyperlink.js";
@@ -133,6 +137,8 @@ export class InputHandler {
   private pressedModifiers = new Set<string>();
   private deliveredKeys = new Set<string>();
   private tabExitArmed = false;
+  /** Wheel travel on the alternate screen not yet sent, in rows. */
+  private wheelRows = 0;
 
   private _onKeyDown: (e: KeyboardEvent) => void;
   private _onKeyUp: (e: KeyboardEvent) => void;
@@ -261,7 +267,9 @@ export class InputHandler {
     this._onMouseLeave = () => {
       if (this.mouseButtons === 0) this.lastMouseMotion = null;
     };
-    this._onWheel = (event) => this.handleMouse(event, "wheel");
+    this._onWheel = (event) => {
+      if (!this.scrollAlternateScreen(event)) this.handleMouse(event, "wheel");
+    };
 
     this.textarea.addEventListener("keydown", this._onKeyDown);
     this.textarea.addEventListener("keyup", this._onKeyUp);
@@ -682,6 +690,38 @@ export class InputHandler {
       this.selectionActions?.clearSelection();
       this.onData(value);
     }
+  }
+
+  /**
+   * The alternate screen has no history to scroll. Unless the program tracks
+   * the mouse, the wheel sends it arrow keys instead, so pagers and editors
+   * that don't ask for the mouse still scroll. Returns whether it did.
+   */
+  private scrollAlternateScreen(event: WheelEvent): boolean {
+    const bridge = this.getBridge();
+    if (
+      !bridge?.usingAltScreen() ||
+      (bridge.mouseTracking?.() ?? 0) !== 0 ||
+      event.shiftKey ||
+      Math.abs(event.deltaX) > Math.abs(event.deltaY)
+    )
+      return false;
+    event.preventDefault();
+    this.wheelRows +=
+      event.deltaMode === 1
+        ? event.deltaY
+        : event.deltaMode === 2
+          ? event.deltaY * bridge.getRows()
+          : event.deltaY / (this.getCellSize()?.rowHeight ?? 16);
+    const rows = Math.trunc(this.wheelRows);
+    if (rows === 0) return true;
+    this.wheelRows -= rows;
+    const keys = bridge.cursorKeysApp() ? APP_KEYS : NORMAL_KEYS;
+    this.onData(
+      (rows < 0 ? keys.ArrowUp : keys.ArrowDown).repeat(Math.abs(rows)),
+      true,
+    );
+    return true;
   }
 
   private handleMouse(

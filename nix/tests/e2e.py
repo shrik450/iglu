@@ -260,6 +260,7 @@ try:
         browser("terminal", "demo", "echo token=$TEST_TOKEN", "token=hunter2")
         browser("answers-queries", "demo")
         browser("draws-blocks", "demo")
+        browser("wheels-pager", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
         browser("palette-from-terminal", "demo")
         browser("palette-ranks", "demo")

@@ -300,6 +300,31 @@ def draws_blocks(page: Page, name: str) -> Any:
     return found
 
 
+# A program on the alternate screen that doesn't track the mouse, like a
+# pager: it shows a mark, then prints what the next six bytes it reads were.
+PAGER = (
+    "bash -c 'printf \"\\e[?1049hready-%s\" {mark}; IFS= read -rsn6 -t 20 k; "
+    "printf \"\\e[?1049l\"; printf \"wheel-%s %q\\n\" {mark} \"$k\"'"
+)
+
+
+def wheels_pager(page: Page, name: str) -> Any:
+    """On the alternate screen, the wheel sends arrow keys unless the
+    program tracks the mouse, so pagers and editors scroll with it; it did
+    nothing there, with no history to scroll."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, PAGER.format(mark=mark), f"ready-{mark}")
+    box = column(page, first).locator(".term-host").bounding_box()
+    assert box
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    row = float(column(page, first).locator(".wterm").evaluate("(w) => parseFloat(getComputedStyle(w).getPropertyValue('--term-row-height'))"))
+    page.mouse.wheel(0, row)
+    page.mouse.wheel(0, -row)
+    return {"screen": shows(page, f"wheel-{mark} $'\\E[B\\E[A'")}
+
+
 def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
     """Coming back to a workspace where an agent waits lands on that agent's
     column, whichever column you were in when you left."""
@@ -883,6 +908,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "new-column": new_column,
     "answers-queries": answers_queries,
     "draws-blocks": draws_blocks,
+    "wheels-pager": wheels_pager,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,
