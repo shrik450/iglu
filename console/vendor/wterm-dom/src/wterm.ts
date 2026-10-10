@@ -1,3 +1,6 @@
+// Changed by iglu, not upstream (see ../UPSTREAM):
+// - init() leaves focus where it is; the host focuses the terminal it means to.
+
 import {
   WasmBridge,
   type TerminalCore,
@@ -437,7 +440,6 @@ export class WTerm {
         this._lockHeight();
       }
 
-      this.input.focus();
       this._initialRender();
       if (this.cols !== initialCols || this.rows !== initialRows)
         this.onResize?.(this.cols, this.rows);
