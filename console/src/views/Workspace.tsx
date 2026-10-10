@@ -171,14 +171,15 @@ function Main({ ws }: { ws: WorkspaceView }) {
 
 /** Keys a phone's keyboard lacks, for the column with the keyboard. A tap
  * doesn't take focus, so the on-screen keyboard stays up. Ctrl applies to the
- * next character typed. Arrows go as a shell expects them. */
-const ROW: readonly { label: string; name: string; text: string }[] = [
-  { label: "esc", name: "Escape", text: "\x1b" },
-  { label: "tab", name: "Tab", text: "\t" },
-  { label: "←", name: "Left", text: "\x1b[D" },
-  { label: "↓", name: "Down", text: "\x1b[B" },
-  { label: "↑", name: "Up", text: "\x1b[A" },
-  { label: "→", name: "Right", text: "\x1b[C" },
+ * next key, tapped or typed. Keys go as the program asks for them, so arrows
+ * suit a shell and a full-screen program alike; ^C is always an interrupt. */
+const ROW: readonly ({ label: string; name: string } & ({ key: string } | { text: string }))[] = [
+  { label: "esc", name: "Escape", key: "Escape" },
+  { label: "tab", name: "Tab", key: "Tab" },
+  { label: "←", name: "Left", key: "ArrowLeft" },
+  { label: "↓", name: "Down", key: "ArrowDown" },
+  { label: "↑", name: "Up", key: "ArrowUp" },
+  { label: "→", name: "Right", key: "ArrowRight" },
   { label: "^C", name: "Interrupt (Ctrl+C)", text: "\x03" },
 ];
 
@@ -190,7 +191,7 @@ function KeyRow({ ws }: { ws: WorkspaceView }) {
         ctrl
       </button>
       {ROW.map((key) => (
-        <button key={key.name} type="button" aria-label={key.name} onClick={() => pane()?.type(key.text)}>
+        <button key={key.name} type="button" aria-label={key.name} onClick={() => ("key" in key ? pane()?.press(key.key) : pane()?.type(key.text))}>
           {key.label}
         </button>
       ))}

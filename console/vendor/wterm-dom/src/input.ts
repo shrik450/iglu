@@ -7,6 +7,8 @@
 // - Escape reaches the program even with a selection, which it clears.
 // - The terminal's element takes focus when text in it is selected, rather
 //   than leaving it to the page, and a key pressed then is handled as typed.
+// - press() handles a key the host sends, as if pressed here.
+// - Ctrl+Alt with a letter sends Meta and its control byte.
 
 import type { TerminalCore } from "@wterm/core";
 import { InputAccessibility } from "./input-accessibility.js";
@@ -512,6 +514,11 @@ export class InputHandler {
     if (e.defaultPrevented) this.focus();
   };
 
+  /** Handles a key from the host as if it were pressed here. */
+  press(e: KeyboardEvent): void {
+    this.handleKeyDown(e);
+  }
+
   private handleKeyUp(e: KeyboardEvent): void {
     const keyId = e.code || e.key;
     this.pressedModifiers.delete(e.code);
@@ -998,6 +1005,14 @@ export class InputHandler {
       const control = legacyControlByte(e.key);
       if (control !== null) return control;
       if (e.key === "Backspace") return "\x08";
+    }
+    // Ctrl+Alt with a letter is Meta and its control byte, as xterm sends it,
+    // so programs get C-M-b. Option changes a Mac key's character, so the
+    // letter comes from the key itself.
+    if (e.ctrlKey && e.altKey && !e.metaKey) {
+      const letter = /^Key([A-Z])$/.exec(e.code)?.[1];
+      const control = legacyControlByte(letter ?? e.key);
+      if (control !== null) return "\x1b" + control;
     }
 
     if (e.key === "Enter" && e.shiftKey) return "\x1b[13;2u";

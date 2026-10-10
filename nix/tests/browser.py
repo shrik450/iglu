@@ -358,9 +358,13 @@ def mac_keys(page: Page, name: str) -> Any:
     """On a Mac, where Cmd copies and pastes, Ctrl+V, Escape and Ctrl+C reach
     the program even with text selected: the terminal kept Ctrl+V for a
     paste that never came, ate Ctrl+C while anything was selected, and spent
-    Escape on clearing the selection."""
+    Escape on clearing the selection. Ctrl+Option and a letter is Meta with
+    its control byte, which sent nothing, and an Option that isn't Meta
+    types its character, which went as Meta anyway."""
+    prior = page.evaluate("localStorage.getItem('iglu.keyboard')")
     mac = page.context.new_page()
     mac.add_init_script("Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' })")
+    mac.add_init_script("localStorage.setItem('iglu.keyboard', JSON.stringify({ optionAsMeta: 'off' }))")
     try:
         open_workspace(mac, name)
         first = columns(mac)[0]
@@ -378,9 +382,15 @@ def mac_keys(page: Page, name: str) -> Any:
         mac.keyboard.press("Control+v")
         mac.keyboard.press("Escape")
         mac.keyboard.press("Control+c")
-        return {"screen": shows(mac, f"read-{mark} $'\\026\\E\\003'")}
+        shows(mac, f"read-{mark} $'\\026\\E\\003'")
+        mark = str(time.time_ns())
+        run_in_column(mac, first, RAW_READ.format(mark=mark), f"ready-{mark}")
+        mac.keyboard.press("Control+Alt+b")
+        mac.keyboard.press("Alt+b")
+        return {"screen": shows(mac, f"read-{mark} $'\\E\\002b'")}
     finally:
         mac.close()
+        page.evaluate("(prior) => prior === null ? localStorage.removeItem('iglu.keyboard') : localStorage.setItem('iglu.keyboard', prior)", prior)
 
 
 def finds_output(page: Page, name: str) -> Any:
@@ -828,6 +838,15 @@ def phone_keys(page: Page, name: str) -> Any:
         tap.keyboard.press("Enter")
         shows(tap, f"kept{mark}", 2)
         assert f"gone{mark}echo" not in screen(tap).replace("\n", ""), screen(tap)
+        # Arrows go as the program asks, here application cursor keys, and
+        # bring a terminal scrolled back into its history to the live screen.
+        mark = str(time.time_ns())
+        run_in_column(tap, first, "printf '\\e[?1h'; seq 1 300; " + RAW_READ.format(mark=mark) + "; printf '\\e[?1l'", f"ready-{mark}")
+        term = column(tap, first).locator(".wterm")
+        term.evaluate("(w) => (w.scrollTop = 0)")
+        keys.get_by_role("button", name="Left").tap()
+        shows(tap, f"read-{mark} $'\\EOD'")
+        assert term.evaluate("(w) => w.scrollHeight - w.scrollTop - w.clientHeight < 5"), "still in the history"
         return {"column": first}
     finally:
         phone.close()

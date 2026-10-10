@@ -184,11 +184,20 @@ function handle(event: KeyboardEvent, focus: Focus, send?: (text: string) => voi
   const outcome = resolve(armed.value ? "prefix" : "normal", input, { mac, ...keyboard.value });
   switch (outcome.kind) {
     case "pass": {
-      if (!send || !input.alt || input.ctrl || input.meta || !optionIsMeta()) return false;
-      const bytes = metaBytes(input.code, input.shift);
-      if (!bytes) return false;
+      if (!send || !input.alt || input.ctrl || input.meta) return false;
+      if (optionIsMeta()) {
+        const bytes = metaBytes(input.code, input.shift);
+        if (!bytes) return false;
+        event.preventDefault();
+        send(bytes);
+        return true;
+      }
+      // An Option that isn't Meta types its character, as it does everywhere
+      // else on a Mac, where the terminal would send it as Meta. Dead keys
+      // aren't one character, and compose as usual.
+      if (!mac || [...input.key].length !== 1) return false;
       event.preventDefault();
-      send(bytes);
+      send(input.key);
       return true;
     }
     case "arm":

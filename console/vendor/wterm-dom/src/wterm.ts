@@ -1,6 +1,7 @@
 // Changed by iglu, not upstream (see ../UPSTREAM):
 // - init() leaves focus where it is; the host focuses the terminal it means to.
 // - `tabExit: false` turns off Escape then Tab leaving the terminal.
+// - press() and type() send a key or text from the host as if typed.
 
 import {
   WasmBridge,
@@ -398,17 +399,7 @@ export class WTerm {
 
       this.input = new InputHandler(
         this.element,
-        (data, preserveScroll = false) => {
-          if (!preserveScroll) {
-            this._outputAnnouncements.input();
-            this._scrollToBottom();
-          }
-          if (this.onData) {
-            this.onData(data);
-          } else {
-            this.write(data);
-          }
-        },
+        (data, preserveScroll = false) => this._typed(data, preserveScroll),
         () => this.bridge,
         () =>
           this._charWidth > 0 && this._rowHeight > 0
@@ -924,6 +915,32 @@ export class WTerm {
       }
     }
     this.renderer.setSearchDecorations(fragment);
+  }
+
+  /**
+   * Handles a key as if pressed in the terminal: encoded for the program's
+   * modes, sent, and the view returned to the live screen. For keys a host
+   * offers itself, such as a phone's row of keys.
+   */
+  press(event: KeyboardEvent): void {
+    this.input?.press(event);
+  }
+
+  /** Sends text as if typed, returning the view to the live screen. */
+  type(data: string): void {
+    if (this.input) this._typed(data, false);
+  }
+
+  private _typed(data: string, preserveScroll: boolean): void {
+    if (!preserveScroll) {
+      this._outputAnnouncements.input();
+      this._scrollToBottom();
+    }
+    if (this.onData) {
+      this.onData(data);
+    } else {
+      this.write(data);
+    }
   }
 
   focus(): void {

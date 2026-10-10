@@ -131,7 +131,6 @@ export class TerminalPane {
     container.append(element);
     this.term = new WTerm(element, {
       core,
-      cursorBlink: true,
       // The console has its own way out, the prefix; Claude Code takes Escape then Tab.
       tabExit: false,
       onData: (data) => {
@@ -173,7 +172,7 @@ export class TerminalPane {
 
   /** The console's keys come first; a key it takes never reaches the terminal. */
   private readonly keyDown = (event: KeyboardEvent) => {
-    if (this.shortcuts(event, (text) => this.send(this.encoder.encode(text)))) event.stopPropagation();
+    if (this.shortcuts(event, (text) => this.term.type(text))) event.stopPropagation();
   };
 
   /** A sideways swipe or Shift+wheel moves along the strip; the terminal
@@ -280,9 +279,18 @@ export class TerminalPane {
     else this.term.findNext();
   }
 
-  /** Sends `text` as if typed, for keys a phone's keyboard doesn't have. */
+  /** Sends `text` as if typed. */
   type(text: string): void {
-    this.send(this.encoder.encode(text));
+    this.term.type(text);
+  }
+
+  /** Presses `key`, as a KeyboardEvent names it, for keys a phone's keyboard
+   * doesn't have: encoded as the program's modes want it, and with Ctrl when
+   * it's held from the key row. */
+  press(key: string): void {
+    const ctrlKey = ctrlHeld.peek();
+    ctrlHeld.value = false;
+    this.term.press(new KeyboardEvent("keydown", { key, ctrlKey }));
   }
 
   dispose(): void {
