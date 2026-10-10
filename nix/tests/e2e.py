@@ -262,6 +262,7 @@ try:
         browser("draws-blocks", "demo")
         browser("wheels-pager", "demo")
         browser("copies-out", "demo")
+        browser("finds-output", "demo")
         browser("inserts-text", "demo")
         browser("mac-keys", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")

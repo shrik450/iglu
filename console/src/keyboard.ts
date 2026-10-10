@@ -30,6 +30,7 @@ export const afterPrefix = (key: string) => `${chordLabel(keyboard.value.prefix,
  * alone means its first binding; a whole action, the binding for exactly it. */
 export function keysFor(action: Action["kind"] | Action): string | undefined {
   if (action === "palette") return onKeyboard("⌘K", mac);
+  if (action === "find") return onKeyboard(mac ? "⌘F" : "⌃⇧F", mac);
   const wanted = typeof action === "string" ? (b: Action) => b.kind === action : (b: Action) => JSON.stringify(b) === JSON.stringify(action);
   const after = BINDINGS.find((b) => wanted(b.action) && b.after)?.after;
   return after ? afterPrefix(after.label) : undefined;
@@ -97,6 +98,11 @@ export function perform(action: Action): void {
     case "zoom":
       if (ws) toggleZoom(ws);
       return;
+    case "find": {
+      const column = ws && activeOf(ws);
+      if (ws && column) ask(ws, { kind: "find", column });
+      return;
+    }
     case "last-workspace":
       lastWorkspace();
       return;

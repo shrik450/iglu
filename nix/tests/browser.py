@@ -93,10 +93,11 @@ def reaches(page: Page, name: str) -> None:
         assert time.monotonic() < deadline, {"focused": focused_column(page), "active": page.evaluate("document.activeElement?.outerHTML.slice(0, 120)")}
         time.sleep(0.05)
     mark = str(time.time_ns())
-    page.keyboard.type(f"echo here{mark}")
+    # The shell prints what isn't typed: a line typed just after the column
+    # changed size may be drawn at the old width until the shell hears of it.
+    page.keyboard.type(f"printf 'here-%s\\n' {mark}")
     page.keyboard.press("Enter")
-    # Once in the command, once printed.
-    shows(page, f"here{mark}", 2)
+    shows(page, f"here-{mark}")
 
 
 def wholly_shown(page: Page, name: str) -> bool:
@@ -372,6 +373,49 @@ def mac_keys(page: Page, name: str) -> Any:
         return {"screen": shows(mac, f"read-{mark} $'\\026\\E\\003'")}
     finally:
         mac.close()
+
+
+def finds_output(page: Page, name: str) -> Any:
+    """The prefix and s find in a column's output, history included: it starts
+    at the newest match and shows it, ↩ goes back to earlier ones, and Escape
+    puts the search away and gives the column the keyboard back."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, f"bash -c 'n=nee; for i in 1 2 3; do echo ${{n}}dle-{mark}-$i; seq 1 300; done; echo done-{mark}'", f"done-{mark}")
+    prefix(page, "s")
+    bar = page.get_by_role("search", name=re.compile(r"^Find in "))
+    expect(bar).to_be_visible()
+    bar.get_by_role("searchbox").fill(f"needle-{mark}")
+    expect(bar).to_contain_text("3 of 3")
+
+    def shown() -> bool:
+        # The active match is scrolled into the terminal's view.
+        return bool(column(page, first).locator(".wterm").evaluate(
+            "(w) => { const m = w.querySelector('.term-search-active'); if (!m) return false;"
+            " const a = m.getBoundingClientRect(), b = w.getBoundingClientRect(); return a.top >= b.top && a.bottom <= b.bottom; }"
+        ))
+
+    deadline = time.monotonic() + 5
+    while not shown():
+        assert time.monotonic() < deadline, "the newest match isn't shown"
+        time.sleep(0.1)
+    page.keyboard.press("Enter")
+    expect(bar).to_contain_text("2 of 3")
+    page.keyboard.press("Shift+Enter")
+    expect(bar).to_contain_text("3 of 3")
+    page.keyboard.press("Enter")
+    page.keyboard.press("Enter")
+    expect(bar).to_contain_text("1 of 3")
+    deadline = time.monotonic() + 5
+    while not shown():
+        assert time.monotonic() < deadline, "the oldest match isn't shown"
+        time.sleep(0.1)
+    page.keyboard.press("Escape")
+    expect(bar).to_have_count(0)
+    expect(column(page, first).locator(".term-search-match, .term-search-active")).to_have_count(0)
+    reaches(page, first)
+    return {"column": first}
 
 
 def copies_out(page: Page, name: str) -> Any:
@@ -987,6 +1031,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "draws-blocks": draws_blocks,
     "wheels-pager": wheels_pager,
     "copies-out": copies_out,
+    "finds-output": finds_output,
     "inserts-text": inserts_text,
     "mac-keys": mac_keys,
     "palette-from-terminal": palette_from_terminal,

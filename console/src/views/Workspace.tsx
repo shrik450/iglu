@@ -535,6 +535,65 @@ function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
   );
 }
 
+/** Finding in a column's output, history included. It starts from the newest
+ * match, as terminals do: ↩ goes further back and ⇧↩ comes forward. Escape,
+ * or closing it, puts the search away and gives the column the keyboard. */
+function Finding({ ws, name, title }: { ws: WorkspaceView; name: string; title: string }) {
+  const field = useGrab<HTMLInputElement>();
+  const pane = panes.get(`${ws.id}/${name}`);
+  const found = pane?.found.value ?? null;
+  // However it's put away, its highlights go with it.
+  useEffect(() => () => pane?.find(""), [pane]);
+  const close = () => {
+    settle(ws, "find");
+    focusColumn(ws, name);
+  };
+  const again = (back: boolean) => pane?.findAgain(back);
+  return (
+    <div class="col-find" role="search" aria-label={`Find in ${title}`}>
+      <Icon name="search" size={12} />
+      <input
+        ref={field}
+        type="search"
+        aria-label={`Find in ${title}`}
+        placeholder="Find"
+        autocomplete="off"
+        spellcheck={false}
+        onInput={(e) => pane?.find(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            again(!e.shiftKey);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            close();
+          }
+        }}
+      />
+      <span class="n" aria-live="polite">
+        {foundText(found)}
+      </span>
+      <button type="button" aria-label="Earlier match" title="Earlier (↩)" disabled={!found?.count} onClick={() => again(true)}>
+        <Icon name="up" size={11} />
+      </button>
+      <button type="button" aria-label="Later match" title="Later (⇧↩)" disabled={!found?.count} onClick={() => again(false)}>
+        <Icon name="down" size={11} />
+      </button>
+      <button type="button" aria-label="Close find" title="Close (esc)" onClick={close}>
+        <Icon name="close" size={11} />
+      </button>
+    </div>
+  );
+}
+
+/** Where finding has got to: which match of how many, counted from the oldest. */
+function foundText(found: { count: number; activeIndex: number; searching: boolean; limited: boolean } | null): string {
+  if (!found) return "";
+  if (found.count === 0) return found.searching ? "Finding…" : "No matches";
+  const of = `${found.count.toLocaleString()}${found.limited ? "+" : ""}`;
+  return found.activeIndex === -1 ? of : `${(found.activeIndex + 1).toLocaleString()} of ${of}`;
+}
+
 /** Ending a column asks first; the question takes the keyboard, and Escape keeps the column. */
 function Ending({ ws, name, title }: { ws: WorkspaceView; name: string; title: string }) {
   const end = useGrab<HTMLButtonElement>();
@@ -631,6 +690,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
   const asked = question.value;
   const ending = asked?.kind === "end" && asked.column === name;
   const naming = asked?.kind === "label" && asked.column === name;
+  const finding = asked?.kind === "find" && asked.column === name;
   return (
     <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[props.zoomed ? "full" : column.width]) }} data-column={name} aria-label={`Column ${title}`}>
       <header
@@ -695,6 +755,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
           </span>
         )}
       </header>
+      {finding ? <Finding ws={ws} name={name} title={title} /> : null}
       {listing && threads.length > 1 ? (
         <ul class="threads" aria-label={`Threads in ${title}`}>
           {threads.map((t) => {

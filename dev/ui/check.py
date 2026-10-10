@@ -73,6 +73,7 @@ def main() -> None:
             step("draws-blocks", browser.draws_blocks, page, NAME)
             step("wheels-pager", browser.wheels_pager, page, NAME)
             step("copies-out", browser.copies_out, page, NAME)
+            step("finds-output", browser.finds_output, page, NAME)
             step("inserts-text", browser.inserts_text, page, NAME)
             step("mac-keys", browser.mac_keys, page, NAME)
             added = step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")["added"]

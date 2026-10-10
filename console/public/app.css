@@ -326,6 +326,15 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .col-ctl button:hover { background: var(--term-line); color: var(--term-ink); }
 .col-ctl .end { color: var(--error); }
 .col-ctl button[aria-pressed="true"] { color: var(--accent); }
+/* Finding in a column's output: a row under its header, as long as the search is on. */
+.col-find { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 10px; border-bottom: 1px solid var(--term-line); color: var(--term-dim); font: 12px/1 var(--mono); }
+.col-find input { flex: 1; min-width: 0; padding: 3px 6px; font: 12px/1.2 var(--mono); background: var(--term-bg); color: var(--term-ink); border: 1px solid var(--accent); border-radius: 5px; }
+.col-find input:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.col-find input::-webkit-search-cancel-button { display: none; }
+.col-find .n { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.col-find button { border: 0; background: transparent; color: var(--term-dim); padding: 4px 6px; border-radius: 4px; display: inline-grid; place-items: center; }
+.col-find button:hover:not(:disabled) { background: var(--term-line); color: var(--term-ink); }
+.col-find button:disabled { opacity: .4; }
 /* Positioned, so the terminal's hidden input sits inside its own column:
    focusing it otherwise scrolled the strip back to its start. */
 .term-host { position: relative; flex: 1; min-height: 0; }
@@ -335,6 +344,7 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
   position: absolute; inset: 0; padding: 4px 6px; border-radius: 0; box-shadow: none;
   --term-font-family: var(--mono); --term-font-size: 13.333px; --term-row-height: 17px;
   --term-selection-bg: rgba(143,216,255,.25);
+  --term-search-match: rgba(255,196,107,.28); --term-search-active: rgba(255,196,107,.6); --term-search-border: #ffc46b;
   scrollbar-width: thin; scrollbar-color: var(--term-line) transparent;
 }
 .term-host > .wterm ::selection { background: rgba(143,216,255,.25); }
@@ -498,7 +508,7 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
   .search kbd, .pitem .h { display: none; }
   /* A finger needs more than a mouse does to pick one column control. */
   .col-ctl { gap: 4px; }
-  .col-ctl button { min-width: 34px; min-height: 32px; display: inline-grid; place-items: center; }
+  .col-ctl button, .col-find button { min-width: 34px; min-height: 32px; display: inline-grid; place-items: center; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 0s !important; }

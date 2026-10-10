@@ -6,6 +6,8 @@
 // - it's ⌘K on a Mac, which no terminal program receives (Ctrl+K elsewhere,
 //   outside terminals);
 // - it follows the prefix, ⌃Space unless the person chose another, as in tmux;
+// - it's ⌘F on a Mac in a terminal, to find in its output (Ctrl+Shift+F
+//   elsewhere, which programs rarely bind);
 // - it's ⌥H/J/K/L and the person lets the console take those from terminals;
 // - or it's a plain key on a page where nothing interactive has focus,
 //   outside a workspace, such as j/k and ↩ on the overview. A focused button,
@@ -23,6 +25,7 @@ export type Action =
   | { kind: "close-column" }
   | { kind: "label-column" }
   | { kind: "zoom" }
+  | { kind: "find" }
   | { kind: "last-workspace" }
   | { kind: "add-column" }
   | { kind: "rename" }
@@ -137,6 +140,7 @@ export const BINDINGS: readonly Binding[] = [
   { action: { kind: "move-column", step: 1 }, does: "Move the column right", group: "Columns", after: letter("l", true) },
   { action: { kind: "width" }, does: "Change its width", group: "Columns", after: letter("w") },
   { action: { kind: "zoom" }, does: "Zoom it to fill the page, or put it back", group: "Columns", after: letter("z") },
+  { action: { kind: "find" }, does: "Find in its output", group: "Columns", after: letter("s") },
   { action: { kind: "add-column" }, does: "New column", group: "Columns", after: letter("c") },
   { action: { kind: "label-column" }, does: "Rename the column", group: "Columns", after: { code: "Comma", label: "," } },
   { action: { kind: "close-column" }, does: "End the column", group: "Columns", after: letter("x") },
@@ -169,6 +173,9 @@ export function resolve(mode: Mode, input: KeyInput, keymap: Keymap): Outcome {
   // off a Mac it's the palette only outside terminals.
   const command = keymap.mac ? input.meta && !input.ctrl : input.ctrl && !input.meta && input.focus !== "terminal";
   if (command && input.code === "KeyK" && !input.alt && !input.shift) return act({ kind: "palette" });
+
+  const find = keymap.mac ? input.meta && !input.ctrl && !input.shift : input.ctrl && input.shift && !input.meta;
+  if (find && input.focus === "terminal" && input.code === "KeyF" && !input.alt) return act({ kind: "find" });
 
   if (keymap.altMoves && input.alt && !input.ctrl && !input.meta && input.focus !== "field") {
     const binding = BINDINGS.find((b) => b.alt && matches(b.alt, input));

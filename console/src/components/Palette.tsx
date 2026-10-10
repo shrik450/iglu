@@ -61,6 +61,7 @@ function columnItems(ws: WorkspaceView): Item[] {
   if (here > 0) list.push({ label: `Move ${title} left`, hint: keysFor({ kind: "move-column", step: -1 }), run: () => void moveColumn(ws, -1) });
   if (here < columns.length - 1) list.push({ label: `Move ${title} right`, hint: keysFor({ kind: "move-column", step: 1 }), run: () => void moveColumn(ws, 1) });
   list.push({ label: `Rename column ${title}`, sub: column.label ? `session ${column.name}` : undefined, hint: keysFor("label-column"), run: () => labelOrSay(ws, column.name) });
+  if (column.state !== "ended" && column.state !== null) list.push({ label: `Find in ${title}`, sub: "Search its output", hint: keysFor("find"), run: () => ask(ws, { kind: "find", column: column.name }) });
   if (column.state === "ended") list.push({ label: `Restart ${title}`, run: () => void restartColumn(ws, column.name) });
   list.push({ label: `End ${title}`, hint: keysFor("close-column"), run: () => ask(ws, { kind: "end", column: column.name }) });
   return list;

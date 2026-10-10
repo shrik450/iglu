@@ -5,7 +5,7 @@
 
 import { signal } from "@preact/signals";
 import type { TerminalThemeColors } from "@wterm/core";
-import { WTerm } from "@wterm/dom";
+import { type SearchState, WTerm } from "@wterm/dom";
 import { GhosttyCore } from "@wterm/ghostty";
 
 import { withCtrl } from "./state/keys.ts";
@@ -72,6 +72,8 @@ export function activeScreen(): string {
 }
 
 export class TerminalPane {
+  /** What finding in this terminal's output has found, while a search is on. */
+  readonly found = signal<SearchState | null>(null);
   private readonly term: WTerm;
   private readonly core: GhosttyCore;
   private readonly encoder = new TextEncoder();
@@ -140,6 +142,7 @@ export class TerminalPane {
       // Mouse reports in the older encodings aren't text.
       onBinary: (data) => this.send(data),
       onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
+      onSearchChange: (state) => (this.found.value = state.query ? state : null),
       // Every pane tells its session its own size when that changes, focused
       // or not. zmx applies the most recent size from any client, so a
       // browser in the background stays quiet, and focusing claims the size.
@@ -263,6 +266,18 @@ export class TerminalPane {
    * nothing to focus; it asks `wantsFocus` once it has. */
   focus(): void {
     if (this.opened) this.term.focus();
+  }
+
+  /** Finds `query` in the output, history included, starting from the newest
+   * match; an empty query ends the search. */
+  find(query: string): void {
+    this.term.search(query, { newestFirst: true });
+  }
+
+  /** Moves to the next match back in the output, or forward. */
+  findAgain(back: boolean): void {
+    if (back) this.term.findPrevious();
+    else this.term.findNext();
   }
 
   /** Sends `text` as if typed, for keys a phone's keyboard doesn't have. */

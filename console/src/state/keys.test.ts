@@ -39,6 +39,17 @@ test("off a Mac, Ctrl+K in a terminal is the shell's, and the palette elsewhere"
   assert.deepEqual(resolve("normal", key("KeyK", { meta: true }), mac), { kind: "act", action: { kind: "palette" } });
 });
 
+test("⌘F finds in a terminal's output, and Ctrl+Shift+F off a Mac; Ctrl+F stays the shell's", () => {
+  const find = { kind: "act", action: { kind: "find" } };
+  assert.deepEqual(resolve("normal", key("KeyF", { meta: true }), mac), find);
+  assert.deepEqual(resolve("normal", key("KeyF", { ctrl: true, shift: true }), linux), find);
+  assert.deepEqual(resolve("normal", key("KeyF", { ctrl: true }), linux), { kind: "pass" });
+  assert.deepEqual(resolve("normal", key("KeyF", { ctrl: true }), mac), { kind: "pass" });
+  // Outside a terminal, the browser's own find.
+  assert.deepEqual(resolve("normal", key("KeyF", { meta: true, focus: "page" }), mac), { kind: "pass" });
+  assert.deepEqual(resolve("prefix", key("KeyS"), mac), find);
+});
+
 test("the prefix arms, and the next key is the console's", () => {
   assert.deepEqual(resolve("normal", prefix, mac), { kind: "arm" });
   assert.deepEqual(resolve("prefix", key("KeyL"), mac), { kind: "act", action: { kind: "column", step: 1 } });

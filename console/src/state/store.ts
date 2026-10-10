@@ -96,13 +96,14 @@ export const zoomed = signal<{ ws: WorkspaceId; column: string } | null>(null);
 export const previous = signal<WorkspaceId | null>(null);
 
 /** Something a workspace is asking the person: its new name, whether to
- * delete it or end a column, a column's name, a port to publish, or a column
- * to add. */
+ * delete it or end a column, a column's name, what to find in a column's
+ * output, a port to publish, or a column to add. */
 export type Question =
   | { kind: "rename" }
   | { kind: "delete" }
   | { kind: "end"; column: string }
   | { kind: "label"; column: string }
+  | { kind: "find"; column: string }
   | { kind: "port" }
   /** A column to add; `server` opens straight at the server's command. */
   | { kind: "add-column"; server?: true };
