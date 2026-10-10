@@ -117,16 +117,14 @@ fn zmx_attach(dirs: &Dirs, name: &SessionName, command: Option<&Argv>) -> Comman
 
 /// Replaces this process with `zmx attach` to a session that's open.
 /// Attaching never opens one: a column whose program ended stays ended
-/// rather than quietly becoming a shell.
+/// rather than quietly becoming a shell, and a column closed while a client
+/// is on its way in stays closed. zmx itself refuses, so there's no gap
+/// between looking for the session and attaching to it.
 #[must_use]
 pub fn attach(dirs: &Dirs, name: &SessionName) -> std::io::Error {
-    match list(dirs) {
-        Ok(open) if open.iter().any(|info| &info.name == name) => {
-            zmx_attach(dirs, name, None).exec()
-        }
-        Ok(_) => std::io::Error::other(format!("no session called {name} is open")),
-        Err(error) => error,
-    }
+    zmx_attach(dirs, name, None)
+        .env("ZMX_NO_CREATE", "1")
+        .exec()
 }
 
 /// A session to open, as hostd sends it.

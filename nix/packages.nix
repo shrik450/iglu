@@ -4,6 +4,7 @@
   lib,
   rustPlatform,
   buildNpmPackage,
+  zmx,
 }:
 
 let
@@ -33,6 +34,12 @@ let
     };
 in
 {
+  # The guest tools' terminal sessions. With ZMX_NO_CREATE set, `zmx attach`
+  # only attaches: one racing a column's close can't open the session again.
+  zmx = zmx.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./zmx-attach-only.patch ];
+  });
+
   iglud = crate {
     pname = "iglud";
     crateName = "iglud";

@@ -604,6 +604,22 @@ impl<'a, R: Runtime> Suite<'a, R> {
         let listed = self.sessions(workspace).await?;
         ensure(!listed.contains(&session), || {
             format!("the closed session is still listed: {listed:?}")
+        })?;
+        // A client on its way in as the column closed finds nothing, and
+        // opens nothing: the session stays closed.
+        if let Ok(mut terminal) = self
+            .host
+            .attach(workspace, &session, TerminalSize::DEFAULT)
+            .await
+        {
+            while let Ok(Some(_)) =
+                tokio::time::timeout(Duration::from_secs(10), terminal.output.recv()).await
+            {
+            }
+        }
+        let listed = self.sessions(workspace).await?;
+        ensure(!listed.contains(&session), || {
+            format!("attaching opened the closed session again: {listed:?}")
         })
     }
 

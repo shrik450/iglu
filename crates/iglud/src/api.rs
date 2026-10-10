@@ -739,6 +739,9 @@ async fn restart_column(
     Path((id, name)): Path<(WorkspaceId, SessionName)>,
 ) -> Result<StatusCode, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    // Held from reading the column to opening its session, so a close in
+    // between can't leave a session for a column that's gone.
+    let _editing = app.column_edits.lock(id).await;
     let lookup = name.clone();
     let column = app
         .db

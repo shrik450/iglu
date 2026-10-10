@@ -1,0 +1,31 @@
+diff -ru a/src/loop.zig b/src/loop.zig
+--- a/src/loop.zig	2026-10-10 09:40:54
++++ b/src/loop.zig	2026-10-10 09:40:54
+@@ -733,6 +733,12 @@
+             return false;
+         }
+ 
++        // Changed by iglu: an attach-only client finds the session or fails,
++        // so one racing a kill can't bring the session back.
++        if (lib_posix.getenv("ZMX_NO_CREATE") != null) {
++            return error.SessionNotFound;
++        }
++
+         return self.run(io, dir, sesh_name);
+     }
+ 
+diff -ru a/src/main.zig b/src/main.zig
+--- a/src/main.zig	2026-10-10 09:40:54
++++ b/src/main.zig	2026-10-10 09:40:54
+@@ -1575,7 +1575,10 @@
+         return switchSesh(gpa, io, daemon, sesh);
+     }
+ 
+-    const is_daemon_proc = try daemon.ensureSession(io);
++    const is_daemon_proc = daemon.ensureSession(io) catch |err| switch (err) {
++        error.SessionNotFound => return printError(io, "no session called \"{s}\" is open", .{daemon.session_name}),
++        else => return err,
++    };
+     if (is_daemon_proc) return;
+ 
+     // The session exists now, so labels land before the client takes over the

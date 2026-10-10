@@ -20,10 +20,10 @@
       packages = forSystems systems (
         pkgs:
         let
-          all = import ./nix/packages.nix { inherit (pkgs) lib rustPlatform buildNpmPackage; };
+          all = import ./nix/packages.nix { inherit (pkgs) lib rustPlatform buildNpmPackage zmx; };
         in
-        # Only the CLI runs off Linux.
-        if pkgs.stdenv.hostPlatform.isLinux then all else { inherit (all) iglu; }
+        # Off Linux, only the CLI, and zmx for the local runtime.
+        if pkgs.stdenv.hostPlatform.isLinux then all else { inherit (all) iglu zmx; }
       );
 
       nixosModules = {
@@ -78,11 +78,11 @@
             nixfmt
             actionlint
             shellcheck
-            zmx
             git
             netcat
             lsof
             ;
+          inherit (self.packages.${system}) zmx;
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
           e2e = pkgs.testers.runNixOSTest (import ./nix/tests/e2e.nix { inherit self nixpkgs; });
@@ -104,7 +104,7 @@
             actionlint
             shellcheck
             # The local runtime runs workspaces with these.
-            zmx
+            self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
             git
             netcat
             lsof

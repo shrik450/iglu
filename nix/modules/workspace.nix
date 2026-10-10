@@ -174,7 +174,7 @@ in
 
       environment.systemPackages = [
         guest
-        pkgs.zmx
+        self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
         pkgs.git
       ];
 
