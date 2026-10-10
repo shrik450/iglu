@@ -334,6 +334,44 @@ def wheels_pager(page: Page, name: str) -> Any:
     return {"screen": shows(page, f"wheel-{mark} $'\\E[B\\E[A'")}
 
 
+def copies_history(page: Page, name: str) -> Any:
+    """A selection dragged through the history, scrolling as it goes, copies
+    every line in it: rows scrolled out of the page while it was made were
+    left out of the copy."""
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, f"printf '\\e[3J\\e[2J\\e[H'; seq 1 1000; printf 'end-%s\\n' {mark}", f"end-{mark}")
+    box = column(page, first).locator(".wterm").bounding_box()
+    assert box
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.wheel(0, -2500)
+    time.sleep(0.3)
+    start = next(
+        row
+        for row in (r.bounding_box() for r in column(page, first).locator(".term-scrollback-row").all())
+        if row and row["y"] > box["y"] + 4
+    )
+    bottom = box["y"] + box["height"] - 20
+    page.mouse.move(start["x"] + 1, start["y"] + 8)
+    page.mouse.down()
+    page.mouse.move(start["x"] + 150, bottom, steps=10)
+    page.mouse.wheel(0, 1700)
+    time.sleep(0.5)
+    page.mouse.move(start["x"] + 180, bottom, steps=4)
+    page.mouse.up()
+    page.evaluate("document.execCommand('copy')")
+    copied = str(page.evaluate("navigator.clipboard.readText()"))
+    numbers = [int(line) for line in copied.split("\n") if line.strip().isdigit()]
+    rows = int(box["height"] // 17)
+    assert len(numbers) > rows, {"copied": len(numbers), "screen": rows}
+    missing = [n for n in range(numbers[0], numbers[-1] + 1) if n not in numbers]
+    assert not missing and numbers == sorted(numbers), {"missing": missing[:20], "first": numbers[0], "last": numbers[-1]}
+    assert not any(line.endswith(" ") for line in copied.split("\n")), {"padding": repr(copied[-40:])}
+    return {"from": numbers[0], "to": numbers[-1]}
+
+
 def inserts_text(page: Page, name: str) -> Any:
     """Text that arrives without key presses, as dictation, an input method
     or a phone's keyboard sends it, reaches the terminal; it was dropped."""
@@ -1060,6 +1098,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "copies-out": copies_out,
     "finds-output": finds_output,
     "inserts-text": inserts_text,
+    "copies-history": copies_history,
     "mac-keys": mac_keys,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,

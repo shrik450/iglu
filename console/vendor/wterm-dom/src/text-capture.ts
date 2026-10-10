@@ -1,4 +1,7 @@
-import type { TerminalCore } from "@wterm/core";
+// Changed by iglu, not upstream (see ../UPSTREAM):
+// - rowText() reads one retained row, for selections spanning unmounted rows.
+
+import type { TerminalCore, TerminalRowMetadata } from "@wterm/core";
 
 const MAX_TEXT_LENGTH = 16 * 1024 * 1024;
 
@@ -73,6 +76,31 @@ export function* scanText(
   }
   parts.push(chunk);
   return parts.join("");
+}
+
+/** One retained row's text and wrapping, row zero the oldest, read from the
+ * core: for a selection that spans rows no longer mounted. */
+export function rowText(
+  core: TerminalCore,
+  row: number,
+): { text: string; metadata: TerminalRowMetadata | null } {
+  const history = core.getScrollbackCount();
+  const offset = history - row - 1;
+  const inHistory = row < history;
+  const cols = inHistory ? core.getScrollbackLineLen(offset) : core.getCols();
+  let text = "";
+  for (let col = 0; col < cols; col++) {
+    const cell = inHistory
+      ? core.getScrollbackCell(offset, col)
+      : core.getCell(row - history, col);
+    if (cell.width === 0 || cell.spacerHead) continue;
+    text += cell.chars ?? String.fromCodePoint(cell.char || 32);
+  }
+  const metadata =
+    (inHistory
+      ? core.getScrollbackRowMetadata?.(offset)
+      : core.getRowMetadata?.(row - history)) ?? null;
+  return { text, metadata };
 }
 
 function aborted(message: string): DOMException {

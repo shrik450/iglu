@@ -6,6 +6,7 @@
 //   1px line is drawn sharp and its arms meet it.
 // - Dim and concealed text change only the text, leaving the background.
 // - Double-line box glyphs are painted, as the single and heavy ones are.
+// - getSelectionText() takes the core, to read selected rows not mounted.
 
 import type {
   CellData,
@@ -22,6 +23,7 @@ import {
 } from "./selection.js";
 import { selectionRange, type SelectionUnit } from "./selection-range.js";
 import { rectangleSelection } from "./rectangle-selection.js";
+import { rowText } from "./text-capture.js";
 import {
   TrackedSelection,
   MAX_TRACKED_SELECTION_ROWS,
@@ -1215,10 +1217,14 @@ export class Renderer {
   }
 
   /** Plain text for the native selection, or null when this terminal does not own it. */
-  getSelectionText(): string | null {
+  getSelectionText(core: TerminalCore | null): string | null {
     const terminal = this.container.parentElement;
     if (!terminal) return null;
-    return getSelectionText(terminal, this.selectionRows());
+    return getSelectionText(
+      terminal,
+      this.selectionRows(),
+      core ? (row) => rowText(core, row) : undefined,
+    );
   }
 
   private *selectionRows() {

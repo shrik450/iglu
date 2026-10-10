@@ -2,6 +2,7 @@
 // - init() leaves focus where it is; the host focuses the terminal it means to.
 // - `tabExit: false` turns off Escape then Tab leaving the terminal.
 // - press() and type() send a key or text from the host as if typed.
+// - A copy spanning rows no longer mounted reads them from the core.
 
 import {
   WasmBridge,
@@ -763,7 +764,7 @@ export class WTerm {
     if (this._destroyed) return null;
     return (
       this._historySelection.getText() ??
-      this.renderer?.getSelectionText() ??
+      this.renderer?.getSelectionText(this.bridge) ??
       null
     );
   }
