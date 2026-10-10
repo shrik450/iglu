@@ -4,7 +4,7 @@ import { signal } from "@preact/signals";
 
 import { activeOf, back, columnsOf, cycleWidth, focusColumn, labelOrSay, lastWorkspace, moveColumn, nextWaiting, open, step, stepColumn, toggleFreeze, toggleZoom } from "./actions.ts";
 import { type Action, BINDINGS, chordLabel, type Focus, type KeyInput, metaBytes, onKeyboard, prefixBytes, resolve } from "./state/keys.ts";
-import { type KeyboardPrefs, loadKeyboard, saveKeyboard, watch } from "./state/prefs.ts";
+import { keyboard } from "./preferences.ts";
 import { unreachable } from "./state/unsaved.ts";
 import { ask, current, cursor, details, listed, navigate, overlay, route } from "./state/store.ts";
 
@@ -13,15 +13,6 @@ export const mac = /Mac|iPhone|iPad/.test(navigator.platform);
 /** A touch screen with no mouse: shortcut hints are no help, and a terminal
  * needs keys the on-screen keyboard lacks. */
 export const touchOnly = matchMedia("(hover: none) and (pointer: coarse)").matches;
-
-/** This browser's keyboard settings. */
-export const keyboard = signal<KeyboardPrefs>(loadKeyboard());
-watch("keyboard", () => (keyboard.value = loadKeyboard()));
-
-export function setKeyboard(prefs: KeyboardPrefs): void {
-  keyboard.value = prefs;
-  saveKeyboard(prefs);
-}
 
 /** The prefix and a key after it, for hints: "⌃Space 3". */
 export const afterPrefix = (key: string) => `${chordLabel(keyboard.value.prefix, mac)} ${key}`;
@@ -168,7 +159,7 @@ window.addEventListener("blur", () => options.clear());
 
 /** Whether the Option held now is one the person reads as Meta. */
 function optionIsMeta(): boolean {
-  switch (keyboard.value.optionAsMeta) {
+  switch (keyboard.value.option_as_meta) {
     case "off":
       return false;
     case "both":
@@ -176,7 +167,7 @@ function optionIsMeta(): boolean {
     case "left":
       return options.has("AltLeft") || !mac;
     default:
-      return unreachable(keyboard.value.optionAsMeta);
+      return unreachable(keyboard.value.option_as_meta);
   }
 }
 
@@ -185,7 +176,7 @@ function optionIsMeta(): boolean {
 function handle(event: KeyboardEvent, focus: Focus, send?: (text: string) => void): boolean {
   if (event.type !== "keydown" || event.isComposing) return false;
   const input = inputOf(event, focus);
-  const outcome = resolve(armed.value ? "prefix" : "normal", input, { mac, ...keyboard.value });
+  const outcome = resolve(armed.value ? "prefix" : "normal", input, { mac, prefix: keyboard.value.prefix, altMoves: keyboard.value.alt_moves });
   switch (outcome.kind) {
     case "pass": {
       // Off a Mac, Alt doesn't type, and the terminal sends it as Meta with

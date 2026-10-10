@@ -18,6 +18,7 @@ use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Phase, Revision};
 use iglu_domain::listener::Listener;
 use iglu_domain::port::GuestPort;
+use iglu_domain::preferences::Preferences;
 use iglu_domain::project::{Opening, Origin, PreviewPorts};
 use iglu_domain::repo::{BranchName, Checkout, RepoUrl};
 use iglu_domain::secret::{SecretName, SecretTarget, SecretValue};
@@ -299,6 +300,8 @@ pub struct Snapshot {
     pub workspaces: Vec<WorkspaceView>,
     pub projects: Vec<ProjectView>,
     pub environments: Vec<EnvironmentView>,
+    /// The person's own, so a change in one browser reaches the others.
+    pub preferences: Preferences,
 }
 
 /// Every error response's body, whatever refused the request.

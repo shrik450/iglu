@@ -11,7 +11,7 @@ import type { ProjectView } from "../generated/ProjectView.ts";
 import type { WorkspaceId } from "../generated/WorkspaceId.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { groupByProject } from "./groups.ts";
-import { type Look, loadCollapsed, loadLook, saveCollapsed, saveLook, watch } from "./prefs.ts";
+import { loadCollapsed, saveCollapsed, watch } from "./prefs.ts";
 import { formatRoute, parseRoute, type Route } from "./route.ts";
 
 export const me = signal<Me | null>(null);
@@ -65,14 +65,6 @@ effect(() => {
 /** The overview's cursor, by ID so renames don't lose it. */
 export const cursor = signal<WorkspaceId | null>(null);
 
-export const look = signal<Look>(loadLook());
-effect(() => {
-  const value = look.value;
-  if (value === "auto") delete document.documentElement.dataset["look"];
-  else document.documentElement.dataset["look"] = value;
-  saveLook(value);
-});
-watch("look", () => (look.value = loadLook()));
 
 export const collapsed = signal<ReadonlySet<string>>(loadCollapsed());
 effect(() => saveCollapsed(collapsed.value));

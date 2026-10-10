@@ -21,6 +21,7 @@ import type { GuestPort } from "../generated/GuestPort.ts";
 import type { LiveView } from "../generated/LiveView.ts";
 import type { Me } from "../generated/Me.ts";
 import type { ProjectId } from "../generated/ProjectId.ts";
+import type { Preferences } from "../generated/Preferences.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
 import type { PublishPort } from "../generated/PublishPort.ts";
 import type { LabelColumn } from "../generated/LabelColumn.ts";
@@ -56,10 +57,11 @@ export class ApiError extends Error {
 
 let csrf = "";
 
-async function request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}, keepalive = false): Promise<T> {
   const init: RequestInit = {
     method,
     credentials: "same-origin",
+    keepalive,
     headers: { ...headers, ...(method === "GET" ? {} : { "x-csrf-token": csrf }), ...(body === undefined ? {} : { "content-type": "application/json" }) },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
@@ -119,6 +121,8 @@ export const api = {
   removeProject: (id: ProjectId) => request<void>("DELETE", `/v1/projects/${id}`),
   createEnvironment: (body: CreateEnvironment) => request<BuildStarted>("POST", "/v1/environments", body),
   buildEnvironment: (name: DnsLabel) => request<BuildStarted>("POST", `/v1/environments/${name}/builds`),
+  // Kept alive, so a change made just before leaving the page still lands.
+  putPreferences: (body: Preferences) => request<void>("PUT", "/v1/me/preferences", body, {}, true),
   secrets: () => request<SecretView[]>("GET", "/v1/secrets"),
   putSecret: (name: SecretName, body: PutSecret) => request<void>("PUT", `/v1/secrets/${name}`, body),
   deleteSecret: (name: SecretName) => request<void>("DELETE", `/v1/secrets/${name}`),

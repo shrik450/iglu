@@ -21,6 +21,7 @@ use iglu_domain::idle::IdleRule;
 use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Instance, Revision, SecretsGeneration};
 use iglu_domain::port::GuestPort;
+use iglu_domain::preferences::Preferences;
 use iglu_domain::project::{self, Opening, Origin, PreviewPorts};
 use iglu_domain::repo::{BranchName, Checkout, RepoUrl};
 use iglu_domain::secret::{SecretName, SecretTarget};
@@ -53,6 +54,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0005_threads.sql")),
     Migration::Sql(include_str!("migrations/0006_stored_shapes.sql")),
     Migration::Sql(include_str!("migrations/0007_column_labels.sql")),
+    Migration::Sql(include_str!("migrations/0008_preferences.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -1178,6 +1180,31 @@ pub fn record_observation(
     Ok(())
 }
 
+/// A person's preferences; the defaults until they've chosen any.
+pub fn preferences(tx: &Connection, principal: PrincipalId) -> Result<Preferences, DbError> {
+    Ok(tx
+        .query_row(
+            "SELECT document FROM preferences WHERE principal_id = ?1",
+            params![principal.to_string()],
+            |row| json(row, 0),
+        )
+        .optional()?
+        .unwrap_or_default())
+}
+
+pub fn set_preferences(
+    tx: &Connection,
+    principal: PrincipalId,
+    preferences: &Preferences,
+) -> Result<(), DbError> {
+    tx.execute(
+        "INSERT INTO preferences (principal_id, document) VALUES (?1, ?2)
+         ON CONFLICT (principal_id) DO UPDATE SET document = excluded.document",
+        params![principal.to_string(), to_json(preferences)?],
+    )?;
+    Ok(())
+}
+
 pub fn set_condition(
     tx: &Connection,
     id: WorkspaceId,
@@ -1748,6 +1775,34 @@ mod tests {
         );
         let bob = principal(&conn, "bob");
         assert_ne!(bob, first.id);
+    }
+
+    #[test]
+    fn preferences_are_each_persons_own_and_default_until_chosen() {
+        use iglu_domain::preferences::Look;
+
+        let conn = conn();
+        let alice = principal(&conn, "alice");
+        let bob = principal(&conn, "bob");
+        assert_eq!(
+            preferences(&conn, alice).expect("read"),
+            Preferences::default()
+        );
+        let light = Preferences {
+            look: Look::Light,
+            ..Preferences::default()
+        };
+        set_preferences(&conn, alice, &light).expect("first write");
+        let chosen = Preferences {
+            look: Look::Dark,
+            ..Preferences::default()
+        };
+        set_preferences(&conn, alice, &chosen).expect("second write");
+        assert_eq!(preferences(&conn, alice).expect("read"), chosen);
+        assert_eq!(
+            preferences(&conn, bob).expect("read"),
+            Preferences::default()
+        );
     }
 
     #[test]

@@ -118,6 +118,32 @@ def prefix(page: Page, key: str) -> None:
     page.keyboard.press(key)
 
 
+def on_console(page: Page) -> None:
+    """Where the API is a fetch away: each step starts on a blank page."""
+    if not page.url.startswith(CONSOLE):
+        page.goto(CONSOLE)
+
+
+def preferences(page: Page) -> Any:
+    """The signed-in person's preferences, as iglud keeps them."""
+    on_console(page)
+    return page.evaluate("async () => (await fetch('/v1/me/preferences')).json()")
+
+
+def keep_preferences(page: Page, chosen: Any) -> None:
+    """Sets the signed-in person's preferences, whole."""
+    on_console(page)
+    status = page.evaluate(
+        """async (chosen) => {
+          const me = await (await fetch('/v1/me')).json();
+          const headers = { 'content-type': 'application/json', 'x-csrf-token': me.csrf_token };
+          return (await fetch('/v1/me/preferences', { method: 'PUT', headers, body: JSON.stringify(chosen) })).status;
+        }""",
+        chosen,
+    )
+    assert status == 204, status
+
+
 def sign_in(page: Page) -> Any:
     page.goto(CONSOLE)
     page.locator("#username-textfield").fill("alice")
@@ -473,10 +499,11 @@ STYLE = (
 
 
 def styles_terminal(page: Page, name: str) -> Any:
-    """A terminal takes the type and colours chosen in Settings as they're
-    chosen, in another tab too: its cells grow whole pixels at a time, the
-    shell learns its new size, and a program asking for the background gets
-    the theme's. A theme pasted in Ghostty's format works the same."""
+    """The terminal's type and colours are the person's: chosen in Settings
+    in one browser, they reach a terminal open in another as they're chosen.
+    Its cells grow whole pixels at a time, the shell learns its new size,
+    and a program asking for the background gets the theme's. A theme
+    pasted in Ghostty's format works the same."""
     open_workspace(page, name)
     first = columns(page)[0]
     term = column(page, first).locator(".term-host > .wterm")
@@ -497,8 +524,13 @@ def styles_terminal(page: Page, name: str) -> Any:
 
     cell_is(8, 17)
     _, before = style()
-    settings = page.context.new_page()
+    kept = preferences(page)
+    browser = page.context.browser
+    assert browser is not None
+    elsewhere = browser.new_context()
     try:
+        settings = elsewhere.new_page()
+        sign_in(settings)
         settings.goto(f"{CONSOLE}/settings")
         section = settings.locator("section", has=settings.get_by_role("heading", name="Terminal"))
         section.get_by_label("Colours").select_option("Dracula")
@@ -511,8 +543,8 @@ def styles_terminal(page: Page, name: str) -> Any:
         section.get_by_label("A theme in Ghostty's format").fill("background = #102030\nforeground = #e0e0e0\n")
         expect(term).to_have_css("background-color", "rgb(16, 32, 48)")
     finally:
-        settings.evaluate("localStorage.removeItem('iglu.terminal')")
-        settings.close()
+        keep_preferences(page, kept)
+        elsewhere.close()
     cell_is(8, 17)
     return {"background": background, "cols": [before, after]}
 
@@ -523,14 +555,10 @@ def mac_keys(page: Page, name: str) -> Any:
     was selected and kept Ctrl+V for a paste that never came. Ctrl+Option
     and a letter is Meta with its control byte, which sent nothing, and an
     Option that isn't Meta types its character, which went as Meta anyway."""
+    kept = preferences(page)
+    keep_preferences(page, {**kept, "keyboard": {**kept["keyboard"], "option_as_meta": "off"}})
     mac = page.context.new_page()
     mac.add_init_script("Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' })")
-    # The person's own keyboard setting is kept in the tab, to put back after.
-    mac.add_init_script(
-        "try { if (sessionStorage.getItem('iglu.test.keyboard') === null)"
-        " sessionStorage.setItem('iglu.test.keyboard', JSON.stringify(localStorage.getItem('iglu.keyboard')));"
-        " localStorage.setItem('iglu.keyboard', JSON.stringify({ optionAsMeta: 'off' })); } catch {}"
-    )
     try:
         open_workspace(mac, name)
         first = columns(mac)[0]
@@ -548,10 +576,7 @@ def mac_keys(page: Page, name: str) -> Any:
         mac.keyboard.press("Alt+b")
         return {"screen": shows(mac, f"read-{mark} $'\\E\\002b'")}
     finally:
-        mac.evaluate(
-            "() => { try { const prior = JSON.parse(sessionStorage.getItem('iglu.test.keyboard'));"
-            " if (prior === null) localStorage.removeItem('iglu.keyboard'); else localStorage.setItem('iglu.keyboard', prior); } catch {} }"
-        )
+        keep_preferences(page, kept)
         mac.close()
 
 

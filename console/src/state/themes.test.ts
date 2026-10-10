@@ -24,9 +24,18 @@ test("a whole config can be pasted: what isn't a colour is passed over", () => {
   assert.equal(parsed.colors.cursor, "#abcdef");
 });
 
+test("what Ghostty takes that iglu has no use for passes", () => {
+  const parsed = parseTheme('background = "#101010"\nforeground = #eeeeee\ncursor-color =\npalette = 200=#ff0000\npalette = "1=#ff0000"');
+  assert.ok("colors" in parsed, JSON.stringify(parsed));
+  assert.equal(parsed.colors.background, "#101010");
+  assert.equal(parsed.colors.cursor, "#eeeeee");
+  assert.equal(parsed.colors.palette[1], "#ff0000");
+  assert.equal(parsed.colors.palette.length, 16);
+});
+
 test("what can't be read says where", () => {
   assert.deepEqual(parseTheme("background = #000000\nforeground = white"), { error: "Line 2: white isn't a colour iglu reads; use hex, like #1e1e2e." });
-  assert.deepEqual(parseTheme("background = #000000\npalette = 16=#ffffff"), { error: "Line 2: a palette entry is `palette = 0=#1e1e2e`, numbered 0 to 15." });
+  assert.deepEqual(parseTheme("background = #000000\npalette = #ffffff"), { error: "Line 2: a palette entry is `palette = 0=#1e1e2e`." });
   assert.deepEqual(parseTheme("background #000000"), { error: "Line 1 isn't `key = value`." });
   assert.deepEqual(parseTheme("background = #000000"), { error: "A theme needs at least a background and a foreground." });
 });

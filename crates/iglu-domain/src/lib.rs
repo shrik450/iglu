@@ -22,6 +22,7 @@ pub mod listener;
 pub mod names;
 pub mod network;
 pub mod port;
+pub mod preferences;
 pub mod preview;
 pub mod project;
 pub mod repo;

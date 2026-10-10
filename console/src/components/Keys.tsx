@@ -1,7 +1,8 @@
 // The keyboard shortcuts: the full sheet, and the hint shown after the prefix.
 // Both read the keymap's own table, so they can't disagree with it.
 
-import { armed, keyboard, mac } from "../keyboard.ts";
+import { armed, mac } from "../keyboard.ts";
+import { keyboard } from "../preferences.ts";
 import { type Binding, BINDINGS, chordLabel, onKeyboard } from "../state/keys.ts";
 import { overlay } from "../state/store.ts";
 import { Modal } from "./Modal.tsx";
@@ -23,7 +24,7 @@ function ways(binding: Binding, prefix: string): string[] {
   if (binding.action.kind === "palette") all.push(onKeyboard("⌘ K", mac));
   if (binding.action.kind === "find") all.push(onKeyboard(mac ? "⌘ F" : "⌃⇧ F", mac));
   if (binding.after) all.push(`${prefix} ${binding.after.label}`);
-  if (binding.alt && keyboard.value.altMoves) all.push(onKeyboard(`⌥${binding.alt.label.toUpperCase()}`, mac));
+  if (binding.alt && keyboard.value.alt_moves) all.push(onKeyboard(`⌥${binding.alt.label.toUpperCase()}`, mac));
   return all;
 }
 
@@ -40,7 +41,7 @@ export function Keys() {
           </button>
         </div>
         <p class="muted">
-          {keyboard.value.altMoves ? (
+          {keyboard.value.alt_moves ? (
             <>
               Terminals keep every key but <Chord keys={onKeyboard("⌥H ⌥J ⌥K ⌥L", mac)} />, which move between columns and workspaces; Settings can give
               those back.{" "}

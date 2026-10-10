@@ -6,7 +6,8 @@ import { attempt } from "../actions.ts";
 import { api } from "../api/client.ts";
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
-import { keyboard, mac, setKeyboard } from "../keyboard.ts";
+import { mac } from "../keyboard.ts";
+import { keyboard, look, setKeyboard, setLook, setTermStyle, termStyle } from "../preferences.ts";
 import { enableNotifications } from "../notify.ts";
 import type { EnvironmentView } from "../generated/EnvironmentView.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
@@ -14,12 +15,13 @@ import type { SecretTarget } from "../generated/SecretTarget.ts";
 import type { SecretView } from "../generated/SecretView.ts";
 import { repoLabel } from "../state/groups.ts";
 import { type Chord, chordLabel, usablePrefix } from "../state/keys.ts";
-import type { OptionAsMeta, TerminalPrefs } from "../state/prefs.ts";
-import { environments, look, me, navigate, projects, say, workspaces } from "../state/store.ts";
-import { THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, isLight, parseTheme } from "../state/themes.ts";
+import type { OptionAsMeta } from "../generated/OptionAsMeta.ts";
+import type { TerminalStyle } from "../generated/TerminalStyle.ts";
+import { environments, me, navigate, projects, say, workspaces } from "../state/store.ts";
+import { type CellSize, THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, isLight, parseTheme } from "../state/themes.ts";
 import { oneOf, unreachable } from "../state/unsaved.ts";
 import { pageColors } from "../terminal.ts";
-import { advance, fontMissing, setTermStyle, termStyle } from "../termstyle.ts";
+import { advance, fontTrouble } from "../termstyle.ts";
 
 const when = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
@@ -281,7 +283,7 @@ function Secrets() {
   );
 }
 
-/** This browser's keys: a laptop and a phone can differ. */
+/** The keyboard: the prefix, moving with Alt, and Option on a Mac. */
 function Keyboard() {
   const prefs = keyboard.value;
   const [recording, setRecording] = useState(false);
@@ -331,7 +333,7 @@ function Keyboard() {
         {refused ? <span class="field-err" role="alert">Use Ctrl with a letter, Space, [, ] or \.</span> : null}
       </div>
       <label class="set-row">
-        <input type="checkbox" checked={prefs.altMoves} onChange={(e) => setKeyboard({ ...prefs, altMoves: e.currentTarget.checked })} />
+        <input type="checkbox" checked={prefs.alt_moves} onChange={(e) => setKeyboard({ ...prefs, alt_moves: e.currentTarget.checked })} />
         <span>
           {mac ? "⌥H ⌥J ⌥K ⌥L" : "Alt+H Alt+J Alt+K Alt+L"} move between columns and workspaces, even in a terminal
         </span>
@@ -339,7 +341,7 @@ function Keyboard() {
       {mac ? (
         <label class="set-row">
           <span>Option as Meta in terminals</span>
-          <select value={prefs.optionAsMeta} onChange={(e) => setKeyboard({ ...prefs, optionAsMeta: e.currentTarget.value as OptionAsMeta })}>
+          <select value={prefs.option_as_meta} onChange={(e) => setKeyboard({ ...prefs, option_as_meta: e.currentTarget.value as OptionAsMeta })}>
             {(["left", "both", "off"] as const).map((o) => (
               <option key={o} value={o}>
                 {meta[o]}
@@ -352,11 +354,10 @@ function Keyboard() {
   );
 }
 
-/** The terminal's type and colours, for this browser: a phone and a desk
- * want different sizes. */
+/** The terminal's type and colours. */
 function Terminal() {
   const prefs = termStyle.value;
-  const set = (change: Partial<TerminalPrefs>) => setTermStyle({ ...prefs, ...change });
+  const set = (change: Partial<TerminalStyle>, typing = false) => setTermStyle({ ...prefs, ...change }, typing);
   const [font, setFont] = useState(prefs.font ?? "");
   const [fontRefused, setFontRefused] = useState(false);
   useEffect(() => setFont(prefs.font ?? ""), [prefs.font]);
@@ -366,8 +367,10 @@ function Terminal() {
     if (!font.trim() || name) set({ font: name });
   };
   const names = Object.keys(THEMES);
-  const sizes = cellSizes(advance.value);
   const size = cellSize(advance.value, prefs.size);
+  // A size kept from another font may fall outside this one's.
+  const sizes = cellSizes(advance.value);
+  if (!sizes.some((s) => s.width === size.width)) sizes.push(size), sizes.sort((a, b) => a.width - b.width);
   const pasted = prefs.theme === "pasted" ? parseTheme(prefs.pasted) : null;
   const choose = (theme: string) => {
     // A theme of one's own starts from the one it takes over from.
@@ -377,7 +380,6 @@ function Terminal() {
   return (
     <section class="set" aria-labelledby="terminal-h">
       <h2 id="terminal-h">Terminal</h2>
-      <p class="muted">For this browser, so a phone and a desk can differ.</p>
       <label class="set-row">
         <span>Colours</span>
         <select value={prefs.theme} onChange={(e) => choose(e.currentTarget.value)}>
@@ -410,7 +412,7 @@ function Terminal() {
               autocomplete="off"
               aria-invalid={"error" in pasted}
               aria-describedby={"error" in pasted ? "theme-err" : undefined}
-              onInput={(e) => set({ pasted: e.currentTarget.value })}
+              onInput={(e) => set({ pasted: e.currentTarget.value }, true)}
             />
           </label>
           {"error" in pasted ? (
@@ -436,18 +438,18 @@ function Terminal() {
           <span class="field-err" role="alert">
             A font's name is letters, digits, spaces, dots, dashes and underscores.
           </span>
-        ) : fontMissing.value && prefs.font ? (
+        ) : fontTrouble.value && prefs.font ? (
           <span class="field-err" role="status">
-            {prefs.font} isn't installed in this browser, so terminals show JetBrains Mono.
+            {prefs.font} {fontTrouble.value === "missing" ? "isn't installed in this browser" : "isn't monospaced"}, so terminals show JetBrains Mono.
           </span>
         ) : null}
       </label>
       <label class="set-row">
         <span>Size</span>
-        <select value={String(size.font)} onChange={(e) => set({ size: Number(e.currentTarget.value) })}>
+        <select value={String(pixels(size))} onChange={(e) => set({ size: Number(e.currentTarget.value) })}>
           {sizes.map((s) => (
-            <option key={s.width} value={String(s.font)}>
-              {Math.round(s.font)}px
+            <option key={s.width} value={String(pixels(s))}>
+              {pixels(s)}px
             </option>
           ))}
         </select>
@@ -456,6 +458,9 @@ function Terminal() {
     </section>
   );
 }
+
+/** A size as it's shown and kept: whole pixels, within what iglud keeps. */
+const pixels = (size: CellSize) => Math.min(40, Math.max(6, Math.round(size.font)));
 
 /** A few lines as a terminal would draw them, in the type and colours chosen. */
 function Sample() {
@@ -491,7 +496,7 @@ function Account() {
         <span translate={false}>{me.value?.email ?? me.value?.name ?? ""}</span>
         <div class="seg" role="group" aria-label="Look">
           {(["auto", "dark", "light"] as const).map((l) => (
-            <button key={l} type="button" aria-pressed={look.value === l} onClick={() => (look.value = l)}>
+            <button key={l} type="button" aria-pressed={look.value === l} onClick={() => setLook(l)}>
               {l === "auto" ? "System" : l === "dark" ? "Polar night" : "Snowfield"}
             </button>
           ))}

@@ -5,7 +5,8 @@
 // - A copy spanning rows no longer mounted reads them from the core.
 // - Plain URLs in output open on a modifier-click, as marked links do.
 // - The row height isn't fixed inline at init, so the host's stylesheet can
-//   change it, with the font, while the terminal runs.
+//   change it, with the font, while the terminal runs; new cell metrics lay
+//   the grid out again even when its size in cells stays the same.
 
 import {
   WasmBridge,
@@ -1376,6 +1377,7 @@ export class WTerm {
       for (const entry of entries) {
         if (entry.target === this.element) containerRect = entry.contentRect;
       }
+      const before = { charWidth: this._charWidth, rowHeight: this._rowHeight };
       const measured = this._measureCharSize();
       if (!measured || !this.autoResize || !containerRect) return;
 
@@ -1384,6 +1386,15 @@ export class WTerm {
       const newRows = Math.max(1, Math.floor(containerRect.height / rowHeight));
       if (newCols !== this.cols || newRows !== this.rows) {
         this.resize(newCols, newRows);
+      } else if (
+        charWidth !== before.charWidth ||
+        rowHeight !== before.rowHeight
+      ) {
+        // Changed by iglu: new cells in the same grid still lay out anew.
+        this._shouldScrollToBottom =
+          this._pendingResizeScrollTop === null && this._isScrolledToBottom();
+        this._setupRenderer();
+        this._scheduleRender();
       }
     });
     this.resizeObserver.observe(probe);

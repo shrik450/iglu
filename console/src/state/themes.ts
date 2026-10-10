@@ -110,11 +110,17 @@ function hex(value: string): string | null {
   return `#${digits.length === 3 ? [...digits].map((d) => d + d).join("") : digits}`;
 }
 
+/** A value as Ghostty takes it, quoted or not. */
+function unquote(value: string): string {
+  return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1).trim() : value;
+}
+
 export type Parsed = { colors: Colors } | { error: string };
 
 /** A theme in Ghostty's format, as its theme files have it and `ghostty
  * +show-config` prints it. Keys that aren't colours are passed over, so a
- * whole config can be pasted. */
+ * whole config can be pasted, as are palette colours past the 16 programs
+ * pick by number and keys left empty. Colours are read in hex, not by name. */
 export function parseTheme(text: string): Parsed {
   const found: Record<string, string> = {};
   const palette = [...XTERM];
@@ -125,11 +131,13 @@ export function parseTheme(text: string): Parsed {
     const equals = line.indexOf("=");
     if (equals < 0) return { error: `Line ${index + 1} isn't \`key = value\`.` };
     const key = line.slice(0, equals).trim();
-    let value = line.slice(equals + 1).trim();
+    let value = unquote(line.slice(equals + 1).trim());
+    if (!value) continue;
     if (key === "palette") {
       const entry = /^(\d+)\s*=\s*(\S+)$/.exec(value);
-      const number = entry ? Number(entry[1]) : -1;
-      if (!entry || number > 15) return { error: `Line ${index + 1}: a palette entry is \`palette = 0=#1e1e2e\`, numbered 0 to 15.` };
+      if (!entry) return { error: `Line ${index + 1}: a palette entry is \`palette = 0=#1e1e2e\`.` };
+      const number = Number(entry[1]);
+      if (number > 15) continue;
       value = entry[2]!;
       const colour = hex(value);
       if (!colour) return { error: `Line ${index + 1}: ${value} isn't a colour iglu reads; use hex, like #1e1e2e.` };

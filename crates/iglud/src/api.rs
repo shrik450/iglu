@@ -27,6 +27,7 @@ use iglu_domain::label::{HostId, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Revision, allow_transition};
 use iglu_domain::names;
 use iglu_domain::port::GuestPort;
+use iglu_domain::preferences::Preferences;
 use iglu_domain::project;
 use iglu_domain::secret::{FetchTokens, SecretName};
 use iglu_domain::terminal::{SessionName, TerminalSize};
@@ -47,6 +48,10 @@ mod projects;
 pub fn router() -> Router<Arc<App>> {
     Router::new()
         .route("/v1/me", get(me))
+        .route(
+            "/v1/me/preferences",
+            get(get_preferences).put(put_preferences),
+        )
         .route(
             "/v1/workspaces",
             get(list_workspaces).post(create_workspace),
@@ -111,6 +116,33 @@ async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, Api
     }))
 }
 
+async fn get_preferences(
+    caller: Caller,
+    State(app): State<Arc<App>>,
+) -> Result<Json<Preferences>, ApiError> {
+    let principal = caller.principal.id;
+    Ok(Json(
+        app.db
+            .call(move |tx| db::preferences(tx, principal))
+            .await?,
+    ))
+}
+
+/// Replaces the caller's preferences, whole; every open console gets them in
+/// its next snapshot.
+async fn put_preferences(
+    caller: Caller,
+    State(app): State<Arc<App>>,
+    Body(preferences): Body<Preferences>,
+) -> Result<StatusCode, ApiError> {
+    let principal = caller.principal.id;
+    app.db
+        .call(move |tx| db::set_preferences(tx, principal, &preferences))
+        .await?;
+    app.changed();
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Loads a live workspace the caller may act on.
 async fn owned_workspace(
     app: &App,
@@ -172,6 +204,7 @@ async fn snapshot(app: &Arc<App>, owner: PrincipalId) -> Result<Snapshot, ApiErr
         workspaces: views_for(app, owner).await?,
         projects: projects::views(app, owner).await?,
         environments: environment_views(app, owner).await?,
+        preferences: app.db.call(move |tx| db::preferences(tx, owner)).await?,
     })
 }
 

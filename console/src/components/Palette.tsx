@@ -23,7 +23,8 @@ import { enableNotifications } from "../notify.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { LABEL, titleOf } from "../state/layout.ts";
 import { search } from "../state/search.ts";
-import { ask, current, details, listed, look, navigate, overlay, previous, projects, say, workspaces } from "../state/store.ts";
+import { setLook } from "../preferences.ts";
+import { ask, current, details, listed, navigate, overlay, previous, projects, say, workspaces } from "../state/store.ts";
 import { copyLink, ONLY_YOU } from "./CopyLink.tsx";
 import { Modal } from "./Modal.tsx";
 
@@ -98,9 +99,9 @@ function items(): Item[] {
   for (const p of projects.value) list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
   for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${w.name} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });
   list.push(
-    { label: "Look: match the system", run: () => (look.value = "auto") },
-    { label: "Look: Polar night", run: () => (look.value = "dark") },
-    { label: "Look: Snowfield", run: () => (look.value = "light") },
+    { label: "Look: match the system", run: () => setLook("auto") },
+    { label: "Look: Polar night", run: () => setLook("dark") },
+    { label: "Look: Snowfield", run: () => setLook("light") },
     {
       label: "Turn on notifications",
       run: () => void enableNotifications().then((p) => say(p === "granted" ? "Notifications are on." : "Notifications are blocked in this browser.")),

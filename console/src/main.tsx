@@ -9,14 +9,20 @@ import { App } from "./app.tsx";
 import { paintFrost } from "./components/bits.tsx";
 import { onPageKey } from "./keyboard.ts";
 import "./notify.ts";
-import { look, me, say } from "./state/store.ts";
+import { look, termStyle } from "./preferences.ts";
+import { me, say } from "./state/store.ts";
 import { activeScreen, loadTerminals, restyleTerminals } from "./terminal.ts";
-import { applyTermStyle, termStyle } from "./termstyle.ts";
+import { applyTermStyle } from "./termstyle.ts";
 
 // Read-only access to the focused terminal's text, for the browser test.
 Object.assign(globalThis, { iglu: { screen: activeScreen } });
 
 paintFrost();
+effect(() => {
+  const value = look.value;
+  if (value === "auto") delete document.documentElement.dataset["look"];
+  else document.documentElement.dataset["look"] = value;
+});
 // Terminals paint their own colours, so they follow a change of look: the
 // one chosen in Settings, once it's applied, or the system's.
 effect(() => {
