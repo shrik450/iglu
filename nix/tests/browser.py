@@ -522,9 +522,14 @@ def names_column(page: Page, name: str) -> Any:
     reaches(page, first)
     page.reload()
     expect(header).to_have_text("the tests")
+    # Leaving the field keeps what's in it, as there's no Enter on a phone.
     header.dblclick()
-    field = page.get_by_role("textbox", name="Name of the tests")
-    expect(field).to_have_value("the tests")
+    page.get_by_role("textbox", name="Name of the tests").fill("left behind")
+    column(page, first).locator(".term-host").click()
+    expect(header).to_have_text("left behind")
+    header.dblclick()
+    field = page.get_by_role("textbox", name="Name of left behind")
+    expect(field).to_have_value("left behind")
     field.fill("")
     page.keyboard.press("Enter")
     expect(header).to_have_text(first)
@@ -542,11 +547,11 @@ def zooms(page: Page, name: str) -> Any:
     prefix(page, "KeyZ")
     expect(column(page, first)).to_have_attribute("style", re.compile(r"--cw:\s*1\b"))
     expect(sidebar).to_be_hidden()
-    expect(column(page, first).get_by_role("button", name=re.compile("^Put .* back$"))).to_have_attribute("aria-pressed", "true")
+    expect(column(page, first).get_by_role("button", name=re.compile("^Unzoom "))).to_have_attribute("aria-pressed", "true")
     reaches(page, first)
     # The palette has the column's actions too.
     prefix(page, "Slash")
-    page.get_by_role("combobox", name="Search").fill("put back")
+    page.get_by_role("combobox", name="Search").fill("unzoom")
     page.keyboard.press("Enter")
     expect(sidebar).to_be_visible()
     expect(column(page, first).get_by_role("button", name=re.compile("^Width of "))).to_have_text(width)
@@ -631,6 +636,31 @@ def phone_keys(page: Page, name: str) -> Any:
         return {"column": first}
     finally:
         phone.close()
+
+
+def acts_where_shown(page: Page, name: str) -> Any:
+    """A column acted on, from its header or the palette, takes the keyboard:
+    what's typed next goes to the column shown, and a question it asks has
+    the keyboard until it's answered."""
+    open_workspace(page, name)
+    first, second = columns(page)[:2]
+    at_prompt(page, first)
+    column(page, second).locator(".col-h").hover()
+    column(page, second).get_by_role("button", name=re.compile("^Zoom ")).click()
+    reaches(page, second)
+    column(page, second).get_by_role("button", name=re.compile("^Unzoom ")).click()
+    search = page.get_by_role("combobox", name="Search")
+    prefix(page, "Slash")
+    search.fill(f"go to column {first}")
+    page.keyboard.press("Enter")
+    reaches(page, first)
+    prefix(page, "Slash")
+    search.fill(f"end {first}")
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("button", name=f"End {first}", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    reaches(page, first)
+    return {"columns": [first, second]}
 
 
 def renames_follow(page: Page, name: str) -> Any:
@@ -823,6 +853,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "prefix-cancels": prefix_cancels,
     "names-column": names_column,
     "zooms": zooms,
+    "acts-where-shown": acts_where_shown,
     "drags-column": drags_column,
     "phone-keys": phone_keys,
     "goes-back": goes_back,

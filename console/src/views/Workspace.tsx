@@ -420,14 +420,14 @@ function Strip({ ws }: { ws: WorkspaceView }) {
         >
           <Icon name="plus" size={13} />
         </button>
-        {isAsking("add-column") ? <AddMenu ws={ws} /> : null}
+        {question.value?.kind === "add-column" ? <AddMenu ws={ws} server={question.value.server === true} /> : null}
       </div>
     </div>
   );
 }
 
-function AddMenu({ ws }: { ws: WorkspaceView }) {
-  const [command, setCommand] = useState(false);
+function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
+  const [command, setCommand] = useState(server);
   // What's opening: the menu stays, says so, and takes no second click until
   // the column is there (which puts the menu away) or iglu refuses it.
   const [opening, setOpening] = useState<string | null>(null);
@@ -493,14 +493,31 @@ function CommandInput({ form }: { form: Form }) {
   return <input ref={ref} name="command" aria-label="Server command" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
 }
 
-/** Naming a column: Enter keeps the name, an empty one goes back to the
- * session's, and Escape leaves it as it was. */
+/** Naming a column: Enter, or leaving the field, keeps the name, as renaming
+ * a file or a tab does; an empty one goes back to the session's, and Escape
+ * leaves it as it was. Leaving matters on a phone, which has no Enter to see. */
 function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
   const ref = useGrab<HTMLInputElement>(true);
   const naming = useForm(async (data) => labelColumn(ws, column.name, textOf(data)("label") ?? ""));
+  // Once kept or given up, leaving the field mustn't keep it again.
+  const done = useRef(false);
   return (
-    <form class="col-rename" onSubmit={naming.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+    <form
+      class="col-rename"
+      onSubmit={(e) => {
+        done.current = true;
+        void naming.onSubmit(e).finally(() => (done.current = false));
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        done.current = true;
+        settle(ws);
+      }}
+    >
       <input
+        onBlur={(e) => {
+          if (!done.current) e.currentTarget.form?.requestSubmit();
+        }}
         ref={ref}
         name="label"
         aria-label={`Name of ${titleOf(column)}`}
@@ -618,10 +635,12 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
     <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[props.zoomed ? "full" : column.width]) }} data-column={name} aria-label={`Column ${title}`}>
       <header
         class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}
+        // Whatever is pressed in a column's header acts on that column, so it
+        // takes the keyboard first: what's typed next goes to the column shown.
         onMouseDown={(e) => {
           if (e.target instanceof Element && e.target.closest("input")) return;
           e.preventDefault();
-          if (!(e.target instanceof Element && e.target.closest("button"))) focusColumn(ws, name);
+          focusColumn(ws, name);
         }}
       >
         <Glyph kind={attentionGlyph(attention)} />
@@ -653,24 +672,24 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
                 <button
                   type="button"
                   aria-pressed={props.zoomed}
-                  aria-label={props.zoomed ? `Put ${title} back` : `Zoom ${title}`}
-                  title={`${props.zoomed ? "Put it back" : "Zoom to fill the page"} (${keysFor("zoom")})`}
-                  onClick={() => (markActive(ws, name), toggleZoom(ws))}
+                  aria-label={props.zoomed ? `Unzoom ${title}` : `Zoom ${title}`}
+                  title={`${props.zoomed ? "Unzoom: put it back" : "Zoom to fill the page"} (${keysFor("zoom")})`}
+                  onClick={() => (focusColumn(ws, name), toggleZoom(ws))}
                 >
                   <Icon name={props.zoomed ? "unzoom" : "zoom"} size={11} />
                 </button>
-                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${title}: ${LABEL[column.width]}`} onClick={() => void cycleWidth(ws, name)}>
+                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${title}: ${LABEL[column.width]}`} onClick={() => (focusColumn(ws, name), void cycleWidth(ws, name))}>
                   {LABEL[column.width]}
                 </button>
-                <button type="button" aria-label={`Move ${title} left`} onClick={() => (markActive(ws, name), void moveColumn(ws, -1))}>
+                <button type="button" aria-label={`Move ${title} left`} onClick={() => (focusColumn(ws, name), void moveColumn(ws, -1))}>
                   <Icon name="back" size={11} />
                 </button>
-                <button type="button" aria-label={`Move ${title} right`} onClick={() => (markActive(ws, name), void moveColumn(ws, 1))}>
+                <button type="button" aria-label={`Move ${title} right`} onClick={() => (focusColumn(ws, name), void moveColumn(ws, 1))}>
                   <Icon name="chevron" size={11} />
                 </button>
               </>
             ) : null}
-            <button type="button" aria-label={`End ${title}`} title={`End this column (${keysFor("close-column")})`} onClick={() => ask(ws, { kind: "end", column: name })}>
+            <button type="button" aria-label={`End ${title}`} title={`End this column (${keysFor("close-column")})`} onClick={() => (focusColumn(ws, name), ask(ws, { kind: "end", column: name }))}>
               <Icon name="close" size={11} />
             </button>
           </span>

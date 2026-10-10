@@ -222,8 +222,11 @@ export class TerminalPane {
     return lines.join("\n");
   }
 
+  /** Gives this terminal the keyboard, now. ghostty-web's own focus() does
+   * it again a moment later, which would take the keyboard back from a field
+   * opened in between, such as the column's name. */
   focus(): void {
-    this.term.focus();
+    this.term.element?.focus();
   }
 
   /** Sends `text` as if typed, for keys a phone's keyboard doesn't have. */

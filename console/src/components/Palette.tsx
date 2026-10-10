@@ -1,6 +1,6 @@
 // Search and commands: everything in one list.
 
-import { useEffect, useId, useMemo, useState } from "preact/hooks";
+import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 
 import { api } from "../api/client.ts";
 import {
@@ -53,7 +53,9 @@ function columnItems(ws: WorkspaceView): Item[] {
   }
   const zoom = zoomedIn(ws) === column.name;
   list.push(
-    { label: zoom ? `Put ${title} back` : `Zoom ${title} to fill the page`, hint: keysFor("zoom"), run: () => toggleZoom(ws) },
+    zoom
+      ? { label: `Unzoom ${title}`, sub: "Put it back as it was", hint: keysFor("zoom"), run: () => toggleZoom(ws) }
+      : { label: `Zoom ${title}`, sub: "Fill the page with it", hint: keysFor("zoom"), run: () => toggleZoom(ws) },
     { label: `Change ${title}'s width`, sub: `It's ${LABEL[column.width]} of the strip`, hint: keysFor("width"), run: () => void cycleWidth(ws) },
   );
   if (here > 0) list.push({ label: `Move ${title} left`, hint: keysFor({ kind: "move-column", step: -1 }), run: () => void moveColumn(ws, -1) });
@@ -86,6 +88,7 @@ function items(): Item[] {
     if (ws.phase === "running") {
       list.push({ label: `Shell in ${ws.name}`, run: () => void addColumn(ws, { kind: "shell" }) });
       for (const agent of ws.agents) list.push({ label: `${agent} in ${ws.name}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
+      list.push({ label: `Server in ${ws.name}`, sub: "A command that keeps running, such as a dev server", run: () => ask(ws, { kind: "add-column", server: true }) });
       list.push({ label: `Freeze ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
     }
     if (ws.phase === "frozen") list.push({ label: `Thaw ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
@@ -112,13 +115,16 @@ export function Palette() {
   const all = useMemo(items, [current.value, listed.value, projects.value]);
   const shown = search(query, all);
   useEffect(() => setIndex(0), [query]);
+  // The command runs once the palette has closed and given focus back, so a
+  // command that moves focus, to a column or a question, keeps it there.
+  const next = useRef<Item | null>(null);
   const run = (item: Item) => {
+    next.current = item;
     overlay.value = null;
-    item.run();
   };
   const list = useId();
   return (
-    <Modal label="Search and commands" onClose={() => (overlay.value = null)}>
+    <Modal label="Search and commands" onClose={() => (overlay.value = null)} onClosed={() => next.current?.run()}>
       <div class="pbox">
         <input
           autofocus
