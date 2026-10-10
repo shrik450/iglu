@@ -337,6 +337,43 @@ def inserts_text(page: Page, name: str) -> Any:
     return {"screen": shows(page, f"inserted-{mark}", 2)}
 
 
+# Puts the terminal in raw mode and prints the next three bytes it reads,
+# giving up after 20 seconds without one.
+RAW_READ = (
+    "bash -c 'stty raw -echo min 0 time 200; printf ready-%s {mark}; k=$(dd bs=1 count=3 2>/dev/null); "
+    "stty sane; printf \"\\r\\nread-%s %q\\r\\n\" {mark} \"$k\"'"
+)
+
+
+def mac_keys(page: Page, name: str) -> Any:
+    """On a Mac, where Cmd copies and pastes, Ctrl+V, Escape and Ctrl+C reach
+    the program even with text selected: the terminal kept Ctrl+V for a
+    paste that never came, ate Ctrl+C while anything was selected, and spent
+    Escape on clearing the selection."""
+    mac = page.context.new_page()
+    mac.add_init_script("Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' })")
+    try:
+        open_workspace(mac, name)
+        first = columns(mac)[0]
+        mark = str(time.time_ns())
+        run_in_column(mac, first, RAW_READ.format(mark=mark), f"ready-{mark}")
+        # The grid runs up through the history; its screen starts at the first row that isn't history.
+        box = column(mac, first).locator(".term-row:not(.term-scrollback-row)").first.bounding_box()
+        assert box
+        mac.mouse.move(box["x"] + 10, box["y"] + 5)
+        mac.mouse.down()
+        mac.mouse.move(box["x"] + 160, box["y"] + 40, steps=8)
+        mac.mouse.up()
+        assert mac.evaluate("getSelection().toString()") or column(mac, first).locator(".term-select-all, .term-rectangle-row").count(), "nothing selected"
+        assert focused_column(mac) == first, focused_column(mac)
+        mac.keyboard.press("Control+v")
+        mac.keyboard.press("Escape")
+        mac.keyboard.press("Control+c")
+        return {"screen": shows(mac, f"read-{mark} $'\\026\\E\\003'")}
+    finally:
+        mac.close()
+
+
 def copies_out(page: Page, name: str) -> Any:
     """A program's copy (OSC 52) reaches the page's clipboard, and a large
     one passes without stopping output: a 150 KB copy once wedged the
@@ -951,6 +988,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "wheels-pager": wheels_pager,
     "copies-out": copies_out,
     "inserts-text": inserts_text,
+    "mac-keys": mac_keys,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,

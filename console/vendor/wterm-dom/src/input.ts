@@ -2,6 +2,11 @@
 // - The wheel sends arrow keys on the alternate screen when the program
 //   isn't tracking the mouse, as xterm's alternate scroll mode does.
 // - Escape then Tab leaving the terminal can be turned off (`tabExit`).
+// - Copy and paste take only the platform's chord, Cmd on Apple devices and
+//   Ctrl elsewhere, so Ctrl+C and Ctrl+V reach programs on a Mac.
+// - Escape reaches the program even with a selection, which it clears.
+// - The terminal's element takes focus when text in it is selected, rather
+//   than leaving it to the page, and a key pressed then is handled as typed.
 
 import type { TerminalCore } from "@wterm/core";
 import { InputAccessibility } from "./input-accessibility.js";
@@ -138,6 +143,8 @@ export class InputHandler {
   private pressedModifiers = new Set<string>();
   private deliveredKeys = new Set<string>();
   private tabExitArmed = false;
+  /** Cmd on Apple devices and Ctrl elsewhere: the modifier copy and paste take. */
+  private readonly clipboardChord: (e: KeyboardEvent) => boolean;
   /** Wheel travel on the alternate screen not yet sent, in rows. */
   private wheelRows = 0;
 
@@ -177,6 +184,12 @@ export class InputHandler {
     this.getBridge = getBridge;
     this.getCellSize = getCellSize;
     this.prepareComposition = prepareComposition;
+    const apple = /^(Mac|iPhone|iPad|iPod)/.test(
+      element.ownerDocument.defaultView?.navigator.platform ?? "",
+    );
+    this.clipboardChord = apple
+      ? (e) => e.metaKey && !e.ctrlKey
+      : (e) => e.ctrlKey && !e.metaKey;
     this.touchPrimary =
       element.ownerDocument.defaultView?.matchMedia?.("(pointer: coarse)")
         .matches ?? false;
@@ -274,6 +287,10 @@ export class InputHandler {
     };
 
     this.textarea.addEventListener("keydown", this._onKeyDown);
+    // Selecting text can't leave focus in the input, since focusing it would
+    // take the selection away; the element holds focus meanwhile instead.
+    if (!element.hasAttribute("tabindex")) element.tabIndex = -1;
+    this.element.addEventListener("keydown", this._onElementKeyDown);
     this.textarea.addEventListener("keyup", this._onKeyUp);
     this.textarea.addEventListener("paste", this._onPaste as EventListener);
     this.textarea.addEventListener(
@@ -309,6 +326,7 @@ export class InputHandler {
   destroy(): void {
     this.accessibility.destroy();
     this.textarea.removeEventListener("keydown", this._onKeyDown);
+    this.element.removeEventListener("keydown", this._onElementKeyDown);
     this.textarea.removeEventListener("keyup", this._onKeyUp);
     this.textarea.removeEventListener("paste", this._onPaste as EventListener);
     this.textarea.removeEventListener(
@@ -405,22 +423,7 @@ export class InputHandler {
     }
     if (
       !delivered &&
-      e.key === "Escape" &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey &&
-      !e.shiftKey &&
-      this.selectionActions?.hasSelection()
-    ) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.suppressedKeyUps.add(keyId);
-      this.selectionActions.clearSelection();
-      return;
-    }
-    if (
-      !delivered &&
-      (e.metaKey || e.ctrlKey) &&
+      this.clipboardChord(e) &&
       !e.altKey &&
       e.key.toLowerCase() === "c"
     ) {
@@ -438,7 +441,7 @@ export class InputHandler {
         return;
       }
     }
-    if (!delivered && (e.metaKey || e.ctrlKey) && e.key === "v") {
+    if (!delivered && this.clipboardChord(e) && e.key === "v") {
       this.suppressedKeyUps.add(keyId);
       this.textarea.focus();
       return;
@@ -496,6 +499,18 @@ export class InputHandler {
       this.onData(seq);
     }
   }
+
+  /**
+   * A key pressed while the element itself has focus, as it does while text
+   * in it is selected, is handled as if typed; once the terminal takes it,
+   * typing goes back to the input. A copy is left to the browser, which
+   * copies the selection.
+   */
+  private readonly _onElementKeyDown = (e: KeyboardEvent) => {
+    if (e.target !== this.element) return;
+    this.handleKeyDown(e);
+    if (e.defaultPrevented) this.focus();
+  };
 
   private handleKeyUp(e: KeyboardEvent): void {
     const keyId = e.code || e.key;
