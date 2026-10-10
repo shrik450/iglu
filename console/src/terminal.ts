@@ -130,6 +130,8 @@ export class TerminalPane {
     this.term = new WTerm(element, {
       core,
       cursorBlink: true,
+      // The console has its own way out, the prefix; Claude Code takes Escape then Tab.
+      tabExit: false,
       onData: (data) => {
         const typed = ctrlHeld.peek() ? withCtrl(data) : data;
         ctrlHeld.value = false;

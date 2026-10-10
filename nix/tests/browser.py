@@ -405,7 +405,9 @@ def recording_cancels(page: Page) -> Any:
 
 def keys_stay(page: Page, name: str) -> Any:
     """A terminal keeps the chords shells use: Alt+B moves back a word and
-    Ctrl+K kills the rest of the line, where iglu once took both."""
+    Ctrl+K kills the rest of the line, where iglu once took both. Escape
+    then Tab reaches the program too, as Claude Code takes it, where wterm
+    let the Tab move focus out of the terminal."""
     open_workspace(page, name)
     first = columns(page)[0]
     at_prompt(page, first)
@@ -418,6 +420,13 @@ def keys_stay(page: Page, name: str) -> Any:
     assert f"gone{mark}" not in shown.replace("\n", ""), shown
     assert page.url == f"{CONSOLE}/w/{name}", page.url
     expect(page.get_by_role("dialog")).to_have_count(0)
+    page.keyboard.type(f"bash -c 'printf ready-%s {mark}; IFS= read -rsn2 -t 20 k; printf \"\\nread-%s %q\\n\" {mark} \"$k\"'")
+    page.keyboard.press("Enter")
+    shows(page, f"ready-{mark}")
+    page.keyboard.press("Escape")
+    page.keyboard.press("Tab")
+    shows(page, f"read-{mark} $'\\E\\t'")
+    assert focused_column(page) == first, focused_column(page)
     return {"column": first}
 
 

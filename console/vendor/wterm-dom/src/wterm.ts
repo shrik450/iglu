@@ -1,5 +1,6 @@
 // Changed by iglu, not upstream (see ../UPSTREAM):
 // - init() leaves focus where it is; the host focuses the terminal it means to.
+// - `tabExit: false` turns off Escape then Tab leaving the terminal.
 
 import {
   WasmBridge,
@@ -45,6 +46,12 @@ export interface WTermOptions {
   announceOutput?: boolean;
   /** Suspend painting for an inactive pane while continuing to parse output. */
   renderingPaused?: boolean;
+  /**
+   * Whether Escape then Tab moves focus out of the terminal, leaving the Tab
+   * to the browser. On by default; a host with its own way out can turn it
+   * off, so programs that take Escape then Tab, like Claude Code, get both.
+   */
+  tabExit?: boolean;
   debug?: boolean;
   onData?: (data: string) => void;
   /** Raw input bytes, used by X10 mouse reports. */
@@ -82,6 +89,7 @@ export class WTerm {
   private input: InputHandler | null = null;
   private rafId: number | null = null;
   private _renderingPaused: boolean;
+  private readonly _tabExit: boolean;
   private _onVisibilityChange: () => void;
   private _synchronizedOutputTimer: ReturnType<typeof setTimeout> | null = null;
   private _synchronizedOutputState: "idle" | "held" | "passthrough" = "idle";
@@ -134,6 +142,7 @@ export class WTerm {
     this.autoResize = options.autoResize !== false;
     this._debugEnabled = options.debug ?? false;
     this._renderingPaused = options.renderingPaused ?? false;
+    this._tabExit = options.tabExit ?? true;
 
     this.onData = options.onData || null;
     this.onBinary = options.onBinary || null;
@@ -433,6 +442,7 @@ export class WTerm {
             this._historySelection.clear();
           },
         },
+        this._tabExit,
       );
 
       this._setupResizeObserver();

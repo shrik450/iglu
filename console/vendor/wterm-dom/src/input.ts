@@ -1,6 +1,7 @@
 // Changed by iglu, not upstream (see ../UPSTREAM):
 // - The wheel sends arrow keys on the alternate screen when the program
 //   isn't tracking the mouse, as xterm's alternate scroll mode does.
+// - Escape then Tab leaving the terminal can be turned off (`tabExit`).
 
 import type { TerminalCore } from "@wterm/core";
 import { InputAccessibility } from "./input-accessibility.js";
@@ -168,6 +169,7 @@ export class InputHandler {
       hasSelection: () => boolean;
       clearSelection: () => void;
     },
+    private readonly tabExit = true,
   ) {
     this.element = element;
     this.onData = onData;
@@ -372,6 +374,7 @@ export class InputHandler {
     // There is deliberately no timeout for this two-key sequence.
     if (e.key !== "Shift" || e.altKey || e.ctrlKey || e.metaKey) {
       this.tabExitArmed =
+        this.tabExit &&
         e.key === "Escape" &&
         !e.altKey &&
         !e.ctrlKey &&
