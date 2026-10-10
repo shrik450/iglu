@@ -285,7 +285,7 @@ def answers_queries(page: Page, name: str) -> Any:
     open_workspace(page, name)
     first = columns(page)[0]
     mark = str(time.time_ns())
-    shown = run_in_column(page, first, QUERIES.format(mark=mark), f"answers-{mark} [?1;2 [>1;10;0 ]12;rgb:")
+    shown = run_in_column(page, first, QUERIES.format(mark=mark), f"answers-{mark} [?62;22;52 [>1;10;0 ]12;rgb:")
     answers = re.search(rf"answers-{mark} (\S+ \S+ \]12;rgb:[0-9a-f/]+ \]11;rgb:[0-9a-f/]+)", shown.replace("\n", ""))
     assert answers, f"the console's own answers never came: {shown!r}"
     return {"column": first, "answers": answers and answers[1]}
