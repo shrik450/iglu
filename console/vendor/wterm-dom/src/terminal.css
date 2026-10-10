@@ -1,3 +1,7 @@
+/* Changed by iglu, not upstream (see ../UPSTREAM):
+   - Rounded corners start on the same whole pixel as the straight box strokes
+     beside them. */
+
 .wterm {
   /* Application overrides are owned by the renderer; each terminal is isolated. */
   --term-app-fg: initial;
@@ -234,6 +238,9 @@
 }
 
 .term-box-round::after {
+  /* Where a centred stroke starts, on a whole pixel, as the straight strokes
+     place theirs. Insets from the far edges count past the stroke. */
+  --term-box-snap: round(calc(50% - var(--term-box-stroke) * 0.5), 1px);
   content: "";
   position: absolute;
   box-sizing: border-box;
@@ -242,32 +249,28 @@
 }
 
 .term-box-round-tl::after {
-  inset: calc(50% - var(--term-box-stroke) * 0.5) 0 0
-    calc(50% - var(--term-box-stroke) * 0.5);
+  inset: var(--term-box-snap) 0 0 var(--term-box-snap);
   border-top-width: var(--term-box-stroke);
   border-left-width: var(--term-box-stroke);
   border-top-left-radius: 100%;
 }
 
 .term-box-round-tr::after {
-  inset: calc(50% - var(--term-box-stroke) * 0.5)
-    calc(50% - var(--term-box-stroke) * 0.5) 0 0;
+  inset: var(--term-box-snap) calc(100% - var(--term-box-snap) - var(--term-box-stroke)) 0 0;
   border-top-width: var(--term-box-stroke);
   border-right-width: var(--term-box-stroke);
   border-top-right-radius: 100%;
 }
 
 .term-box-round-br::after {
-  inset: 0 calc(50% - var(--term-box-stroke) * 0.5)
-    calc(50% - var(--term-box-stroke) * 0.5) 0;
+  inset: 0 calc(100% - var(--term-box-snap) - var(--term-box-stroke)) calc(100% - var(--term-box-snap) - var(--term-box-stroke)) 0;
   border-bottom-width: var(--term-box-stroke);
   border-right-width: var(--term-box-stroke);
   border-bottom-right-radius: 100%;
 }
 
 .term-box-round-bl::after {
-  inset: 0 0 calc(50% - var(--term-box-stroke) * 0.5)
-    calc(50% - var(--term-box-stroke) * 0.5);
+  inset: 0 0 calc(100% - var(--term-box-snap) - var(--term-box-stroke)) var(--term-box-snap);
   border-bottom-width: var(--term-box-stroke);
   border-left-width: var(--term-box-stroke);
   border-bottom-left-radius: 100%;

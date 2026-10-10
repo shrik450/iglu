@@ -1,3 +1,10 @@
+// Changed by iglu, not upstream (see ../UPSTREAM):
+// - Quadrants and the sideways eighth blocks split their cell on whole
+//   pixels, as the upward eighths already did, so blocks that meet across
+//   cells meet without a seam.
+// - Box strokes sit on whole pixels rather than centred between two, so a
+//   1px line is drawn sharp and its arms meet it.
+
 import type {
   CellData,
   TerminalCore,
@@ -242,21 +249,21 @@ function getBlockBackground(cp: number, fg: string, bg: string): string {
     case 0x2588:
       return fg;
     case 0x2589:
-      return `linear-gradient(to right,${fg} 87.5%,${bg} 87.5%)`;
+      return `linear-gradient(to right,${fg} round(87.5%, 1px),${bg} round(87.5%, 1px))`;
     case 0x258a:
-      return `linear-gradient(to right,${fg} 75%,${bg} 75%)`;
+      return `linear-gradient(to right,${fg} round(75%, 1px),${bg} round(75%, 1px))`;
     case 0x258b:
-      return `linear-gradient(to right,${fg} 62.5%,${bg} 62.5%)`;
+      return `linear-gradient(to right,${fg} round(62.5%, 1px),${bg} round(62.5%, 1px))`;
     case 0x258c:
-      return `linear-gradient(to right,${fg} 50%,${bg} 50%)`;
+      return `linear-gradient(to right,${fg} round(50%, 1px),${bg} round(50%, 1px))`;
     case 0x258d:
-      return `linear-gradient(to right,${fg} 37.5%,${bg} 37.5%)`;
+      return `linear-gradient(to right,${fg} round(37.5%, 1px),${bg} round(37.5%, 1px))`;
     case 0x258e:
-      return `linear-gradient(to right,${fg} 25%,${bg} 25%)`;
+      return `linear-gradient(to right,${fg} round(25%, 1px),${bg} round(25%, 1px))`;
     case 0x258f:
-      return `linear-gradient(to right,${fg} 12.5%,${bg} 12.5%)`;
+      return `linear-gradient(to right,${fg} round(12.5%, 1px),${bg} round(12.5%, 1px))`;
     case 0x2590:
-      return `linear-gradient(to right,${bg} 50%,${fg} 50%)`;
+      return `linear-gradient(to right,${bg} round(50%, 1px),${fg} round(50%, 1px))`;
     case 0x2591:
       return `color-mix(in srgb,${fg} 25%,${bg})`;
     case 0x2592:
@@ -266,7 +273,7 @@ function getBlockBackground(cp: number, fg: string, bg: string): string {
     case 0x2594:
       return `linear-gradient(${fg} ${SNAP_1_8},${bg} ${SNAP_1_8})`;
     case 0x2595:
-      return `linear-gradient(to right,${bg} 87.5%,${fg} 87.5%)`;
+      return `linear-gradient(to right,${bg} round(87.5%, 1px),${fg} round(87.5%, 1px))`;
     default: {
       const QUADRANTS: Record<number, [boolean, boolean, boolean, boolean]> = {
         0x2596: [false, false, true, false],
@@ -285,12 +292,19 @@ function getBlockBackground(cp: number, fg: string, bg: string): string {
       const [tl, tr, bl, br] = q;
       if (tl && tr && bl && br) return fg;
       const layers: string[] = [];
-      const POS = ["0 0", "100% 0", "0 100%", "100% 100%"];
+      // The first half is rounded to whole pixels and the second takes the
+      // rest, as the half blocks split, so neither edge lands mid-pixel.
+      const first = "round(50%, 1px)";
+      const rest = `calc(100% - ${first})`;
+      const PLACES = [
+        `0 0/${first} ${first}`,
+        `100% 0/${rest} ${first}`,
+        `0 100%/${first} ${rest}`,
+        `100% 100%/${rest} ${rest}`,
+      ];
       q.forEach((filled, i) => {
         if (filled)
-          layers.push(
-            `linear-gradient(${fg},${fg}) ${POS[i]}/50% 50% no-repeat`,
-          );
+          layers.push(`linear-gradient(${fg},${fg}) ${PLACES[i]} no-repeat`);
       });
       layers.push(bg);
       return layers.join(",");
@@ -349,25 +363,27 @@ function addBoxStyles(
   className: string,
 ): void {
   const stroke = "var(--term-box-stroke)";
-  const verticalLength = `calc(50% + ${stroke})`;
-  const horizontalLength = `calc(50% + ${stroke})`;
+  // A percentage position places the stroke at that share of the space it
+  // leaves, so `middle` is where a centred stroke starts, rounded to a pixel;
+  // `before` is the same distance as a size, so an arm reaches the stroke's
+  // far side, and `after` is what's left of the cell from its near side.
+  const middle = "round(50%, 1px)";
+  const before = `round(calc((100% - ${stroke}) / 2), 1px)`;
+  const toFar = `calc(${before} + ${stroke})`;
+  const fromNear = `calc(100% - ${before})`;
   for (const [codepoint, arms] of Object.entries(characters)) {
     const selected: [position: string, size: string][] = [];
     if (arms.includes("u") && arms.includes("d")) {
-      selected.push(["center center", `${stroke} 100%`]);
+      selected.push([`${middle} 0`, `${stroke} 100%`]);
     } else {
-      if (arms.includes("u"))
-        selected.push(["center top", `${stroke} ${verticalLength}`]);
-      if (arms.includes("d"))
-        selected.push(["center bottom", `${stroke} ${verticalLength}`]);
+      if (arms.includes("u")) selected.push([`${middle} 0`, `${stroke} ${toFar}`]);
+      if (arms.includes("d")) selected.push([`${middle} 100%`, `${stroke} ${fromNear}`]);
     }
     if (arms.includes("l") && arms.includes("r")) {
-      selected.push(["center center", `100% ${stroke}`]);
+      selected.push([`0 ${middle}`, `100% ${stroke}`]);
     } else {
-      if (arms.includes("l"))
-        selected.push(["left center", `${horizontalLength} ${stroke}`]);
-      if (arms.includes("r"))
-        selected.push(["right center", `${horizontalLength} ${stroke}`]);
+      if (arms.includes("l")) selected.push([`0 ${middle}`, `${toFar} ${stroke}`]);
+      if (arms.includes("r")) selected.push([`100% ${middle}`, `${fromNear} ${stroke}`]);
     }
     BOX_STYLES[Number(codepoint)] = {
       className,
