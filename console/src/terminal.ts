@@ -109,7 +109,8 @@ export class TerminalPane {
     session: string;
     /** Whether the console takes a key; it may write to the terminal instead. */
     shortcuts: (event: KeyboardEvent, send: (text: string) => void) => boolean;
-    /** Asked once the terminal has opened: whether it should take focus. */
+    /** Asked once the terminal has opened: whether it should take focus,
+     * which it does only if nothing else has it. */
     wantsFocus: () => boolean;
     onFocus: () => void;
     onStatus: (status: string) => void;
@@ -162,7 +163,11 @@ export class TerminalPane {
     void this.term.init().then(() => {
       if (this.closed) return;
       this.opened = true;
-      if (options.wantsFocus()) this.focus();
+      // Opening takes a moment: the keyboard is only taken if nothing else
+      // has it since, such as a column's name being edited.
+      const active = document.activeElement;
+      const free = !active || active === document.body || container.contains(active);
+      if (options.wantsFocus() && free) this.focus();
       this.connect();
     });
   }
