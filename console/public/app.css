@@ -252,7 +252,11 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .t-ws[aria-current="page"] .n { font-weight: 600; }
 .t-ws.needs .n { color: var(--waiting); }
 .t-ws.asleep .n { color: var(--muted); }
-.main { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; }
+.main { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; min-width: 0; min-height: 0; }
+.keyrow { display: flex; gap: 5px; padding-bottom: env(safe-area-inset-bottom); }
+.keyrow button { flex: 1 1 0; min-width: 0; padding: 0; min-height: 42px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 600 13px/1 var(--mono); box-shadow: var(--lift); }
+.keyrow button:active { transform: translateY(1px); box-shadow: none; background: var(--sunk); }
+.keyrow button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .w-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
 .w-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1 1 auto; }
 .w-title h1 { margin: 0; font: 500 18px/1.2 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

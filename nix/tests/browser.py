@@ -596,6 +596,43 @@ def drags_column(page: Page, name: str) -> Any:
     return {"swapped": swapped}
 
 
+def phone_keys(page: Page, name: str) -> Any:
+    """On a phone, the key row sends what the on-screen keyboard lacks, to
+    the column with the keyboard and without taking it: ^C stops a command,
+    and Ctrl goes with the next letter typed."""
+    browser = page.context.browser
+    assert browser
+    phone = browser.new_context(
+        storage_state=page.context.storage_state(), viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True
+    )
+    try:
+        tap = phone.new_page()
+        open_workspace(tap, name)
+        first = columns(tap)[0]
+        at_prompt(tap, first)
+        keys = tap.get_by_role("toolbar", name="Terminal keys")
+        tap.keyboard.type("sleep 300")
+        tap.keyboard.press("Enter")
+        time.sleep(1)
+        keys.get_by_role("button", name="Interrupt (Ctrl+C)").tap()
+        reaches(tap, first)
+        # Ctrl then u clears what's typed so far, in bash and fish alike.
+        mark = str(time.time_ns())
+        tap.keyboard.type(f"echo gone{mark}")
+        ctrl = keys.get_by_role("button", name="Ctrl, for the next key")
+        ctrl.tap()
+        expect(ctrl).to_have_attribute("aria-pressed", "true")
+        tap.keyboard.type("u")
+        expect(ctrl).to_have_attribute("aria-pressed", "false")
+        tap.keyboard.type(f"echo kept{mark}")
+        tap.keyboard.press("Enter")
+        shows(tap, f"kept{mark}", 2)
+        assert f"gone{mark}echo" not in screen(tap).replace("\n", ""), screen(tap)
+        return {"column": first}
+    finally:
+        phone.close()
+
+
 def renames_follow(page: Page, name: str) -> Any:
     """Renaming keeps the same workspace open: its column keeps the keyboard,
     and another tab showing it follows to the new name, terminals and all."""
@@ -787,6 +824,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "names-column": names_column,
     "zooms": zooms,
     "drags-column": drags_column,
+    "phone-keys": phone_keys,
     "goes-back": goes_back,
     "renames-follow": renames_follow,
     "drafts-survive": drafts_survive,

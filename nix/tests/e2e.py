@@ -273,6 +273,7 @@ try:
         browser("names-column", "demo")
         browser("zooms", "demo")
         browser("drags-column", "demo")
+        browser("phone-keys", "demo")
         browser("goes-back", "demo")
         browser("renames-follow", "demo")
         browser("drafts-survive", "app")

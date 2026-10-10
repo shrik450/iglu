@@ -10,6 +10,9 @@ import { ask, current, cursor, details, listed, navigate, overlay, route } from 
 
 /** Whether this keyboard has ⌘ and ⌥, or Ctrl and Alt. */
 export const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+/** A touch screen with no mouse: shortcut hints are no help, and a terminal
+ * needs keys the on-screen keyboard lacks. */
+export const touchOnly = matchMedia("(hover: none) and (pointer: coarse)").matches;
 
 /** This browser's keyboard settings. */
 export const keyboard = signal<KeyboardPrefs>(loadKeyboard());

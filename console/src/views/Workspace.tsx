@@ -52,13 +52,13 @@ import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
-import { keysFor, terminalKey } from "../keyboard.ts";
+import { keysFor, terminalKey, touchOnly } from "../keyboard.ts";
 import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
-import { loadGhostty, TerminalPane } from "../terminal.ts";
+import { ctrlHeld, loadGhostty, panes, TerminalPane } from "../terminal.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
   const r = route.value;
@@ -164,6 +164,36 @@ function Main({ ws }: { ws: WorkspaceView }) {
         {running ? <Columns ws={ws} /> : <Resting ws={ws} />}
         {details.value ? <Details ws={ws} /> : null}
       </div>
+      {running && touchOnly ? <KeyRow ws={ws} /> : null}
+    </div>
+  );
+}
+
+/** Keys a phone's keyboard lacks, for the column with the keyboard. A tap
+ * doesn't take focus, so the on-screen keyboard stays up. Ctrl applies to the
+ * next character typed. Arrows go as a shell expects them. */
+const ROW: readonly { label: string; name: string; text: string }[] = [
+  { label: "esc", name: "Escape", text: "\x1b" },
+  { label: "tab", name: "Tab", text: "\t" },
+  { label: "←", name: "Left", text: "\x1b[D" },
+  { label: "↓", name: "Down", text: "\x1b[B" },
+  { label: "↑", name: "Up", text: "\x1b[A" },
+  { label: "→", name: "Right", text: "\x1b[C" },
+  { label: "^C", name: "Interrupt (Ctrl+C)", text: "\x03" },
+];
+
+function KeyRow({ ws }: { ws: WorkspaceView }) {
+  const pane = () => panes.get(`${ws.id}/${activeOf(ws) ?? ""}`);
+  return (
+    <div class="keyrow" role="toolbar" aria-label="Terminal keys" onPointerDown={(e) => e.preventDefault()}>
+      <button type="button" aria-pressed={ctrlHeld.value} aria-label="Ctrl, for the next key" onClick={() => (ctrlHeld.value = !ctrlHeld.value)}>
+        ctrl
+      </button>
+      {ROW.map((key) => (
+        <button key={key.name} type="button" aria-label={key.name} onClick={() => pane()?.type(key.text)}>
+          {key.label}
+        </button>
+      ))}
     </div>
   );
 }

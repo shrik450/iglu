@@ -18,7 +18,7 @@ import {
   toggleZoom,
   zoomedIn,
 } from "../actions.ts";
-import { afterPrefix, keysFor } from "../keyboard.ts";
+import { afterPrefix, keysFor, touchOnly } from "../keyboard.ts";
 import { enableNotifications } from "../notify.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { LABEL, titleOf } from "../state/layout.ts";
@@ -74,7 +74,7 @@ function items(): Item[] {
     { label: "Previews", hint: keysFor("previews"), run: () => navigate({ view: "previews" }) },
     { label: "Settings", sub: "Environments, secrets, keyboard", run: () => navigate({ view: "settings" }) },
     // Keys are no help on a touch screen.
-    ...(matchMedia("(hover: none) and (pointer: coarse)").matches ? [] : [{ label: "Keyboard shortcuts", hint: keysFor("keys"), run: () => (overlay.value = "keys") }]),
+    ...(touchOnly ? [] : [{ label: "Keyboard shortcuts", hint: keysFor("keys"), run: () => (overlay.value = "keys") }]),
   ];
   const before = workspaces.value.find((w) => w.id === previous.value && w.id !== ws?.id);
   if (before) list.push({ label: `Back to ${before.name}`, sub: "The workspace you were in before", hint: keysFor("last-workspace"), run: () => open(before) });

@@ -85,6 +85,7 @@ def main() -> None:
             step("names-column", browser.names_column, page, NAME)
             step("zooms", browser.zooms, page, NAME)
             step("drags-column", browser.drags_column, page, NAME)
+            step("phone-keys", browser.phone_keys, page, NAME)
             step("goes-back", browser.goes_back, page, NAME)
             step("renames-follow", browser.renames_follow, page, NAME)
             step("drafts-survive", browser.drafts_survive, page, PROJECT)
