@@ -93,6 +93,7 @@ export class TerminalPane {
 
   private readonly key: string;
   private readonly container: HTMLElement;
+  private readonly element: HTMLElement;
   private readonly workspace: string;
   private readonly session: string;
   private readonly shortcuts: (event: KeyboardEvent, send: (text: string) => void) => boolean;
@@ -129,6 +130,7 @@ export class TerminalPane {
     // look is read from the host around it.
     const element = document.createElement("div");
     container.append(element);
+    this.element = element;
     this.term = new WTerm(element, {
       core,
       // The console has its own way out, the prefix; Claude Code takes Escape then Tab.
@@ -163,6 +165,13 @@ export class TerminalPane {
       if (options.wantsFocus()) this.focus();
       this.connect();
     });
+  }
+
+  /** Names the terminal for assistive tech, with how to leave it: wterm
+   * gives its input the element's name and description. */
+  describe(title: string, prefix: string): void {
+    this.element.setAttribute("aria-label", `Terminal, ${title}`);
+    this.element.setAttribute("aria-description", `${prefix}, then Tab leaves the terminal; ${prefix}, then ? lists shortcuts.`);
   }
 
   restyle(): void {

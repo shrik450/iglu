@@ -417,13 +417,59 @@ RAW_READ = (
 )
 
 
+def select_text(page: Page, name: str) -> None:
+    """Drags across the start of a column's screen, below its history, and
+    checks the terminal kept the keyboard."""
+    box = column(page, name).locator(".term-row:not(.term-scrollback-row)").first.bounding_box()
+    assert box
+    page.mouse.move(box["x"] + 10, box["y"] + 5)
+    page.mouse.down()
+    page.mouse.move(box["x"] + 160, box["y"] + 40, steps=8)
+    page.mouse.up()
+    assert page.evaluate("getSelection().toString()"), "nothing selected"
+    assert focused_column(page) == name, focused_column(page)
+
+
+# RAW_READ for a program using the kitty keyboard protocol's first level.
+KITTY_READ = (
+    "bash -c 'printf \"\\\\e[>1u\"; stty raw -echo min 0 time 200; printf ready-%s {mark}; k=$(dd bs=1 count=3 2>/dev/null); "
+    "stty sane; printf \"\\\\e[<u\\\\r\\\\nread-%s %q\\\\r\\\\n\" {mark} \"$k\"'"
+)
+
+
+def selected_keys(page: Page, name: str) -> Any:
+    """With text selected, Escape only clears the selection, since a stray
+    interrupt costs an agent's work; and a modifier tapped meanwhile isn't
+    held for later keys, which then reached a kitty-keyboard program as Alt
+    and Shift arrows. Ctrl+Alt and a letter is Meta with its control byte,
+    and with any other key is left to type, as AltGr does: it sent C-M-[,
+    a second Escape, for AltGr+8."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, KITTY_READ.format(mark=mark), f"ready-{mark}")
+    select_text(page, first)
+    page.keyboard.press("Escape")
+    assert not page.evaluate("getSelection().toString()"), "still selected"
+    select_text(page, first)
+    page.keyboard.press("Shift")
+    page.keyboard.press("Alt")
+    page.keyboard.press("ArrowUp")
+    shows(page, f"read-{mark} $'\\E[A'")
+    mark = str(time.time_ns())
+    run_in_column(page, first, RAW_READ.format(mark=mark), f"ready-{mark}")
+    page.keyboard.press("Control+Alt+q")
+    page.keyboard.press("Control+Alt+Digit8")
+    page.keyboard.type("x")
+    return {"screen": shows(page, f"read-{mark} $'\\E\\021x'")}
+
+
 def mac_keys(page: Page, name: str) -> Any:
-    """On a Mac, where Cmd copies and pastes, Ctrl+V, Escape and Ctrl+C reach
-    the program even with text selected: the terminal kept Ctrl+V for a
-    paste that never came, ate Ctrl+C while anything was selected, and spent
-    Escape on clearing the selection. Ctrl+Option and a letter is Meta with
-    its control byte, which sent nothing, and an Option that isn't Meta
-    types its character, which went as Meta anyway."""
+    """On a Mac, where Cmd copies and pastes, Ctrl+C and Ctrl+V reach the
+    program even with text selected: the terminal ate Ctrl+C while anything
+    was selected and kept Ctrl+V for a paste that never came. Ctrl+Option
+    and a letter is Meta with its control byte, which sent nothing, and an
+    Option that isn't Meta types its character, which went as Meta anyway."""
     mac = page.context.new_page()
     mac.add_init_script("Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' })")
     # The person's own keyboard setting is kept in the tab, to put back after.
@@ -437,19 +483,12 @@ def mac_keys(page: Page, name: str) -> Any:
         first = columns(mac)[0]
         mark = str(time.time_ns())
         run_in_column(mac, first, RAW_READ.format(mark=mark), f"ready-{mark}")
-        # The grid runs up through the history; its screen starts at the first row that isn't history.
-        box = column(mac, first).locator(".term-row:not(.term-scrollback-row)").first.bounding_box()
-        assert box
-        mac.mouse.move(box["x"] + 10, box["y"] + 5)
-        mac.mouse.down()
-        mac.mouse.move(box["x"] + 160, box["y"] + 40, steps=8)
-        mac.mouse.up()
-        assert mac.evaluate("getSelection().toString()") or column(mac, first).locator(".term-select-all, .term-rectangle-row").count(), "nothing selected"
-        assert focused_column(mac) == first, focused_column(mac)
+        select_text(mac, first)
+        mac.keyboard.press("Control+c")
+        select_text(mac, first)
         mac.keyboard.press("Control+v")
         mac.keyboard.press("Escape")
-        mac.keyboard.press("Control+c")
-        shows(mac, f"read-{mark} $'\\026\\E\\003'")
+        shows(mac, f"read-{mark} $'\\003\\026\\E'")
         mark = str(time.time_ns())
         run_in_column(mac, first, RAW_READ.format(mark=mark), f"ready-{mark}")
         mac.keyboard.press("Control+Alt+b")
@@ -607,7 +646,9 @@ def keys_stay(page: Page, name: str) -> Any:
     """A terminal keeps the chords shells use: Alt+B moves back a word and
     Ctrl+K kills the rest of the line, where iglu once took both. Escape
     then Tab reaches the program too, as Claude Code takes it, where wterm
-    let the Tab move focus out of the terminal."""
+    let the Tab move focus out of the terminal. The terminal's input is the
+    tab stop, where a selection had taken it out of the tab order, and the
+    prefix and Tab leave it for the page."""
     open_workspace(page, name)
     first = columns(page)[0]
     at_prompt(page, first)
@@ -627,6 +668,19 @@ def keys_stay(page: Page, name: str) -> Any:
     page.keyboard.press("Tab")
     shows(page, f"read-{mark} $'\\E\\t'")
     assert focused_column(page) == first, focused_column(page)
+    # The terminal's input is the tab stop, named for its column, and says
+    # how to leave; the prefix and Tab leave it for the page.
+    term = column(page, first).locator(".wterm")
+    assert term.get_attribute("tabindex") == "-1", term.get_attribute("tabindex")
+    field = term.locator("textarea")
+    assert field.get_attribute("tabindex") == "0", field.get_attribute("tabindex")
+    assert (field.get_attribute("aria-label") or "").startswith("Terminal, "), field.get_attribute("aria-label")
+    assert "then Tab leaves the terminal" in (field.get_attribute("aria-description") or ""), field.get_attribute("aria-description")
+    assert "Escape, then Tab" not in (field.get_attribute("aria-description") or "")
+    prefix(page, "Tab")
+    assert focused_column(page) is None, page.evaluate("document.activeElement?.outerHTML.slice(0, 120)")
+    page.keyboard.press("Shift+Tab")
+    assert focused_column(page) == first, page.evaluate("document.activeElement?.outerHTML.slice(0, 120)")
     return {"column": first}
 
 
@@ -1133,6 +1187,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "opens-links": opens_links,
     "copies-history": copies_history,
     "mac-keys": mac_keys,
+    "selected-keys": selected_keys,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,

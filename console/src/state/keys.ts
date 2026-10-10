@@ -26,6 +26,7 @@ export type Action =
   | { kind: "label-column" }
   | { kind: "zoom" }
   | { kind: "find" }
+  | { kind: "leave" }
   | { kind: "last-workspace" }
   | { kind: "add-column" }
   | { kind: "rename" }
@@ -47,6 +48,9 @@ export interface KeyInput {
   meta: boolean;
   ctrl: boolean;
   shift: boolean;
+  /** Whether the Option held, if any, is one the person reads as Meta;
+   * another types characters, such as @ on a German Mac's ⌥L. */
+  optionMeta: boolean;
   focus: Focus;
   /** Whether a workspace is open: then plain keys are never the console's. */
   inWorkspace: boolean;
@@ -141,6 +145,7 @@ export const BINDINGS: readonly Binding[] = [
   { action: { kind: "width" }, does: "Change its width", group: "Columns", after: letter("w") },
   { action: { kind: "zoom" }, does: "Zoom it to fill the page, or put it back", group: "Columns", after: letter("z") },
   { action: { kind: "find" }, does: "Find in its output", group: "Columns", after: letter("s") },
+  { action: { kind: "leave" }, does: "Leave the terminal for the page (⇧ goes back)", group: "Columns", after: { code: "Tab", label: "tab" } },
   { action: { kind: "add-column" }, does: "New column", group: "Columns", after: letter("c") },
   { action: { kind: "label-column" }, does: "Rename the column", group: "Columns", after: { code: "Comma", label: "," } },
   { action: { kind: "close-column" }, does: "End the column", group: "Columns", after: letter("x") },
@@ -161,6 +166,8 @@ export function resolve(mode: Mode, input: KeyInput, keymap: Keymap): Outcome {
   if (mode === "prefix") {
     if (sameChord(input, keymap.prefix)) return { kind: "send-prefix" };
     if (input.ctrl || input.meta || input.alt) return { kind: "cancel" };
+    // Tab and Shift+Tab alike: the browser moves focus on from the terminal.
+    if (input.code === "Tab") return act({ kind: "leave" });
     const digit = /^Digit([1-9])$/.exec(input.code);
     if (digit) return act({ kind: "column-at", index: Number(digit[1]) - 1 });
     const binding = BINDINGS.find((b) => b.after && matches(b.after, input));
@@ -177,7 +184,7 @@ export function resolve(mode: Mode, input: KeyInput, keymap: Keymap): Outcome {
   const find = keymap.mac ? input.meta && !input.ctrl && !input.shift : input.ctrl && input.shift && !input.meta;
   if (find && input.focus === "terminal" && input.code === "KeyF" && !input.alt) return act({ kind: "find" });
 
-  if (keymap.altMoves && input.alt && !input.ctrl && !input.meta && input.focus !== "field") {
+  if (keymap.altMoves && input.alt && input.optionMeta && !input.ctrl && !input.meta && input.focus !== "field") {
     const binding = BINDINGS.find((b) => b.alt && matches(b.alt, input));
     if (binding) return act(binding.action);
   }

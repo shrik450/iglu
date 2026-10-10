@@ -98,6 +98,9 @@ export function perform(action: Action): void {
     case "zoom":
       if (ws) toggleZoom(ws);
       return;
+    case "leave":
+      // Done by the browser, from the key itself; see handle.
+      return;
     case "find": {
       const column = ws && activeOf(ws);
       if (ws && column) ask(ws, { kind: "find", column });
@@ -141,6 +144,7 @@ function inputOf(event: KeyboardEvent, focus: Focus): KeyInput {
     meta: event.metaKey,
     ctrl: event.ctrlKey,
     shift: event.shiftKey,
+    optionMeta: optionIsMeta(),
     focus,
     inWorkspace: route.value.view === "workspace",
   };
@@ -184,8 +188,10 @@ function handle(event: KeyboardEvent, focus: Focus, send?: (text: string) => voi
   const outcome = resolve(armed.value ? "prefix" : "normal", input, { mac, ...keyboard.value });
   switch (outcome.kind) {
     case "pass": {
-      if (!send || !input.alt || input.ctrl || input.meta) return false;
-      if (optionIsMeta()) {
+      // Off a Mac, Alt doesn't type, and the terminal sends it as Meta with
+      // the character the layout gives the key.
+      if (!send || !mac || !input.alt || input.ctrl || input.meta) return false;
+      if (input.optionMeta) {
         const bytes = metaBytes(input.code, input.shift);
         if (!bytes) return false;
         event.preventDefault();
@@ -216,6 +222,8 @@ function handle(event: KeyboardEvent, focus: Focus, send?: (text: string) => voi
     }
     case "act":
       armed.value = false;
+      // Leaving takes the browser's own Tab, which the terminal never sees.
+      if (outcome.action.kind === "leave") return true;
       perform(outcome.action);
       break;
     default:

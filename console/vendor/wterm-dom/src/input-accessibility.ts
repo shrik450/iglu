@@ -1,3 +1,7 @@
+// Changed by iglu, not upstream (see ../UPSTREAM):
+// - The host is always focusable by pointer (tabindex -1), never a tab stop.
+// - The Escape-then-Tab hint is left out when that gesture is off.
+
 const LABEL_ATTRIBUTES = [
   "aria-label",
   "aria-labelledby",
@@ -20,6 +24,8 @@ export class InputAccessibility {
   constructor(
     private host: HTMLElement,
     private input: HTMLTextAreaElement,
+    /** Whether Escape then Tab leaves the terminal, and so is announced. */
+    private exitHint = true,
   ) {
     this.hint = host.ownerDocument.createElement("span");
     do {
@@ -50,24 +56,28 @@ export class InputAccessibility {
     // Described-by references take precedence over aria-description. Append
     // instructions to both paths, preserving the host's own description.
     const describedBy = this.input.getAttribute("aria-describedby");
-    if (describedBy)
+    if (describedBy && this.exitHint)
       this.input.setAttribute(
         "aria-describedby",
         `${describedBy} ${this.hint.id}`,
       );
-    this.input.setAttribute(
-      "aria-description",
-      [this.input.getAttribute("aria-description"), KEYBOARD_EXIT_HINT]
-        .filter(Boolean)
-        .join(" "),
-    );
+    const description = [
+      this.input.getAttribute("aria-description"),
+      this.exitHint ? KEYBOARD_EXIT_HINT : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (description) this.input.setAttribute("aria-description", description);
+    else this.input.removeAttribute("aria-description");
     this.input.setAttribute("tabindex", this.tabIndex ?? "0");
 
-    // The host and textarea must not become two sequential tab stops. Do not
-    // observe our own normalization as a new host request; framework updates
-    // (including a repeated -1) still reach the observer.
+    // The host and textarea must not become two sequential tab stops. The
+    // host still takes focus from the pointer, while text in it is selected,
+    // so it's always -1: the tab stop is the textarea's. Do not observe our
+    // own normalization as a new host request; framework updates (including
+    // a repeated -1) still reach the observer.
     this.observer.disconnect();
-    if (this.tabIndex !== null) this.host.setAttribute("tabindex", "-1");
+    this.host.setAttribute("tabindex", "-1");
     this.observer.observe(this.host, {
       attributes: true,
       attributeFilter: [...LABEL_ATTRIBUTES, "tabindex"],

@@ -267,6 +267,7 @@ try:
         browser("opens-links", "demo")
         browser("copies-history", "demo")
         browser("mac-keys", "demo")
+        browser("selected-keys", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
         browser("palette-from-terminal", "demo")
         browser("palette-ranks", "demo")

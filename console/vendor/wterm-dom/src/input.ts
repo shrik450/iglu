@@ -4,11 +4,12 @@
 // - Escape then Tab leaving the terminal can be turned off (`tabExit`).
 // - Copy and paste take only the platform's chord, Cmd on Apple devices and
 //   Ctrl elsewhere, so Ctrl+C and Ctrl+V reach programs on a Mac.
-// - Escape reaches the program even with a selection, which it clears.
+// - Escape with a selection on screen clears it without reaching the
+//   program; with one out of sight, it clears it and goes to the program.
 // - The terminal's element takes focus when text in it is selected, rather
 //   than leaving it to the page, and a key pressed then is handled as typed.
 // - press() handles a key the host sends, as if pressed here.
-// - Ctrl+Alt with a letter sends Meta and its control byte.
+// - Ctrl+Alt with a letter the layout types sends Meta and its control byte.
 
 import type { TerminalCore } from "@wterm/core";
 import { InputAccessibility } from "./input-accessibility.js";
@@ -147,6 +148,7 @@ export class InputHandler {
   private tabExitArmed = false;
   /** Cmd on Apple devices and Ctrl elsewhere: the modifier copy and paste take. */
   private readonly clipboardChord: (e: KeyboardEvent) => boolean;
+  private readonly apple: boolean;
   /** Wheel travel on the alternate screen not yet sent, in rows. */
   private wheelRows = 0;
 
@@ -186,9 +188,9 @@ export class InputHandler {
     this.getBridge = getBridge;
     this.getCellSize = getCellSize;
     this.prepareComposition = prepareComposition;
-    const apple = /^(Mac|iPhone|iPad|iPod)/.test(
+    const apple = (this.apple = /^(Mac|iPhone|iPad|iPod)/.test(
       element.ownerDocument.defaultView?.navigator.platform ?? "",
-    );
+    ));
     this.clipboardChord = apple
       ? (e) => e.metaKey && !e.ctrlKey
       : (e) => e.ctrlKey && !e.metaKey;
@@ -229,7 +231,11 @@ export class InputHandler {
     s.color = "transparent";
     s.background = "transparent";
     element.appendChild(this.textarea);
-    this.accessibility = new InputAccessibility(element, this.textarea);
+    this.accessibility = new InputAccessibility(
+      element,
+      this.textarea,
+      this.tabExit,
+    );
 
     this._onKeyDown = this.handleKeyDown.bind(this);
     this._onKeyUp = this.handleKeyUp.bind(this);
@@ -290,9 +296,11 @@ export class InputHandler {
 
     this.textarea.addEventListener("keydown", this._onKeyDown);
     // Selecting text can't leave focus in the input, since focusing it would
-    // take the selection away; the element holds focus meanwhile instead.
-    if (!element.hasAttribute("tabindex")) element.tabIndex = -1;
+    // take the selection away; the element holds focus meanwhile instead
+    // (InputAccessibility makes it focusable).
     this.element.addEventListener("keydown", this._onElementKeyDown);
+    this.element.addEventListener("keyup", this._onElementKeyUp);
+    this.element.addEventListener("blur", this._onElementBlur);
     this.textarea.addEventListener("keyup", this._onKeyUp);
     this.textarea.addEventListener("paste", this._onPaste as EventListener);
     this.textarea.addEventListener(
@@ -329,6 +337,8 @@ export class InputHandler {
     this.accessibility.destroy();
     this.textarea.removeEventListener("keydown", this._onKeyDown);
     this.element.removeEventListener("keydown", this._onElementKeyDown);
+    this.element.removeEventListener("keyup", this._onElementKeyUp);
+    this.element.removeEventListener("blur", this._onElementBlur);
     this.textarea.removeEventListener("keyup", this._onKeyUp);
     this.textarea.removeEventListener("paste", this._onPaste as EventListener);
     this.textarea.removeEventListener(
@@ -423,6 +433,25 @@ export class InputHandler {
       this.selectionActions.selectAll();
       return;
     }
+    // Escape first clears a selection on screen, as a stray interrupt costs
+    // an agent's work and a second press costs nothing. One out of sight is
+    // cleared as the key goes to the program, so it can't eat an interrupt.
+    if (
+      !delivered &&
+      e.key === "Escape" &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      this.selectionInView()
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.suppressedKeyUps.add(keyId);
+      this.selectionActions?.clearSelection();
+      this.element.ownerDocument.getSelection()?.removeAllRanges();
+      return;
+    }
     if (
       !delivered &&
       this.clipboardChord(e) &&
@@ -513,6 +542,34 @@ export class InputHandler {
     this.handleKeyDown(e);
     if (e.defaultPrevented) this.focus();
   };
+
+  // A key released while the element has focus, as one pressed there, so a
+  // modifier tapped then isn't held for the next key.
+  private readonly _onElementKeyUp = (e: KeyboardEvent) => {
+    if (e.target === this.element) this.handleKeyUp(e);
+  };
+
+  // Keys held while the element had focus are forgotten when it loses it,
+  // as the input's are; the element sends no focus report of its own.
+  private readonly _onElementBlur = () => {
+    this.pressedModifiers.clear();
+    this.deliveredKeys.clear();
+    this.suppressedKeyUps.clear();
+  };
+
+  /** Whether a selection in this terminal shows on screen now. */
+  private selectionInView(): boolean {
+    if (this.selectionActions?.hasSelection()) return true;
+    const selection = this.element.ownerDocument.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount !== 1)
+      return false;
+    const range = selection.getRangeAt(0);
+    if (!this.element.contains(range.commonAncestorContainer)) return false;
+    const view = this.element.getBoundingClientRect();
+    return Array.from(range.getClientRects()).some(
+      (rect) => rect.bottom > view.top && rect.top < view.bottom,
+    );
+  }
 
   /** Handles a key from the host as if it were pressed here. */
   press(e: KeyboardEvent): void {
@@ -1007,12 +1064,18 @@ export class InputHandler {
       if (e.key === "Backspace") return "\x08";
     }
     // Ctrl+Alt with a letter is Meta and its control byte, as xterm sends it,
-    // so programs get C-M-b. Option changes a Mac key's character, so the
-    // letter comes from the key itself.
+    // so programs get C-M-b; the letter is the one the layout types. Off a
+    // Mac, Ctrl+Alt is also AltGr, so any other key is left to type its
+    // character (@ or € on a German layout). Ctrl+Option never types on a
+    // Mac, where Option may change the key, so the key itself names the
+    // letter there.
     if (e.ctrlKey && e.altKey && !e.metaKey) {
-      const letter = /^Key([A-Z])$/.exec(e.code)?.[1];
-      const control = legacyControlByte(letter ?? e.key);
-      if (control !== null) return "\x1b" + control;
+      const letter = /^[a-z]$/i.test(e.key)
+        ? e.key
+        : this.apple
+          ? /^Key([A-Z])$/.exec(e.code)?.[1]
+          : undefined;
+      if (letter) return "\x1b" + legacyControlByte(letter);
     }
 
     if (e.key === "Enter" && e.shiftKey) return "\x1b[13;2u";

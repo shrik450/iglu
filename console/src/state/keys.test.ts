@@ -13,6 +13,7 @@ const key = (code: string, extra: Partial<KeyInput> = {}): KeyInput => ({
   meta: false,
   ctrl: false,
   shift: false,
+  optionMeta: true,
   focus: "terminal",
   inWorkspace: true,
   ...extra,
@@ -48,6 +49,17 @@ test("⌘F finds in a terminal's output, and Ctrl+Shift+F off a Mac; Ctrl+F stay
   // Outside a terminal, the browser's own find.
   assert.deepEqual(resolve("normal", key("KeyF", { meta: true, focus: "page" }), mac), { kind: "pass" });
   assert.deepEqual(resolve("prefix", key("KeyS"), mac), find);
+});
+
+test("⌥H/J/K/L move only with an Option read as Meta, so another types its character", () => {
+  assert.deepEqual(resolve("normal", key("KeyL", { alt: true }), mac), { kind: "act", action: { kind: "column", step: 1 } });
+  assert.deepEqual(resolve("normal", key("KeyL", { alt: true, optionMeta: false, key: "@" }), mac), { kind: "pass" });
+});
+
+test("the prefix and Tab, or Shift+Tab, leave the terminal", () => {
+  assert.deepEqual(resolve("prefix", key("Tab"), mac), { kind: "act", action: { kind: "leave" } });
+  assert.deepEqual(resolve("prefix", key("Tab", { shift: true }), linux), { kind: "act", action: { kind: "leave" } });
+  assert.deepEqual(resolve("normal", key("Tab"), mac), { kind: "pass" });
 });
 
 test("the prefix arms, and the next key is the console's", () => {

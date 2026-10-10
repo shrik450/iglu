@@ -52,7 +52,8 @@ import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
-import { keysFor, terminalKey, touchOnly } from "../keyboard.ts";
+import { keyboard, keysFor, mac, terminalKey, touchOnly } from "../keyboard.ts";
+import { chordLabel } from "../state/keys.ts";
 import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
@@ -806,24 +807,29 @@ function ColumnBody(props: { ws: WorkspaceView; column: Shown; on: boolean; onSt
       );
     case "open":
     case "adopted":
-      return <Pane ws={ws} name={column.name} on={props.on} onStatus={props.onStatus} />;
+      return <Pane ws={ws} name={column.name} title={titleOf(column)} on={props.on} onStatus={props.onStatus} />;
     default:
       return unreachable(column.state);
   }
 }
 
-function Pane(props: { ws: WorkspaceView; name: string; on: boolean; onStatus: (status: string) => void }) {
+function Pane(props: { ws: WorkspaceView; name: string; title: string; on: boolean; onStatus: (status: string) => void }) {
   const { ws, name, onStatus } = props;
   const host = useRef<HTMLDivElement>(null);
+  const opened = useRef<TerminalPane | null>(null);
   // Opening a terminal is asynchronous; by the time it's done another column may be active.
   const on = useRef(props.on);
   on.current = props.on;
+  const prefix = chordLabel(keyboard.value.prefix, mac);
+  const description = useRef({ title: props.title, prefix });
+  description.current = { title: props.title, prefix };
+  useEffect(() => opened.current?.describe(props.title, prefix), [props.title, prefix]);
   useEffect(() => {
     let pane: TerminalPane | null = null;
     let cancelled = false;
     void newCore().then((core) => {
       if (cancelled || !host.current) return core.dispose();
-      pane = new TerminalPane({
+      pane = opened.current = new TerminalPane({
         container: host.current,
         core,
         workspace: ws.id,
@@ -834,9 +840,11 @@ function Pane(props: { ws: WorkspaceView; name: string; on: boolean; onStatus: (
         onStatus,
         onDrop: () => void loadColumns(ws),
       });
+      pane.describe(description.current.title, description.current.prefix);
     });
     return () => {
       cancelled = true;
+      opened.current = null;
       pane?.dispose();
     };
   }, [ws.id, name]);
