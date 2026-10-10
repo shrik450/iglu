@@ -1,6 +1,7 @@
 // Changed by iglu, not upstream (see ../UPSTREAM):
 // - `newestFirst` starts a search at the newest match, as terminals do, and
-//   keeps its result and active match while output arrives.
+//   keeps its result and active match while output arrives, following rows
+//   as old history is discarded.
 
 import type { TerminalCore } from "@wterm/core";
 
@@ -157,6 +158,8 @@ export class SearchController {
   private pending = false;
   private revealFirst = false;
   private newestFirst = false;
+  /** The core's count of discarded history rows when `matches` was found. */
+  private discarded = 0;
 
   constructor(private changed: (reveal: boolean) => void) {}
 
@@ -176,18 +179,48 @@ export class SearchController {
     this.invalidate();
   }
 
-  invalidate(): void {
-    // Newest first keeps the last result until the next is complete: output
-    // only appends, so its matches still stand, and streaming output would
-    // otherwise clear them faster than a long history can be searched.
-    const kept = this.newestFirst
-      ? { matches: this.matches, ...this.state }
-      : null;
+  /**
+   * Starts the search again on what the core holds now. Newest first keeps
+   * the last result until the next is complete, as streaming output would
+   * otherwise clear it faster than a long history can be searched: output
+   * appends, so its matches still stand once moved up for history discarded
+   * since. `keep` is false when the grid reflowed or switched screens, and
+   * the old matches no longer say where text is.
+   */
+  invalidate(core?: TerminalCore, keep = true): void {
+    let kept: { matches: SearchMatch[]; activeIndex: number } | null = null;
+    if (this.newestFirst && keep && core) {
+      const now = core.getScrollbackDiscardedCount?.() ?? 0;
+      const gone = Math.max(0, now - this.discarded);
+      const active = this.matches[this.state.activeIndex];
+      const matches = this.matches
+        .filter((match) => match.start.row >= gone)
+        .map((match) =>
+          gone === 0
+            ? match
+            : {
+                start: { ...match.start, row: match.start.row - gone },
+                end: { ...match.end, row: match.end.row - gone },
+              },
+        );
+      this.discarded = now;
+      kept = {
+        matches,
+        activeIndex: active
+          ? matches.findIndex(
+              (match) =>
+                match.start.row === active.start.row - gone &&
+                match.start.col === active.start.col,
+            )
+          : -1,
+      };
+    }
+    const limited = this.state.limited;
     this.cancel();
     this.matches = kept?.matches ?? [];
-    this.state.count = kept?.count ?? 0;
+    this.state.count = this.matches.length;
     this.state.activeIndex = kept?.activeIndex ?? -1;
-    this.state.limited = kept?.limited ?? false;
+    this.state.limited = kept ? limited : false;
     this.pending = this.state.searching = this.state.query.length > 0;
     this.changed(false);
   }
@@ -229,12 +262,26 @@ export class SearchController {
         if (this.matches.length && this.state.activeIndex === -1)
           this.state.activeIndex = 0;
       } else if (done) {
-        const active = this.state.activeIndex;
+        // The active match stays where it is in the text: the same match if
+        // it's still there, else the nearest before it.
+        const active = this.matches[this.state.activeIndex];
         this.matches = found;
+        this.discarded = core.getScrollbackDiscardedCount?.() ?? 0;
         this.state.count = found.length;
         this.state.limited = limited;
-        this.state.activeIndex =
-          active === -1 ? found.length - 1 : Math.min(active, found.length - 1);
+        let index = found.length - 1;
+        if (active) {
+          const same = found.findIndex(
+            (match) =>
+              match.start.row === active.start.row &&
+              match.start.col === active.start.col,
+          );
+          let before = 0;
+          for (let i = 0; i < found.length; i++)
+            if (found[i].start.row <= active.start.row) before = i;
+          index = same !== -1 ? same : before;
+        }
+        this.state.activeIndex = index;
       }
       const reveal = this.revealFirst && this.state.activeIndex !== -1;
       if (reveal) this.revealFirst = false;

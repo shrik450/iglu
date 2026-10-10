@@ -116,6 +116,7 @@ export class WTerm {
   private _searchReveal = false;
   private _onClickFocus: (event: MouseEvent) => void;
   private readonly _onUrlClick: (event: MouseEvent) => void;
+  private readonly _onUrlPress: (event: MouseEvent) => void;
   private readonly _onUrlHover: (event: MouseEvent) => void;
   private _onScroll: () => void;
   private _onModifierChange: (event: KeyboardEvent) => void;
@@ -300,6 +301,13 @@ export class WTerm {
     this.element.addEventListener("click", this._onClickFocus);
     // A plain URL opens on a modifier-click, before selection or focus see
     // the click.
+    // Its press goes no further either, so a program tracking the mouse
+    // doesn't get the click too, and no selection starts.
+    this._onUrlPress = (event) => {
+      if (!this._urlUnder(event)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
     this._onUrlClick = (event) => {
       const url = this._urlUnder(event);
       if (!url) return;
@@ -314,6 +322,7 @@ export class WTerm {
     this._onUrlHover = (event) => {
       this.element.classList.toggle("url-hover", this._urlUnder(event) !== null);
     };
+    this.element.addEventListener("mousedown", this._onUrlPress, true);
     this.element.addEventListener("click", this._onUrlClick, true);
     this.element.addEventListener("mousemove", this._onUrlHover);
     this._onModifierChange = (event) => {
@@ -538,6 +547,7 @@ export class WTerm {
     this.renderer?.beforeMutation(this.bridge);
     if (this.debug) this.debug.traceWrite(data);
     this._shouldScrollToBottom = this._isScrolledToBottom();
+    const alternate = this.bridge.usingAltScreen();
     const windowSizeQueries = this._collectWindowSizeQueries(data);
     let deliveryError: unknown;
     let hasDeliveryError = false;
@@ -591,7 +601,7 @@ export class WTerm {
     const synchronized = this.bridge.synchronizedOutput?.() ?? false;
     const generation = this.bridge.synchronizedOutputGeneration?.() ?? 0;
     this._updateSynchronizedOutput(synchronized, generation);
-    this._invalidateSearch();
+    this._invalidateSearch(this.bridge.usingAltScreen() === alternate);
     if (this._synchronizedOutputState !== "held") {
       this._setupRendererIfNeeded();
       this._scheduleRender();
@@ -671,7 +681,7 @@ export class WTerm {
       this._setupRenderer();
       this._scheduleRender();
     }
-    this._invalidateSearch();
+    this._invalidateSearch(false);
     if (this.onResize) this.onResize(this.cols, this.rows);
   }
 
@@ -714,7 +724,10 @@ export class WTerm {
       event.clientX,
       this._charWidth,
     );
-    return position ? urlAt(this.bridge, position) : null;
+    const row = position && this.renderer.liveRow(this.bridge, position.row);
+    return position && row !== null
+      ? urlAt(this.bridge, { row, col: position.col })
+      : null;
   }
 
   /** Scroll to the previous (-1) or next (1) shell prompt from the viewport top. */
@@ -883,10 +896,11 @@ export class WTerm {
     selection.removeAllRanges();
   }
 
-  private _invalidateSearch(): void {
+  /** `keep` is false when the screen switched or reflowed. */
+  private _invalidateSearch(keep = true): void {
     if (!this.getSearchState().query) return;
     this._searchReveal = false;
-    this._search.invalidate();
+    this._search.invalidate(this.bridge ?? undefined, keep);
     this._paintSearch();
   }
 
@@ -1406,6 +1420,7 @@ export class WTerm {
     this.renderer?.destroy();
     this.renderer = null;
     this.element.removeEventListener("click", this._onClickFocus);
+    this.element.removeEventListener("mousedown", this._onUrlPress, true);
     this.element.removeEventListener("click", this._onUrlClick, true);
     this.element.removeEventListener("mousemove", this._onUrlHover);
     this.element.removeEventListener("click", this._onMouseSelect);

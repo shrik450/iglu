@@ -6,7 +6,8 @@
 //   1px line is drawn sharp and its arms meet it.
 // - Dim and concealed text change only the text, leaving the background.
 // - Double-line box glyphs are painted, as the single and heavy ones are.
-// - getSelectionText() takes the core, to read selected rows not mounted.
+// - getSelectionText() takes the core, to read selected rows not mounted;
+//   liveRow() finds a painted row where the core has it now.
 
 import type {
   CellData,
@@ -1216,6 +1217,21 @@ export class Renderer {
     }
   }
 
+  /**
+   * Where the core has a row of the painted frame now: rows are numbered from
+   * the oldest retained, so history discarded since the paint moves them up.
+   * Null once the row itself is gone, or the grid has changed width and
+   * reflowed.
+   */
+  liveRow(core: TerminalCore, row: number): number | null {
+    if (core.getCols() !== this.cols) return null;
+    const discarded =
+      (core.getScrollbackDiscardedCount?.() ?? 0) -
+      Math.max(0, this._renderedDiscardedCount);
+    const live = row - Math.max(0, discarded);
+    return live >= 0 ? live : null;
+  }
+
   /** Plain text for the native selection, or null when this terminal does not own it. */
   getSelectionText(core: TerminalCore | null): string | null {
     const terminal = this.container.parentElement;
@@ -1223,7 +1239,12 @@ export class Renderer {
     return getSelectionText(
       terminal,
       this.selectionRows(),
-      core ? (row) => rowText(core, row) : undefined,
+      core
+        ? (row) => {
+            const live = this.liveRow(core, row);
+            return live === null ? null : rowText(core, live);
+          }
+        : undefined,
     );
   }
 
