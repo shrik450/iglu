@@ -1,8 +1,18 @@
+// Changed by iglu, not upstream (see ../UPSTREAM):
+// - `newestFirst` starts a search at the newest match, as terminals do, and
+//   keeps its result and active match while output arrives.
+
 import type { TerminalCore } from "@wterm/core";
 
 export interface SearchOptions {
   /** Defaults to false. Uses locale-independent, per-code-point lowercase. */
   caseSensitive?: boolean;
+  /**
+   * Start at the newest match rather than the oldest. When output arrives
+   * and the search runs again, its last result stays until the new one is
+   * complete, and the active match stays where it was. Defaults to false.
+   */
+  newestFirst?: boolean;
 }
 
 export interface SearchState {
@@ -146,6 +156,7 @@ export class SearchController {
   private scan: Generator<SearchMatch | null> | null = null;
   private pending = false;
   private revealFirst = false;
+  private newestFirst = false;
 
   constructor(private changed: (reveal: boolean) => void) {}
 
@@ -158,16 +169,25 @@ export class SearchController {
       throw new RangeError("Search query exceeds 1,024 UTF-16 code units");
     this.state.query = query;
     this.state.caseSensitive = options.caseSensitive ?? false;
+    this.newestFirst = options.newestFirst ?? false;
     this.revealFirst = true;
+    // A new query starts afresh, whatever is kept when output arrives.
+    this.cancel();
     this.invalidate();
   }
 
   invalidate(): void {
+    // Newest first keeps the last result until the next is complete: output
+    // only appends, so its matches still stand, and streaming output would
+    // otherwise clear them faster than a long history can be searched.
+    const kept = this.newestFirst
+      ? { matches: this.matches, ...this.state }
+      : null;
     this.cancel();
-    this.matches = [];
-    this.state.count = 0;
-    this.state.activeIndex = -1;
-    this.state.limited = false;
+    this.matches = kept?.matches ?? [];
+    this.state.count = kept?.count ?? 0;
+    this.state.activeIndex = kept?.activeIndex ?? -1;
+    this.state.limited = kept?.limited ?? false;
     this.pending = this.state.searching = this.state.query.length > 0;
     this.changed(false);
   }
@@ -180,6 +200,9 @@ export class SearchController {
       this.state.query,
       this.state.caseSensitive,
     ));
+    // Newest first gathers into a result of its own, shown once complete.
+    const found = this.newestFirst ? [] : this.matches;
+    let limited = false;
     const tick = () => {
       if (this.scan !== scan) return;
       this.timer = null;
@@ -192,18 +215,28 @@ export class SearchController {
           break;
         }
         if (next.value) {
-          if (this.matches.length === 10000) {
-            this.state.limited = true;
+          if (found.length === 10000) {
+            limited = true;
             done = true;
             break;
           }
-          this.matches.push(next.value);
+          found.push(next.value);
         }
       } while (performance.now() < deadline);
-      this.state.count = this.matches.length;
-      const reveal = this.revealFirst && this.matches.length > 0;
-      if (this.matches.length && this.state.activeIndex === -1)
-        this.state.activeIndex = 0;
+      if (!this.newestFirst) {
+        this.state.count = this.matches.length;
+        this.state.limited = limited;
+        if (this.matches.length && this.state.activeIndex === -1)
+          this.state.activeIndex = 0;
+      } else if (done) {
+        const active = this.state.activeIndex;
+        this.matches = found;
+        this.state.count = found.length;
+        this.state.limited = limited;
+        this.state.activeIndex =
+          active === -1 ? found.length - 1 : Math.min(active, found.length - 1);
+      }
+      const reveal = this.revealFirst && this.state.activeIndex !== -1;
       if (reveal) this.revealFirst = false;
       this.state.searching = !done;
       if (done) {
