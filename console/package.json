@@ -12,7 +12,8 @@
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@fontsource-variable/unbounded": "5.3.0",
     "@preact/signals": "2.11.3",
-    "ghostty-web": "0.4.0",
+    "@wterm/core": "0.5.4",
+    "@wterm/ghostty": "0.5.4",
     "preact": "11.0.0"
   },
   "devDependencies": {
