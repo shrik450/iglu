@@ -10,21 +10,22 @@
 use iglu_domain::attention::SessionStatus;
 use iglu_domain::capacity::Bytes;
 use iglu_domain::column::Argv;
-use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
+use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestPath, GuestUser, ImageFingerprint};
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
 use iglu_domain::lifecycle::Instance;
+use iglu_domain::pasted::FileName;
 use iglu_domain::port::GuestPort;
 use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretBundle};
-use iglu_domain::terminal::SessionName;
+use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput};
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Paths, so client and server can't drift.
 pub mod path {
-    use super::{GuestPort, SessionName, WorkspaceId};
+    use super::{FileName, GuestPort, OutputLines, SessionName, WorkspaceId};
 
     pub const HOST: &str = "/v1/host";
     pub const INVENTORY: &str = "/v1/inventory";
@@ -64,7 +65,31 @@ pub mod path {
     pub fn tunnel(workspace: WorkspaceId, port: GuestPort) -> String {
         format!("/v1/workspaces/{workspace}/ports/{port}/tunnel")
     }
+
+    #[must_use]
+    pub fn output(workspace: WorkspaceId, session: &SessionName, lines: OutputLines) -> String {
+        format!("/v1/workspaces/{workspace}/terminals/{session}/output?lines={lines}")
+    }
+
+    #[must_use]
+    pub fn input(workspace: WorkspaceId, session: &SessionName) -> String {
+        format!("/v1/workspaces/{workspace}/terminals/{session}/input")
+    }
+
+    /// Keeps a pasted file, the request's body, named by `?name=`.
+    #[must_use]
+    pub fn files(workspace: WorkspaceId, name: &FileName) -> String {
+        format!("/v1/workspaces/{workspace}/files?name={name}")
+    }
+
+    /// Waits for a workspace to open a connection through its channel, and
+    /// hands it over as a tunnel. See [`super::GUEST_WORKSPACE`].
+    pub const GUEST_CONNECTIONS: &str = "/v1/guest-connections";
 }
+
+/// On a guest connection handed over as a tunnel: the workspace whose
+/// channel it came through, which only hostd can know.
+pub const GUEST_WORKSPACE: &str = "iglu-workspace";
 
 /// The `Upgrade` protocol name for raw port tunnels.
 pub const TUNNEL_UPGRADE: &str = "iglu-tunnel";
@@ -187,6 +212,37 @@ pub enum CommandOutcome {
 pub struct TerminalInfo {
     pub name: SessionName,
     pub clients: u32,
+}
+
+/// What a terminal shows: its last lines, as plain text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalOutput {
+    pub text: String,
+    pub truncated: bool,
+}
+
+/// Query parameters for reading a terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputParams {
+    pub lines: OutputLines,
+}
+
+/// Query parameters for keeping a pasted file.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileParams {
+    pub name: FileName,
+}
+
+/// Where a pasted file was kept.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptFile {
+    pub path: GuestPath,
+}
+
+/// Text to type into a terminal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalTyping {
+    pub text: TerminalInput,
 }
 
 /// Query parameters for attaching to a terminal.

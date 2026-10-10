@@ -3,8 +3,10 @@
 use std::io::Read;
 use std::process::ExitCode;
 
+use iglu_domain::guest::OutputReport;
+use iglu_domain::pasted::{self, FileName};
 use iglu_domain::repo::{BranchName, RepoUrl};
-use iglu_domain::terminal::SessionName;
+use iglu_domain::terminal::{self, OutputLines, SessionName, TerminalInput};
 use iglu_guest::credential::{self, Stored};
 use iglu_guest::paths::Dirs;
 use iglu_guest::{git, listeners, provision, secrets, session};
@@ -18,6 +20,9 @@ const USAGE: &str = "usage:
   iglu-guest git-state            (where the checkout stands)
   iglu-guest attach <session>
   iglu-guest close <session>
+  iglu-guest output <session> --lines <n>   (its last lines, as JSON)
+  iglu-guest input <session>      (types what's on stdin into it)
+  iglu-guest keep <file-name>     (keeps a pasted file from stdin; prints its path)
   iglu-guest git-credential <get|store|erase>
   iglu-guest interface             (the version of the interface hosts use)";
 
@@ -129,7 +134,80 @@ fn main() -> ExitCode {
             Some(Err(error)) => fail(error),
             None => fail(USAGE),
         },
+        "output" => output(&dirs, rest),
+        "input" => input(&dirs, rest),
+        "keep" => keep(&dirs, rest),
         _ => fail(USAGE),
+    }
+}
+
+fn output(dirs: &Dirs, rest: &[String]) -> ExitCode {
+    let name = match rest.first().map(|s| s.parse::<SessionName>()) {
+        Some(Ok(name)) => name,
+        Some(Err(error)) => return fail(error),
+        None => return fail(USAGE),
+    };
+    let lines = match flag(rest, "--lines").map(|n| n.parse::<OutputLines>()) {
+        Some(Ok(lines)) => lines,
+        Some(Err(error)) => return fail(error),
+        None => return fail(USAGE),
+    };
+    let history = match session::history(dirs, &name) {
+        Ok(history) => history,
+        Err(error) => return fail(error),
+    };
+    let (text, truncated) = terminal::last_lines(&history, lines);
+    match serde_json::to_string(&OutputReport { text, truncated }) {
+        Ok(json) => {
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(error),
+    }
+}
+
+fn keep(dirs: &Dirs, rest: &[String]) -> ExitCode {
+    let name = match rest.first().map(|s| s.parse::<FileName>()) {
+        Some(Ok(name)) => name,
+        Some(Err(error)) => return fail(error),
+        None => return fail(USAGE),
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = std::io::stdin()
+        .take(u64::try_from(pasted::MAX_BYTES).unwrap_or(u64::MAX) + 1)
+        .read_to_end(&mut bytes)
+    {
+        return fail(format!("reading the file: {error}"));
+    }
+    if bytes.len() > pasted::MAX_BYTES {
+        return fail("the file is larger than 16 MiB");
+    }
+    match iglu_guest::pasted::keep(dirs, &name, &bytes) {
+        Ok(path) => {
+            println!("{}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(error),
+    }
+}
+
+fn input(dirs: &Dirs, rest: &[String]) -> ExitCode {
+    let name = match rest.first().map(|s| s.parse::<SessionName>()) {
+        Some(Ok(name)) => name,
+        Some(Err(error)) => return fail(error),
+        None => return fail(USAGE),
+    };
+    let mut text = String::new();
+    if let Err(error) = std::io::stdin().read_to_string(&mut text) {
+        return fail(format!("reading the input: {error}"));
+    }
+    let text = match text.parse::<TerminalInput>() {
+        Ok(text) => text,
+        Err(error) => return fail(error),
+    };
+    match session::send(dirs, &name, &text) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => fail(error),
     }
 }
 

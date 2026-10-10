@@ -148,6 +148,20 @@ where
     }
 }
 
+/// A request body taken as it is, such as a file, within the route's limit.
+pub struct Raw(pub Bytes);
+
+impl<S> FromRequest<S> for Raw
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        read(request, state).await.map(Self)
+    }
+}
+
 async fn read<S: Send + Sync>(request: Request, state: &S) -> Result<Bytes, ApiError> {
     Bytes::from_request(request, state)
         .await

@@ -269,6 +269,8 @@ try:
         browser("mac-keys", "demo")
         browser("selected-keys", "demo")
         browser("styles-terminal", "demo")
+        browser("grants-access", "demo")
+        browser("pastes-files", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
         browser("palette-from-terminal", "demo")
         browser("palette-ranks", "demo")
@@ -444,6 +446,32 @@ try:
         neighbour(f"for i in $(seq 30); do nc -z -w 5 {address} 4444 && exit 0; sleep 1; done; exit 1")
         guest(f"! nc -z -w 5 {address} 4444")
 
+    with subtest("a workspace drives its own columns with iglu, and another only as far as it's granted"):
+        # Inside, `iglu` is the workspace, through its channel; the network
+        # checks above still hold.
+        assert guest("iglu whoami").strip() == "the workspace demo"
+        guest("iglu column new --name probe")
+        guest("iglu column send probe 'printf done-%s 42' --enter")
+        guest("for i in $(seq 30); do iglu column output probe | grep -q done-42 && exit 0; sleep 1; done; exit 1")
+        guest("iglu column close probe")
+        # Another workspace of the same owner is out of sight until granted.
+        guest("! iglu column ls -w over-https")
+        guest("iglu secret ls 2>&1 | grep -q \"its owner can\"")
+        iglu("access set demo --on over-https --allow view,read_output")
+        assert "shell" in guest("iglu column ls -w over-https")
+        guest("iglu column send shell -w over-https hi 2>&1 | grep -q \"hasn't been granted\"")
+        # The owner's own token, sent through the channel, is still the workspace.
+        refused = guest(
+            "printf 'GET /v1/secrets HTTP/1.1\\r\\nHost: iglu\\r\\n"
+            f"Authorization: Bearer {token}\\r\\nConnection: close\\r\\n\\r\\n' "
+            "| nc -U -N $IGLU_SOCKET"
+        )
+        assert refused.startswith("HTTP/1.1 403"), refused
+        iglu("access set demo --on over-https --allow")
+        guest("! iglu column ls -w over-https")
+        history = [(entry["kind"], entry["via"]) for entry in iglu("log demo")]
+        assert ("column-added", "demo") in history, history
+
     with subtest("freezing reclaims memory and thawing resumes"):
 
         def resident() -> int:
@@ -471,6 +499,8 @@ try:
         history = [entry["kind"] for entry in iglu("log over-https")]
         assert "adopted" in history, history
         assert "init" in guest("git -C ~/app log --oneline")
+        # hostd listens for each workspace's channel again.
+        guest("for i in $(seq 30); do iglu whoami && exit 0; sleep 1; done; exit 1")
         # Reapplying the preseed at boot must not trip over the existing pool.
         print("pool source:", host.succeed("incus storage get iglu source"))
         assert host.succeed("systemctl show -p Result --value incus-preseed").strip() == "success"

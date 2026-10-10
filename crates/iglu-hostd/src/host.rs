@@ -5,19 +5,22 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use iglu_domain::capacity::Bytes;
-use iglu_domain::env::EnvSource;
+use iglu_domain::env::{EnvSource, GuestPath};
 use iglu_domain::git::GitState;
+use iglu_domain::guest::OutputReport;
 use iglu_domain::id::{InstanceName, WorkspaceId};
 use iglu_domain::lifecycle::{Instance, SecretsGeneration};
 use iglu_domain::listener::Listener;
+use iglu_domain::pasted::FileName;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::{FetchTokens, SecretBundle};
-use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::terminal::{self, OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{
     BuildOutcome, Command, CommandError, CommandOutcome, ErrorCode, InstanceReport, ProvisionSpec,
-    SessionSpec, TerminalInfo,
+    SessionSpec, TerminalInfo, TerminalOutput,
 };
 
+use crate::channel::Channels;
 use crate::config::Timeouts;
 use crate::guest::{self, GuestCommand, Opening};
 use crate::rules::{self, BootFacts, Step};
@@ -41,6 +44,7 @@ pub struct Host<R> {
     runtime: R,
     boots: BootCache,
     timeouts: Timeouts,
+    channels: Channels,
 }
 
 impl<R: Runtime> Host<R> {
@@ -49,7 +53,12 @@ impl<R: Runtime> Host<R> {
             runtime,
             boots: BootCache::default(),
             timeouts,
+            channels: Channels::default(),
         }
+    }
+
+    pub const fn channels(&self) -> &Channels {
+        &self.channels
     }
 
     pub const fn runtime(&self) -> &R {
@@ -133,7 +142,10 @@ impl<R: Runtime> Host<R> {
             | GuestCommand::Sessions
             | GuestCommand::Listeners
             | GuestCommand::GitState
-            | GuestCommand::Close(_) => self.timeouts.operation(),
+            | GuestCommand::Close(_)
+            | GuestCommand::Output(..)
+            | GuestCommand::Input(..)
+            | GuestCommand::Keep(..) => self.timeouts.operation(),
         };
         let output = self.runtime.run(guest, command, timeout).await?;
         if output.success {
@@ -270,17 +282,24 @@ impl<R: Runtime> Host<R> {
     /// # Errors
     ///
     /// When the runtime can't list its instances.
+    /// Listing them is also when hostd starts listening for each new
+    /// instance's channel, and stops for each one that's gone.
     pub async fn inventory(&self) -> Result<Vec<InstanceReport>, CommandError> {
         let mut reports = Vec::new();
+        let mut channels = Vec::new();
         for claim in self.runtime.instances().await? {
             match claim {
-                Ok(observed) => reports.push(self.report(&observed).await),
+                Ok(observed) => {
+                    channels.push((observed.name, self.runtime.channel(observed.name)));
+                    reports.push(self.report(&observed).await);
+                }
                 Err(Ownership::Foreign) => {}
                 Err(error @ Ownership::Damaged(..)) => {
                     tracing::warn!(%error, "skipping an instance");
                 }
             }
         }
+        self.channels.listen(channels);
         Ok(reports)
     }
 
@@ -374,6 +393,84 @@ impl<R: Runtime> Host<R> {
         )
         .await?;
         Ok(())
+    }
+
+    /// A session's last lines. What the guest prints is untrusted, so it's
+    /// cut to size again here.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, or the session isn't open.
+    pub async fn output(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionName,
+        lines: OutputLines,
+    ) -> Result<TerminalOutput, CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        let output = self
+            .run(
+                &guest,
+                &GuestCommand::Output(session, lines),
+                "reading the session failed",
+            )
+            .await?;
+        let printed: OutputReport = serde_json::from_str(&output.stdout).map_err(|e| {
+            CommandError::new(ErrorCode::GuestFailed, format!("unreadable output: {e}"))
+        })?;
+        let (text, cut) = terminal::last_lines(&printed.text, lines);
+        Ok(TerminalOutput {
+            text,
+            truncated: printed.truncated || cut,
+        })
+    }
+
+    /// Types into an open session.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, or the session isn't open.
+    pub async fn input(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionName,
+        text: &TerminalInput,
+    ) -> Result<(), CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        self.run(
+            &guest,
+            &GuestCommand::Input(session, text),
+            "typing into the session failed",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Keeps a file pasted on one of the workspace's terminals, and says
+    /// where it is. What the guest prints is untrusted: it must be a path.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, or the guest can't keep the file.
+    pub async fn keep(
+        &self,
+        workspace: WorkspaceId,
+        name: &FileName,
+        bytes: &[u8],
+    ) -> Result<GuestPath, CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        let output = self
+            .run(
+                &guest,
+                &GuestCommand::Keep(name, bytes),
+                "keeping the file failed",
+            )
+            .await?;
+        output
+            .stdout
+            .trim_end()
+            .parse()
+            .map_err(|e| CommandError::new(ErrorCode::GuestFailed, format!("unreadable path: {e}")))
     }
 
     /// Attaches to an open terminal session.

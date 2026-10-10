@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
 use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{Seen, SessionStatus};
-use iglu_domain::auth::VerifiedIdentity;
+use iglu_domain::auth::{Grant, VerifiedIdentity};
 use iglu_domain::capacity::Bytes;
 use iglu_domain::column::{ColumnLabel, ColumnSpec};
 use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
@@ -55,6 +55,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0006_stored_shapes.sql")),
     Migration::Sql(include_str!("migrations/0007_column_labels.sql")),
     Migration::Sql(include_str!("migrations/0008_preferences.sql")),
+    Migration::Sql(include_str!("migrations/0009_access.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -1218,7 +1219,8 @@ pub fn set_condition(
     Ok(())
 }
 
-/// Marks a workspace deleted and removes its routes; their names stay taken.
+/// Marks a workspace deleted and removes its routes and grants; the routes'
+/// names stay taken.
 pub fn mark_deleted(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<(), DbError> {
     tx.execute(
         "DELETE FROM route WHERE workspace_id = ?1",
@@ -1226,6 +1228,10 @@ pub fn mark_deleted(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<
     )?;
     tx.execute(
         "DELETE FROM attention WHERE workspace_id = ?1",
+        [id.to_string()],
+    )?;
+    tx.execute(
+        "DELETE FROM workspace_grant WHERE holder_id = ?1 OR workspace_id = ?1",
         [id.to_string()],
     )?;
     tx.execute(
@@ -1608,19 +1614,82 @@ pub fn sealed_secrets(tx: &Connection, owner: PrincipalId) -> Result<Vec<SealedS
         .collect::<Result<_, _>>()?)
 }
 
+// ---- access ----
+
+/// What a workspace may do, on itself and on others.
+pub fn grants(tx: &Connection, holder: WorkspaceId) -> Result<Vec<Grant>, DbError> {
+    let mut statement = tx.prepare(
+        "SELECT workspace_id, permission FROM workspace_grant WHERE holder_id = ?1
+         ORDER BY workspace_id, permission",
+    )?;
+    Ok(statement
+        .query_map([holder.to_string()], |row| {
+            Ok(Grant {
+                workspace: text(row, 0)?,
+                permission: text(row, 1)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?)
+}
+
+/// Replaces everything a workspace may do. Whether each grant is the
+/// holder's to have is the caller's to check.
+pub fn replace_grants(
+    tx: &Connection,
+    holder: WorkspaceId,
+    grants: &[Grant],
+) -> Result<(), DbError> {
+    tx.execute(
+        "DELETE FROM workspace_grant WHERE holder_id = ?1",
+        [holder.to_string()],
+    )?;
+    let mut insert = tx.prepare(
+        "INSERT OR IGNORE INTO workspace_grant (holder_id, workspace_id, permission) VALUES (?1, ?2, ?3)",
+    )?;
+    for grant in grants {
+        insert.execute(params![
+            holder.to_string(),
+            grant.workspace.to_string(),
+            grant.permission.as_str()
+        ])?;
+    }
+    Ok(())
+}
+
 // ---- activity ----
+
+/// Who did something: a person, perhaps through one of their workspaces.
+#[derive(Clone, Copy, Debug)]
+pub struct By {
+    pub person: PrincipalId,
+    pub via: Option<WorkspaceId>,
+}
+
+impl By {
+    pub const fn person(person: PrincipalId) -> Self {
+        Self { person, via: None }
+    }
+}
 
 pub fn add_activity(
     tx: &Connection,
     workspace: Option<WorkspaceId>,
-    actor: Option<PrincipalId>,
+    by: Option<By>,
     kind: &str,
     detail: &str,
     now: Timestamp,
 ) -> Result<(), DbError> {
     tx.execute(
-        "INSERT INTO activity (workspace_id, actor_id, kind, detail, at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![workspace.map(|w| w.to_string()), actor.map(|a| a.to_string()), kind, detail, now.unix_millis()],
+        "INSERT INTO activity (workspace_id, actor_id, via_workspace_id, kind, detail, at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            workspace.map(|w| w.to_string()),
+            by.map(|b| b.person.to_string()),
+            by.and_then(|b| b.via).map(|w| w.to_string()),
+            kind,
+            detail,
+            now.unix_millis()
+        ],
     )?;
     Ok(())
 }
@@ -1630,14 +1699,18 @@ pub fn activity(
     workspace: WorkspaceId,
     limit: u32,
 ) -> Result<Vec<ActivityEntry>, DbError> {
-    let mut statement =
-        tx.prepare("SELECT kind, detail, at FROM activity WHERE workspace_id = ?1 ORDER BY at DESC, id DESC LIMIT ?2")?;
+    let mut statement = tx.prepare(
+        "SELECT a.kind, a.detail, a.at, v.name FROM activity a
+         LEFT JOIN workspace v ON v.id = a.via_workspace_id
+         WHERE a.workspace_id = ?1 ORDER BY a.at DESC, a.id DESC LIMIT ?2",
+    )?;
     Ok(statement
         .query_map(params![workspace.to_string(), limit], |row| {
             Ok(ActivityEntry {
                 kind: row.get(0)?,
                 detail: row.get(1)?,
                 at: timestamp(row, 2)?,
+                via: opt_text(row, 3)?,
             })
         })?
         .collect::<Result<_, _>>()?)
@@ -1739,6 +1812,13 @@ mod tests {
         ws
     }
 
+    /// One more workspace like `like`, from the same environment and project.
+    fn another_workspace(conn: &Connection, like: &WorkspaceRecord, name: &str) -> WorkspaceRecord {
+        let ws = workspace_record(like.owner, like.env_revision, like.project, name);
+        insert_workspace(conn, &ws, None, "hash").expect("workspace");
+        ws
+    }
+
     #[test]
     fn migrations_apply_once_and_refuse_a_newer_schema() {
         let mut conn = conn();
@@ -1775,6 +1855,83 @@ mod tests {
         );
         let bob = principal(&conn, "bob");
         assert_ne!(bob, first.id);
+    }
+
+    #[test]
+    fn grants_are_replaced_whole_and_go_with_a_deleted_workspace() {
+        use iglu_domain::auth::Permission;
+
+        let conn = conn();
+        let alice = principal(&conn, "alice");
+        let one = new_workspace(&conn, alice, "one");
+        let two = another_workspace(&conn, &one, "two");
+        let grant = |workspace: &WorkspaceRecord, permission| Grant {
+            workspace: workspace.id,
+            permission,
+        };
+        replace_grants(
+            &conn,
+            one.id,
+            &[
+                grant(&one, Permission::View),
+                grant(&two, Permission::ReadOutput),
+            ],
+        )
+        .expect("first grants");
+        replace_grants(
+            &conn,
+            one.id,
+            &[
+                grant(&two, Permission::SendInput),
+                grant(&two, Permission::SendInput),
+            ],
+        )
+        .expect("replaced, with a repeat");
+        assert_eq!(
+            grants(&conn, one.id).expect("read"),
+            [grant(&two, Permission::SendInput)]
+        );
+        replace_grants(&conn, two.id, &[grant(&one, Permission::View)]).expect("two's grants");
+        // Deleting a workspace takes what it held and what it was granted on.
+        mark_deleted(&conn, two.id, Timestamp::from_unix_millis(5)).expect("deleted");
+        assert!(grants(&conn, one.id).expect("read").is_empty());
+        assert!(grants(&conn, two.id).expect("read").is_empty());
+    }
+
+    #[test]
+    fn activity_says_which_workspace_did_it() {
+        let conn = conn();
+        let alice = principal(&conn, "alice");
+        let one = new_workspace(&conn, alice, "one");
+        let two = another_workspace(&conn, &one, "two");
+        let at = Timestamp::from_unix_millis(1);
+        add_activity(
+            &conn,
+            Some(one.id),
+            Some(By::person(alice)),
+            "renamed",
+            "",
+            at,
+        )
+        .expect("by the owner");
+        add_activity(
+            &conn,
+            Some(one.id),
+            Some(By {
+                person: alice,
+                via: Some(two.id),
+            }),
+            "typed",
+            "into shell",
+            Timestamp::from_unix_millis(2),
+        )
+        .expect("through a workspace");
+        let log = activity(&conn, one.id, 10).expect("read");
+        assert_eq!(
+            log[0].via.as_ref().map(ToString::to_string).as_deref(),
+            Some("two")
+        );
+        assert_eq!(log[1].via, None);
     }
 
     #[test]

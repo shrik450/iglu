@@ -8,6 +8,7 @@ pub mod claude;
 pub mod credential;
 pub mod git;
 pub mod listeners;
+pub mod pasted;
 pub mod paths;
 pub mod provision;
 pub mod secrets;

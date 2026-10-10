@@ -1,7 +1,8 @@
 //! Assembling what the API shows from stored records.
 
-use iglu_api::{AttentionView, Condition, ProjectView, RouteView, WorkspaceView};
+use iglu_api::{AccessGrant, AttentionView, Condition, ProjectView, RouteView, WorkspaceView};
 use iglu_domain::attention::{most_urgent, urgency};
+use iglu_domain::auth::Grant;
 use iglu_domain::env::EnvName;
 use iglu_domain::standing::{Facts, Health, Standing, standing};
 use rusqlite::Connection;
@@ -44,6 +45,7 @@ pub fn workspace_view(
     let attention = db::attention(tx, ws.id)?;
     let routes = db::routes(tx, ws.id)?;
     let columns = db::columns(tx, ws.id)?;
+    let access = access(&db::grants(tx, ws.id)?);
     let agents = db::revision_image(tx, ws.env_revision)?
         .map(|image| image.agents.into_iter().map(|agent| agent.name).collect())
         .unwrap_or_default();
@@ -101,9 +103,25 @@ pub fn workspace_view(
             .iter()
             .map(|route| route_view(config, route))
             .collect(),
+        access,
         created_at: ws.created_at,
     };
     Ok((standing, view))
+}
+
+/// Grants by the workspace they're on, in the order they come.
+fn access(grants: &[Grant]) -> Vec<AccessGrant> {
+    let mut access: Vec<AccessGrant> = Vec::new();
+    for grant in grants {
+        match access.iter_mut().find(|a| a.workspace == grant.workspace) {
+            Some(entry) => entry.permissions.push(grant.permission),
+            None => access.push(AccessGrant {
+                workspace: grant.workspace,
+                permissions: vec![grant.permission],
+            }),
+        }
+    }
+    access
 }
 
 /// Views in standing order, most pressing first.

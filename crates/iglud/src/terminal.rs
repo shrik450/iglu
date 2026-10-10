@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message as Browser, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use iglu_domain::auth::{Action, Decision, Resource, authorize};
+use iglu_domain::auth::{self, Action, Decision, Resource, authorize};
 use iglu_domain::terminal::{SessionName, TerminalControl, TerminalSize};
 use tokio_tungstenite::tungstenite::Message as Host;
 
@@ -68,9 +68,9 @@ pub async fn lease_valid(app: &App, caller: &Caller, used: Use) -> bool {
             };
             let active = matches!(
                 authorize(
-                    record.principal(),
+                    auth::Actor::Person(record.principal()),
                     Action::ViewWorkspace,
-                    Resource { owner: record.id }
+                    Resource::owned_by(record.id)
                 ),
                 Decision::Allow
             );

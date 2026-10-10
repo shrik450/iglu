@@ -8,8 +8,11 @@ import type { TerminalThemeColors } from "@wterm/core";
 import { type SearchState, WTerm } from "@wterm/dom";
 import { GhosttyCore } from "@wterm/ghostty";
 
+import { api, failure } from "./api/client.ts";
 import { withCtrl } from "./state/keys.ts";
+import { MAX_FILE_BYTES, pastedPath } from "./state/paste.ts";
 import { scan } from "./state/replies.ts";
+import { say } from "./state/store.ts";
 import { type Colors, XTERM } from "./state/themes.ts";
 import { styleApplied } from "./termstyle.ts";
 
@@ -152,6 +155,7 @@ export class TerminalPane {
       // Mouse reports in the older encodings aren't text.
       onBinary: (data) => this.send(data),
       onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
+      onPasteFiles: (files) => void this.pasteFiles(files),
       onSearchChange: (state) => (this.found.value = state.query ? state : null),
       // Every pane tells its session its own size when that changes, focused
       // or not. zmx applies the most recent size from any client, so a
@@ -190,6 +194,29 @@ export class TerminalPane {
   restyle(): void {
     this.theme = themeOf(this.container);
     this.term.setThemeColors(colorsOf(this.theme));
+  }
+
+  /** Keeps each file in the workspace and pastes its path, as a terminal
+   * pastes a dropped file's path: agents that take images read them from
+   * there. A paste each, for programs that take one path a paste. */
+  private async pasteFiles(files: File[]): Promise<void> {
+    const large = files.find((file) => file.size > MAX_FILE_BYTES);
+    if (large) {
+      say(`${large.name || "That file"} is larger than 16 MB, so it can't be pasted.`);
+      return;
+    }
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    if (total > 1024 * 1024) say(files.length === 1 ? `Sending ${files[0]!.name}…` : `Sending ${files.length} files…`);
+    try {
+      for (const [index, file] of files.entries()) {
+        const { path } = await api.keepFile(this.workspace, file);
+        if (this.closed) return;
+        if (index > 0) this.term.type(" ");
+        this.term.paste(pastedPath(path));
+      }
+    } catch (error) {
+      say(`That couldn't be pasted: ${failure(error)}`);
+    }
   }
 
   /** The console's keys come first; a key it takes never reaches the terminal. */

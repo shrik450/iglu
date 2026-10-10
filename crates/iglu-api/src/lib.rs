@@ -7,10 +7,10 @@
 
 use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{AttentionState, Seen, Summary, ThreadKey};
-use iglu_domain::auth::{DisplayName, Email};
+use iglu_domain::auth::{DisplayName, Email, Permission};
 use iglu_domain::capacity::{Bytes, Capacity};
 use iglu_domain::column::{ColumnKind, ColumnLabel, ColumnSpec, ColumnState, ColumnWidth};
-use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
+use iglu_domain::env::{BuiltImage, EnvName, EnvSource, GuestPath};
 use iglu_domain::git::{GitState, Unsaved};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
@@ -23,7 +23,7 @@ use iglu_domain::project::{Opening, Origin, PreviewPorts};
 use iglu_domain::repo::{BranchName, Checkout, RepoUrl};
 use iglu_domain::secret::{SecretName, SecretTarget, SecretValue};
 use iglu_domain::standing::Need;
-use iglu_domain::terminal::SessionName;
+use iglu_domain::terminal::{SessionName, TerminalInput};
 use iglu_domain::time::Timestamp;
 use iglu_proto::ErrorCode;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,72 @@ pub struct WorkspaceView {
     /// The agents its image can run, for agent columns.
     pub agents: Vec<AgentName>,
     pub routes: Vec<RouteView>,
+    /// What it may do from inside, through the `iglu` command, to itself
+    /// and to its owner's other workspaces.
+    pub access: Vec<AccessGrant>,
     pub created_at: Timestamp,
+}
+
+/// What a workspace may do to one workspace.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct AccessGrant {
+    pub workspace: WorkspaceId,
+    pub permissions: Vec<Permission>,
+}
+
+/// Everything a workspace may do, replacing what it could before.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct PutAccess {
+    pub grants: Vec<AccessGrant>,
+}
+
+/// Who's asking: a person, or a workspace through its channel.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub enum Identity {
+    Person {
+        id: PrincipalId,
+        name: Option<DisplayName>,
+        email: Option<Email>,
+    },
+    Workspace {
+        id: WorkspaceId,
+        name: WorkspaceName,
+    },
+}
+
+/// What a column's terminal shows: its last lines, history included, as
+/// plain text. Not a log: what a program redrew or cleared is gone.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct ColumnOutput {
+    pub text: String,
+    /// Whether there was more than came back.
+    pub truncated: bool,
+}
+
+/// Where a pasted file was kept in the workspace: the path to paste.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct KeptFile {
+    pub path: GuestPath,
+}
+
+/// What to type into a column's terminal: text, exactly as given, then
+/// Enter if asked. Enter goes on its own, a moment after the text, so a
+/// program that tells typing from pasting by how fast it comes takes it as
+/// a key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct SendInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub text: Option<TerminalInput>,
+    #[serde(default)]
+    pub enter: bool,
 }
 
 /// What one terminal session last reported.
@@ -227,6 +292,8 @@ pub struct ActivityEntry {
     pub kind: String,
     pub detail: String,
     pub at: Timestamp,
+    /// The workspace it was done from, when a workspace did it.
+    pub via: Option<WorkspaceName>,
 }
 
 /// A column with its session's state, from the workspace's host.
@@ -256,6 +323,10 @@ pub struct AddColumn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub after: Option<SessionName>,
+    /// What an agent column's agent starts on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub prompt: Option<Prompt>,
 }
 
 /// What to call a column; `null` goes back to its session name.

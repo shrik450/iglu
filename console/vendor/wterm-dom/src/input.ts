@@ -10,6 +10,8 @@
 //   than leaving it to the page, and a key pressed then is handled as typed.
 // - press() handles a key the host sends, as if pressed here.
 // - Ctrl+Alt with a letter the layout types sends Meta and its control byte.
+// - Files pasted or dropped on the terminal go to `onPasteFiles`, and
+//   paste() pastes text the host gives, as a paste from the clipboard would.
 
 import type { TerminalCore } from "@wterm/core";
 import { InputAccessibility } from "./input-accessibility.js";
@@ -166,6 +168,11 @@ export class InputHandler {
   private _onMouseUp: (e: MouseEvent) => void;
   private _onMouseLeave: () => void;
   private _onWheel: (e: WheelEvent) => void;
+  private _onDragOver: (e: DragEvent) => void;
+  private _onDrop: (e: DragEvent) => void;
+  /** Takes files pasted or dropped on the terminal. Without it, they do
+   * what the browser does with them. */
+  onPasteFiles: ((files: File[]) => void) | null = null;
 
   constructor(
     element: HTMLElement,
@@ -293,6 +300,17 @@ export class InputHandler {
     this._onWheel = (event) => {
       if (!this.scrollAlternateScreen(event)) this.handleMouse(event, "wheel");
     };
+    this._onDragOver = (event) => {
+      if (!this.onPasteFiles || !event.dataTransfer?.types.includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    };
+    this._onDrop = (event) => {
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (!this.onPasteFiles || !files.length) return;
+      event.preventDefault();
+      this.onPasteFiles(files);
+    };
 
     this.textarea.addEventListener("keydown", this._onKeyDown);
     // Selecting text can't leave focus in the input, since focusing it would
@@ -318,6 +336,8 @@ export class InputHandler {
     this.element.addEventListener("mousemove", this._onHoverMove);
     this.element.addEventListener("mouseleave", this._onMouseLeave);
     this.element.addEventListener("wheel", this._onWheel, { passive: false });
+    this.element.addEventListener("dragover", this._onDragOver);
+    this.element.addEventListener("drop", this._onDrop);
   }
 
   focus(): void {
@@ -357,6 +377,8 @@ export class InputHandler {
     this.element.removeEventListener("mouseleave", this._onMouseLeave);
     this.stopMouseCapture();
     this.element.removeEventListener("wheel", this._onWheel);
+    this.element.removeEventListener("dragover", this._onDragOver);
+    this.element.removeEventListener("drop", this._onDrop);
     this.element.classList.remove("focused");
     this.textarea.remove();
   }
@@ -605,10 +627,23 @@ export class InputHandler {
     this.recentCompositionCommit = null;
     this.suppressNextTouchDeleteInput = false;
     const text = e.clipboardData?.getData("text");
+    // A screenshot, or files copied in a file manager: there's no text a
+    // terminal could take, so the host decides what to do with them.
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (!text && files.length && this.onPasteFiles) {
+      e.preventDefault();
+      this.onPasteFiles(files);
+      return;
+    }
     // Some mobile browsers leave clipboardData empty but insert the paste
     // into the textarea. Let that input event carry the text instead.
     if (!text) return;
     e.preventDefault();
+    this.sendPaste(text);
+  }
+
+  /** Pastes text as a paste from the clipboard would. */
+  paste(text: string): void {
     this.sendPaste(text);
   }
 

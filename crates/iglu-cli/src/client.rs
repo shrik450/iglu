@@ -1,15 +1,20 @@
-//! A typed client for iglud's API using a stored API token.
+//! A typed client for iglud's API: from a person's machine with their stored
+//! API token, or from inside a workspace through its channel, as that
+//! workspace.
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use iglu_api::{
-    ActivityEntry, BuildStarted, ColumnStatus, CreateEnvironment, CreateProject, CreateWorkspace,
-    EnvironmentView, ErrorBody, ErrorKind, LiveView, ProjectView, PublishPort, PutSecret,
-    RenameWorkspace, RouteView, SecretView, SetDesiredState, WorkspaceView,
+    ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
+    CreateProject, CreateWorkspace, EnvironmentView, ErrorBody, ErrorKind, Identity, LiveView,
+    ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace, RouteView, SecretView,
+    SendInput, SetDesiredState, WorkspaceView,
 };
+use iglu_domain::column::ColumnSpec;
 use iglu_domain::env::EnvName;
+use iglu_domain::guest::CHANNEL_ENV;
 use iglu_domain::id::{ProjectId, WorkspaceId};
 use iglu_domain::secret::SecretName;
-use iglu_domain::terminal::SessionName;
+use iglu_domain::terminal::{OutputLines, SessionName};
 use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::de::DeserializeOwned;
 
@@ -18,11 +23,30 @@ use crate::login::Stored;
 pub struct Client {
     http: reqwest::Client,
     server: url::Url,
-    token: String,
+    credential: Credential,
+}
+
+/// How a request says who it's from.
+enum Credential {
+    /// A person's API token.
+    Token(String),
+    /// Nothing: whoever is on the other end of the channel knows which
+    /// workspace it is.
+    Channel,
 }
 
 impl Client {
-    pub fn from_stored() -> anyhow::Result<Self> {
+    /// Inside a workspace, through its channel; elsewhere, as whoever
+    /// signed in. A workspace never uses a person's token, even one that's
+    /// there.
+    pub fn connect() -> anyhow::Result<Self> {
+        match std::env::var_os(CHANNEL_ENV) {
+            Some(channel) => Self::through(std::path::Path::new(&channel)),
+            None => Self::from_stored(),
+        }
+    }
+
+    fn from_stored() -> anyhow::Result<Self> {
         let stored = Stored::load().context("not signed in; run `iglu login <server>`")?;
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -30,8 +54,89 @@ impl Client {
         Ok(Self {
             http,
             server: stored.server,
-            token: stored.token,
+            credential: Credential::Token(stored.token),
         })
+    }
+
+    fn through(channel: &std::path::Path) -> anyhow::Result<Self> {
+        let http = reqwest::Client::builder()
+            .unix_socket(channel)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(60))
+            .build()?;
+        Ok(Self {
+            http,
+            // Only the path matters on the channel.
+            server: url::Url::parse("http://iglu/").context("the channel's URL")?,
+            credential: Credential::Channel,
+        })
+    }
+
+    /// Whether this is a workspace asking from inside.
+    pub const fn inside(&self) -> bool {
+        matches!(self.credential, Credential::Channel)
+    }
+
+    pub async fn identity(&self) -> anyhow::Result<Identity> {
+        self.json(self.http.get(self.url("/v1/identity")?)).await
+    }
+
+    pub async fn add_column(
+        &self,
+        id: WorkspaceId,
+        request: &AddColumn,
+    ) -> anyhow::Result<ColumnSpec> {
+        let url = self.url(&format!("/v1/workspaces/{id}/columns"))?;
+        self.json(self.http.post(url).json(request)).await
+    }
+
+    pub async fn close_column(&self, id: WorkspaceId, column: &SessionName) -> anyhow::Result<()> {
+        let url = self.url(&format!("/v1/workspaces/{id}/columns/{column}"))?;
+        self.check(self.start(self.http.delete(url)).await?).await?;
+        Ok(())
+    }
+
+    pub async fn restart_column(
+        &self,
+        id: WorkspaceId,
+        column: &SessionName,
+    ) -> anyhow::Result<()> {
+        let url = self.url(&format!("/v1/workspaces/{id}/columns/{column}/restart"))?;
+        self.check(self.start(self.http.post(url)).await?).await?;
+        Ok(())
+    }
+
+    pub async fn output(
+        &self,
+        id: WorkspaceId,
+        column: &SessionName,
+        lines: OutputLines,
+    ) -> anyhow::Result<ColumnOutput> {
+        let url = self.url(&format!(
+            "/v1/workspaces/{id}/columns/{column}/output?lines={lines}"
+        ))?;
+        self.json(self.http.get(url)).await
+    }
+
+    pub async fn send_input(
+        &self,
+        id: WorkspaceId,
+        column: &SessionName,
+        request: &SendInput,
+    ) -> anyhow::Result<()> {
+        let url = self.url(&format!("/v1/workspaces/{id}/columns/{column}/input"))?;
+        self.check(self.start(self.http.post(url).json(request)).await?)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn put_access(
+        &self,
+        id: WorkspaceId,
+        request: &PutAccess,
+    ) -> anyhow::Result<WorkspaceView> {
+        let url = self.url(&format!("/v1/workspaces/{id}/access"))?;
+        self.json(self.http.put(url).json(request)).await
     }
 
     pub async fn workspaces(&self) -> anyhow::Result<Vec<WorkspaceView>> {
@@ -185,9 +290,14 @@ impl Client {
         id: WorkspaceId,
         column: &SessionName,
     ) -> anyhow::Result<(url::Url, &str)> {
+        let Credential::Token(token) = &self.credential else {
+            bail!(
+                "a column can't be attached from inside a workspace; use `iglu column output` and `iglu column send`"
+            );
+        };
         Ok((
             self.url(&format!("/v1/workspaces/{id}/columns/{column}/attach"))?,
-            &self.token,
+            token,
         ))
     }
 
@@ -196,11 +306,11 @@ impl Client {
     }
 
     async fn start(&self, request: RequestBuilder) -> anyhow::Result<Response> {
-        request
-            .bearer_auth(&self.token)
-            .send()
-            .await
-            .context("reaching iglu")
+        let request = match &self.credential {
+            Credential::Token(token) => request.bearer_auth(token),
+            Credential::Channel => request,
+        };
+        request.send().await.context("reaching iglu")
     }
 
     async fn json<T: DeserializeOwned>(&self, request: RequestBuilder) -> anyhow::Result<T> {
@@ -225,6 +335,9 @@ impl Client {
             return Ok(response);
         }
         let body = response.bytes().await.unwrap_or_default();
+        if self.inside() && status == StatusCode::UNAUTHORIZED {
+            bail!("this workspace can't reach iglu any more; it may be being deleted");
+        }
         Err(anyhow!(refusal(status, &body, &self.server)))
     }
 }

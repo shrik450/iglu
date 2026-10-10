@@ -31,7 +31,7 @@ import {
   unpublish,
   zoomedIn,
 } from "../actions.ts";
-import { api } from "../api/client.ts";
+import { api, failure } from "../api/client.ts";
 import { FieldError, type Form, FormError, InputError, invalid, textOf, useForm, useGrab } from "../components/forms.tsx";
 import { CopyLink, ONLY_YOU } from "../components/CopyLink.tsx";
 import { Previews } from "../components/Previews.tsx";
@@ -46,6 +46,7 @@ import {
   phaseText,
   workspaceGlyph,
 } from "../components/bits.tsx";
+import type { AccessGrant } from "../generated/AccessGrant.ts";
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
@@ -59,7 +60,8 @@ import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../s
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
-import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
+import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
+import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
 import { ctrlHeld, newCore, panes, TerminalPane } from "../terminal.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
@@ -967,6 +969,7 @@ function Details({ ws }: { ws: WorkspaceView }) {
           </button>
         ) : null}
       </div>
+      <Access ws={ws} />
       <History ws={ws} />
       {ws.routes.length ? (
         <div>
@@ -1006,6 +1009,74 @@ function Details({ ws }: { ws: WorkspaceView }) {
   );
 }
 
+/** What the workspace may do from inside, with `iglu`: to itself, and to
+ * the other workspaces it's been given. Any program in it can do as much. */
+function Access({ ws }: { ws: WorkspaceView }) {
+  const [saving, setSaving] = useState(false);
+  const nameOf = (id: string) => (id === ws.id ? "This workspace" : (workspaces.value.find((w) => w.id === id)?.name ?? "A deleted workspace"));
+  const save = (grants: AccessGrant[]) => {
+    setSaving(true);
+    api.putAccess(ws.id, grants).then(
+      () => setSaving(false),
+      (error: unknown) => {
+        setSaving(false);
+        say(`That access couldn't be changed: ${failure(error)}`);
+      },
+    );
+  };
+  const addable = workspaces.value.filter((w) => w.id !== ws.id && !ws.access.some((grant) => grant.workspace === w.id));
+  return (
+    <div>
+      <h2>Access from inside</h2>
+      <p class="muted access-note">
+        What <code>iglu</code> can do when run in this workspace. Any program here can use it.
+      </p>
+      <ul class="access" aria-busy={saving}>
+        {named(ws.access, ws.id).map((id) => (
+          <li key={id}>
+            <span class="access-on" translate={id !== ws.id ? false : undefined}>
+              {nameOf(id)}
+            </span>
+            <div class="access-perms" role="group" aria-label={`What it may do to ${nameOf(id)}`}>
+              {PERMISSIONS.map(({ permission, label, title }) => (
+                <button
+                  key={permission}
+                  type="button"
+                  title={title}
+                  disabled={saving}
+                  aria-pressed={holds(ws.access, id, permission)}
+                  onClick={() => save(toggled(ws.access, id, permission))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {addable.length ? (
+        <select
+          class="access-add"
+          aria-label="Let it see another workspace"
+          value=""
+          disabled={saving}
+          onChange={(e) => {
+            const id = e.currentTarget.value;
+            if (id) save(toggled(ws.access, id, "view"));
+          }}
+        >
+          <option value="">Let it see another workspace…</option>
+          {addable.map((w) => (
+            <option key={w.id} value={w.id} translate={false}>
+              {w.name}
+            </option>
+          ))}
+        </select>
+      ) : null}
+    </div>
+  );
+}
+
 const stamp = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /** What happened to the workspace, newest first. Loaded when shown, and again when it changes. */
@@ -1029,7 +1100,17 @@ function History({ ws }: { ws: WorkspaceView }) {
         {entries.map((entry, i) => (
           <li key={`${entry.at}-${i}`}>
             <time dateTime={new Date(entry.at).toISOString()}>{stamp.format(entry.at)}</time>
-            <span class="k">{entry.kind}</span>
+            <span class="k">
+              {entry.kind}
+              {entry.via === ws.name ? (
+                " from this workspace"
+              ) : entry.via ? (
+                <>
+                  {" from "}
+                  <span translate={false}>{entry.via}</span>
+                </>
+              ) : null}
+            </span>
             {entry.detail ? <span class="d">{entry.detail}</span> : null}
           </li>
         ))}

@@ -9,6 +9,7 @@ mod crypto;
 mod db;
 mod extract;
 mod gateway;
+mod guest;
 mod hosts;
 mod idle;
 mod login;
@@ -173,6 +174,7 @@ async fn main() -> anyhow::Result<()> {
         column_edits: app::ColumnEdits::default(),
     });
     tokio::spawn(reconcile::run(app.clone()));
+    guest::serve(&app);
     if let Some(policy) = app.config.backups.clone() {
         tokio::spawn(backup::run(app.config.database.clone(), policy));
     }

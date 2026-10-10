@@ -44,6 +44,13 @@ pub struct GitReport {
     pub conflicted: u32,
 }
 
+/// What `iglu-guest output` prints: a session's last lines.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OutputReport {
+    pub text: String,
+    pub truncated: bool,
+}
+
 /// One entry of what `iglu-guest listeners` prints.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ListenerReport {
@@ -62,7 +69,18 @@ pub const COLUMNS_OPENED: &str = "iglu/columns-opened";
 /// tools' command line and the files above. An image records the version
 /// its tools speak, and a host only uses images that speak its own. Bump it
 /// with any change either side would notice.
-pub const INTERFACE: Interface = Interface(3);
+pub const INTERFACE: Interface = Interface(4);
+
+/// Where a workspace's processes reach iglu: a socket that only that
+/// workspace's channel answers on, so whatever connects is that workspace.
+/// The guest tools get its path in [`CHANNEL_ENV`] and pass it on to every
+/// session, where the `iglu` command finds it.
+pub const CHANNEL_ENV: &str = "IGLU_SOCKET";
+
+/// The channel's path inside an Incus instance. It's on the root
+/// filesystem: Incus binds the socket when the instance starts, and one
+/// under `/run` is hidden by the tmpfs mounted there on a restart.
+pub const INSTANCE_CHANNEL: &str = "/var/lib/iglu-api.sock";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]

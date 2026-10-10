@@ -2,6 +2,9 @@
 //!
 //! Every command accepts `--json` for machine-readable output and exits
 //! nonzero on failure, so agents can drive it.
+//!
+//! Inside a workspace it acts as that workspace, through its channel: on
+//! its own columns, and on whatever else its owner granted it.
 
 mod attach;
 mod client;
@@ -13,10 +16,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use iglu_api::{
-    Condition, CreateEnvironment, CreateProject, CreateWorkspace, ProjectView, PublishPort,
-    PutSecret, RenameWorkspace, RevisionStatus, RouteView, SetDesiredState, WorkspaceView,
+    AccessGrant, AddColumn, Condition, CreateEnvironment, CreateProject, CreateWorkspace, Identity,
+    ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace, RevisionStatus, RouteView,
+    SendInput, SetDesiredState, WorkspaceView,
 };
 use iglu_domain::agent::Prompt;
+use iglu_domain::auth::Permission;
+use iglu_domain::column::{Arg, Argv, ColumnKind};
 use iglu_domain::env::{EnvName, EnvSource};
 use iglu_domain::git::{Unpushed, Unsaved};
 use iglu_domain::id::WorkspaceId;
@@ -28,7 +34,7 @@ use iglu_domain::repo::{BranchName, GitHost, RepoUrl};
 use iglu_domain::secret::{
     EnvVarName, GitUsername, HomePath, SecretName, SecretTarget, SecretValue,
 };
-use iglu_domain::terminal::SessionName;
+use iglu_domain::terminal::{OutputLines, SessionName};
 use serde::Serialize;
 use serde_json::json;
 
@@ -53,8 +59,17 @@ enum Command {
     },
     /// Forget the stored credentials.
     Logout,
+    /// Say who iglu takes you for: you, or the workspace you're in.
+    Whoami,
     #[command(flatten)]
     Workspace(WorkspaceCommand),
+    /// Work with a workspace's columns. Inside a workspace, `--workspace`
+    /// defaults to it.
+    #[command(subcommand)]
+    Column(ColumnCommand),
+    /// What a workspace may do from inside, with `iglu`.
+    #[command(subcommand)]
+    Access(AccessCommand),
     /// Manage projects: what workspaces clone and how they start.
     #[command(subcommand)]
     Project(ProjectCommand),
@@ -138,6 +153,92 @@ enum WorkspaceCommand {
     Ports { workspace: String },
     /// Show what happened to a workspace.
     Log { workspace: String },
+}
+
+#[derive(Subcommand)]
+enum ColumnCommand {
+    /// List columns, and whether each is open.
+    Ls {
+        #[arg(long, short)]
+        workspace: Option<String>,
+    },
+    /// Open a column: a shell, an agent, or `-- <command>` to run as a server.
+    New {
+        #[arg(long, short)]
+        workspace: Option<String>,
+        /// Run this agent from the workspace's environment.
+        #[arg(long)]
+        agent: Option<AgentName>,
+        /// What the agent starts on.
+        #[arg(long, requires = "agent", conflicts_with = "prompt_file")]
+        prompt: Option<Prompt>,
+        /// Read what the agent starts on from this file.
+        #[arg(long, requires = "agent")]
+        prompt_file: Option<std::path::PathBuf>,
+        /// Defaults to one from its kind, such as `shell-2`.
+        #[arg(long)]
+        name: Option<SessionName>,
+        /// The column to put it after; the end by default.
+        #[arg(long)]
+        after: Option<SessionName>,
+        /// A command to run as a server column.
+        #[arg(last = true, conflicts_with = "agent")]
+        command: Vec<Arg>,
+    },
+    /// End a column's session and everything in it, and remove the column.
+    Close {
+        column: SessionName,
+        #[arg(long, short)]
+        workspace: Option<String>,
+    },
+    /// Start a column's program again.
+    Restart {
+        column: SessionName,
+        #[arg(long, short)]
+        workspace: Option<String>,
+    },
+    /// Print what a column's terminal shows: its last lines, history included.
+    Output {
+        column: SessionName,
+        #[arg(long, short)]
+        workspace: Option<String>,
+        #[arg(long, default_value_t = OutputLines::DEFAULT)]
+        lines: OutputLines,
+    },
+    /// Type into a column, exactly as given: add --enter to run it, or
+    /// --paste --enter to give an agent a message. The text comes from
+    /// stdin when it isn't an argument.
+    Send {
+        column: SessionName,
+        text: Option<String>,
+        #[arg(long, short)]
+        workspace: Option<String>,
+        /// Paste it, as a terminal does: programs that take pastes, like
+        /// agents, take it whole, newlines and all.
+        #[arg(long)]
+        paste: bool,
+        /// Press Enter after it.
+        #[arg(long)]
+        enter: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AccessCommand {
+    /// Show what a workspace may do, and to which workspaces.
+    Show { workspace: String },
+    /// Set what a workspace may do to one workspace, itself unless `--on`
+    /// says another, replacing what it could do there before. Nothing
+    /// after `--allow` takes it all away.
+    Set {
+        workspace: String,
+        #[arg(long)]
+        on: Option<String>,
+        /// Any of `view`, `read_output`, `send_input`, `manage_columns`,
+        /// `publish_routes` and `operate`, separated by commas.
+        #[arg(long, value_delimiter = ',', num_args = 0..)]
+        allow: Vec<Permission>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -314,12 +415,15 @@ async fn main() -> anyhow::Result<()> {
             login::logout()?;
             println!("signed out");
         }
+        Command::Whoami => whoami(&Client::connect()?, json_mode).await?,
         Command::Workspace(command) => {
-            workspace(&Client::from_stored()?, json_mode, command).await?;
+            workspace(&Client::connect()?, json_mode, command).await?;
         }
-        Command::Project(command) => project(&Client::from_stored()?, json_mode, command).await?,
-        Command::Env(command) => env(&Client::from_stored()?, json_mode, command).await?,
-        Command::Secret(command) => secret(&Client::from_stored()?, json_mode, command).await?,
+        Command::Column(command) => column(&Client::connect()?, json_mode, command).await?,
+        Command::Access(command) => access(&Client::connect()?, json_mode, command).await?,
+        Command::Project(command) => project(&Client::connect()?, json_mode, command).await?,
+        Command::Env(command) => env(&Client::connect()?, json_mode, command).await?,
+        Command::Secret(command) => secret(&Client::connect()?, json_mode, command).await?,
     }
     Ok(())
 }
@@ -336,7 +440,8 @@ async fn workspace(
     match command {
         WorkspaceCommand::Ls => {
             let list = client.workspaces().await?;
-            let projects = if json_mode {
+            // Projects are a person's; a workspace sees only workspaces.
+            let projects = if json_mode || client.inside() {
                 Vec::new()
             } else {
                 client.projects().await?
@@ -429,6 +534,211 @@ async fn workspace(
     Ok(())
 }
 
+async fn whoami(client: &Client, json_mode: bool) -> anyhow::Result<()> {
+    let identity = client.identity().await?;
+    print(json_mode, &identity, |identity| match identity {
+        Identity::Person { name, email, .. } => match (name, email) {
+            (Some(name), Some(email)) => format!("{name} <{email}>"),
+            (Some(name), None) => name.to_string(),
+            (None, Some(email)) => email.to_string(),
+            (None, None) => "signed in".into(),
+        },
+        Identity::Workspace { name, .. } => format!("the workspace {name}"),
+    });
+    Ok(())
+}
+
+/// The workspace a command names, or inside a workspace, that one.
+async fn target(client: &Client, reference: Option<&str>) -> anyhow::Result<WorkspaceView> {
+    if let Some(reference) = reference {
+        return client.resolve(reference).await;
+    }
+    if !client.inside() {
+        bail!("say which workspace with --workspace");
+    }
+    let Identity::Workspace { id, .. } = client.identity().await? else {
+        bail!("iglu doesn't take this for a workspace");
+    };
+    client
+        .workspace(id)
+        .await?
+        .context("this workspace can't see itself; its owner can grant it `view`")
+}
+
+async fn column(client: &Client, json_mode: bool, command: ColumnCommand) -> anyhow::Result<()> {
+    match command {
+        ColumnCommand::Ls { workspace } => {
+            let ws = target(client, workspace.as_deref()).await?;
+            let columns = client.columns(ws.id).await?;
+            print(json_mode, columns.as_slice(), |columns| {
+                lines(columns, |c| format!("{:<20} {}", c.name, c.state))
+            });
+        }
+        ColumnCommand::New {
+            workspace,
+            agent,
+            prompt,
+            prompt_file,
+            name,
+            after,
+            command,
+        } => {
+            let ws = target(client, workspace.as_deref()).await?;
+            let prompt = match prompt_file {
+                Some(path) => Some(
+                    std::fs::read_to_string(&path)
+                        .with_context(|| format!("reading {}", path.display()))?
+                        .parse::<Prompt>()?,
+                ),
+                None => prompt,
+            };
+            let kind = match (agent, command.is_empty()) {
+                (Some(agent), _) => ColumnKind::Agent { agent },
+                (None, true) => ColumnKind::Shell,
+                (None, false) => ColumnKind::Server {
+                    command: Argv::try_from(command)?,
+                },
+            };
+            let spec = client
+                .add_column(
+                    ws.id,
+                    &AddColumn {
+                        kind,
+                        name,
+                        width: None,
+                        after,
+                        prompt,
+                    },
+                )
+                .await?;
+            print(json_mode, &spec, |spec| spec.name.to_string());
+        }
+        ColumnCommand::Close { column, workspace } => {
+            let ws = target(client, workspace.as_deref()).await?;
+            client.close_column(ws.id, &column).await?;
+            print(json_mode, &json!({ "closed": column }), |_| {
+                format!("closed {column}")
+            });
+        }
+        ColumnCommand::Restart { column, workspace } => {
+            let ws = target(client, workspace.as_deref()).await?;
+            client.restart_column(ws.id, &column).await?;
+            print(json_mode, &json!({ "restarted": column }), |_| {
+                format!("restarted {column}")
+            });
+        }
+        ColumnCommand::Output {
+            column,
+            workspace,
+            lines,
+        } => {
+            let ws = target(client, workspace.as_deref()).await?;
+            let output = client.output(ws.id, &column, lines).await?;
+            print(json_mode, &output, |output| output.text.clone());
+        }
+        ColumnCommand::Send {
+            column,
+            text,
+            workspace,
+            paste,
+            enter,
+        } => {
+            let ws = target(client, workspace.as_deref()).await?;
+            send(client, ws.id, &column, text, paste, enter).await?;
+            print(json_mode, &json!({ "sent": column }), |_| {
+                format!("sent to {column}")
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Types into a column: the text given, or stdin, then Enter if asked.
+async fn send(
+    client: &Client,
+    id: WorkspaceId,
+    column: &SessionName,
+    text: Option<String>,
+    paste: bool,
+    enter: bool,
+) -> anyhow::Result<()> {
+    let text = if let Some(text) = text {
+        text
+    } else {
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .context("reading what to send from stdin")?;
+        text
+    };
+    let text = (!text.is_empty())
+        .then(|| {
+            if paste {
+                format!("\x1b[200~{text}\x1b[201~")
+            } else {
+                text
+            }
+            .parse()
+        })
+        .transpose()?;
+    client
+        .send_input(id, column, &SendInput { text, enter })
+        .await
+}
+
+async fn access(client: &Client, json_mode: bool, command: AccessCommand) -> anyhow::Result<()> {
+    let all = client.workspaces().await?;
+    let name_of = |id: WorkspaceId| {
+        all.iter()
+            .find(|ws| ws.id == id)
+            .map_or_else(|| id.to_string(), |ws| ws.name.to_string())
+    };
+    let describe_access = |ws: &WorkspaceView| {
+        if ws.access.is_empty() {
+            return format!("{} may do nothing from inside", ws.name);
+        }
+        lines(&ws.access, |grant| {
+            let permissions: Vec<&str> = grant.permissions.iter().map(|p| p.as_str()).collect();
+            format!(
+                "{:<24} {}",
+                name_of(grant.workspace),
+                permissions.join(", ")
+            )
+        })
+    };
+    match command {
+        AccessCommand::Show { workspace } => {
+            let ws = client.resolve(&workspace).await?;
+            print(json_mode, &ws.access, |_| describe_access(&ws));
+        }
+        AccessCommand::Set {
+            workspace,
+            on,
+            allow,
+        } => {
+            let ws = client.resolve(&workspace).await?;
+            let on = match on {
+                Some(on) => client.resolve(&on).await?.id,
+                None => ws.id,
+            };
+            let mut grants: Vec<AccessGrant> = ws
+                .access
+                .into_iter()
+                .filter(|g| g.workspace != on)
+                .collect();
+            if !allow.is_empty() {
+                grants.push(AccessGrant {
+                    workspace: on,
+                    permissions: allow,
+                });
+            }
+            let ws = client.put_access(ws.id, &PutAccess { grants }).await?;
+            print(json_mode, &ws.access, |_| describe_access(&ws));
+        }
+    }
+    Ok(())
+}
+
 /// Refuses when deleting would lose work, or when that can't be told.
 async fn check_nothing_lost(client: &Client, ws: &WorkspaceView) -> anyhow::Result<()> {
     if ws.checkout.is_none() {
@@ -478,6 +788,9 @@ fn unsaved_text(unsaved: Unsaved) -> String {
 fn by_project(list: &[WorkspaceView], projects: &[ProjectView]) -> String {
     if list.is_empty() {
         return "no workspaces".into();
+    }
+    if projects.is_empty() {
+        return lines(list, describe);
     }
     projects
         .iter()

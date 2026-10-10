@@ -23,7 +23,7 @@ use iglu_domain::lifecycle::{
 use iglu_domain::port::GuestPort;
 use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretTarget, SecretValue, bundle};
-use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::terminal::{OutputLines, SessionName, TerminalSize};
 use iglu_proto::{
     BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Limits,
     ProvisionSpec, SessionSpec,
@@ -51,6 +51,10 @@ pub struct Outcome {
 }
 
 /// Runs every check, in order, and reports each.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a flat list of the checks, each a few lines once formatted"
+)]
 pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> {
     let suite = match Suite::new(host, fixture).await {
         Ok(suite) => suite,
@@ -99,6 +103,14 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check("terminals run in the workspace", Suite::terminals)
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
+                "terminals take typing and show what they print, without a client",
+                Suite::typing,
+            )
             .await,
     );
     outcomes.push(
@@ -620,6 +632,63 @@ impl<'a, R: Runtime> Suite<'a, R> {
         let listed = self.sessions(workspace).await?;
         ensure(!listed.contains(&session), || {
             format!("attaching opened the closed session again: {listed:?}")
+        })
+    }
+
+    async fn typing(&self, workspace: WorkspaceId) -> Checked {
+        self.running_workspace(workspace).await?;
+        let session: SessionName = "typed".parse().expect("a valid session name");
+        self.host
+            .open_terminal(
+                workspace,
+                &SessionSpec {
+                    name: session.clone(),
+                    command: None,
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        // What's typed arrives exactly, a final newline included; the
+        // command as echoed can't be mistaken for what it prints.
+        let line: iglu_domain::terminal::TerminalInput =
+            "printf 'a%sb\\n' typed\r\n".parse().expect("valid input");
+        self.host
+            .input(workspace, &session, &line)
+            .await
+            .map_err(|e| e.to_string())?;
+        let lines = OutputLines::try_from(50).expect("valid lines");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let output = self
+                .host
+                .output(workspace, &session, lines)
+                .await
+                .map_err(|e| e.to_string())?;
+            if output.text.lines().any(|l| l == "atypedb") {
+                break;
+            }
+            ensure(Instant::now() < deadline, || {
+                format!("the typed command never printed: {:?}", output.text)
+            })?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        self.host
+            .close_terminal(workspace, &session)
+            .await
+            .map_err(|e| e.to_string())?;
+        // A closed session can't be read or typed into, and typing doesn't
+        // open it again.
+        ensure(
+            self.host.output(workspace, &session, lines).await.is_err(),
+            || "a closed session could still be read".to_owned(),
+        )?;
+        ensure(
+            self.host.input(workspace, &session, &line).await.is_err(),
+            || "a closed session could still be typed into".to_owned(),
+        )?;
+        let listed = self.sessions(workspace).await?;
+        ensure(!listed.contains(&session), || {
+            format!("typing opened the closed session again: {listed:?}")
         })
     }
 

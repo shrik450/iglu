@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
-use iglu_domain::auth::{Action, Decision, DenyReason, Resource, authorize};
+use iglu_domain::auth::{self, Action, Decision, DenyReason, Resource, authorize};
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::{PREVIEW_AUTH_LABEL, RouteName};
 use iglu_domain::lifecycle::Phase;
@@ -247,9 +247,9 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
         };
     };
     match authorize(
-        principal.principal(),
+        auth::Actor::Person(principal.principal()),
         Action::UsePreview,
-        Resource { owner: ws.owner },
+        Resource::workspace(ws.id, ws.owner),
     ) {
         Decision::Allow => {}
         // Other people's previews look missing, not forbidden.

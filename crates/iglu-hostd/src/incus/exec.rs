@@ -50,6 +50,10 @@ impl<'a> Program<'a> {
             ("LOGNAME", user.name.to_string()),
             ("XDG_RUNTIME_DIR", paths::runtime_dir(user)),
             (
+                iglu_domain::guest::CHANNEL_ENV,
+                iglu_domain::guest::INSTANCE_CHANNEL.to_owned(),
+            ),
+            (
                 "PATH",
                 format!(
                     "/run/wrappers/bin:/etc/profiles/per-user/{}/bin:/run/current-system/sw/bin",

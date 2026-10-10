@@ -329,6 +329,10 @@ impl LocalRuntime {
         env.insert("PATH".into(), path);
         env.insert("HOME".into(), self.layout.home(name).into());
         env.insert("XDG_RUNTIME_DIR".into(), run.into());
+        env.insert(
+            iglu_domain::guest::CHANNEL_ENV.into(),
+            self.layout.channel(name).into(),
+        );
         env.insert("USER".into(), self.user.name.as_str().into());
         env.insert("LOGNAME".into(), self.user.name.as_str().into());
         env.insert("SHELL".into(), self.shell.clone().into());
@@ -747,6 +751,10 @@ impl Runtime for LocalRuntime {
             .await
             .map_err(RuntimeError::failed)?
             .map_err(RuntimeError::failed)
+    }
+
+    fn channel(&self, name: InstanceName) -> PathBuf {
+        self.layout.channel(name)
     }
 
     async fn connect(&self, _guest: &Guest, port: GuestPort) -> Result<TcpStream, RuntimeError> {

@@ -3,6 +3,7 @@
 // left open across an upgrade notices from the snapshot stream's boot ID
 // (events.ts) and asks to reload.
 
+import type { AccessGrant } from "../generated/AccessGrant.ts";
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
 import type { AddColumn } from "../generated/AddColumn.ts";
 import type { BuildStarted } from "../generated/BuildStarted.ts";
@@ -24,6 +25,8 @@ import type { ProjectId } from "../generated/ProjectId.ts";
 import type { Preferences } from "../generated/Preferences.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
 import type { PublishPort } from "../generated/PublishPort.ts";
+import type { PutAccess } from "../generated/PutAccess.ts";
+import type { KeptFile } from "../generated/KeptFile.ts";
 import type { LabelColumn } from "../generated/LabelColumn.ts";
 import type { PutLayout } from "../generated/PutLayout.ts";
 import type { PutSecret } from "../generated/PutSecret.ts";
@@ -62,9 +65,11 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
     method,
     credentials: "same-origin",
     keepalive,
-    headers: { ...headers, ...(method === "GET" ? {} : { "x-csrf-token": csrf }), ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: { ...headers, ...(method === "GET" ? {} : { "x-csrf-token": csrf }), ...(body === undefined ? {} : { "content-type": contentType(body) }) },
   };
-  if (body !== undefined) init.body = JSON.stringify(body);
+  // A file goes as it is; anything else as JSON.
+  if (body instanceof Blob) init.body = body;
+  else if (body !== undefined) init.body = JSON.stringify(body);
   let response: Response;
   try {
     response = await fetch(path, init);
@@ -87,6 +92,10 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
   } catch {
     throw new ApiError(response.status, null, "iglu's reply wasn't what this page expected. Reload the page.");
   }
+}
+
+function contentType(body: unknown): string {
+  return body instanceof Blob ? body.type || "application/octet-stream" : "application/json";
 }
 
 /** iglu's error body, if the response has one. */
@@ -128,6 +137,10 @@ export const api = {
   deleteSecret: (name: SecretName) => request<void>("DELETE", `/v1/secrets/${name}`),
   live: (id: WorkspaceId) => request<LiveView>("GET", `/v1/workspaces/${id}/live`),
   activity: (id: WorkspaceId) => request<ActivityEntry[]>("GET", `/v1/workspaces/${id}/activity`),
+  keepFile: (id: WorkspaceId, file: File) =>
+    request<KeptFile>("POST", `/v1/workspaces/${id}/files?name=${encodeURIComponent(file.name)}`, file),
+  putAccess: (id: WorkspaceId, grants: AccessGrant[]) =>
+    request<WorkspaceView>("PUT", `/v1/workspaces/${id}/access`, { grants } satisfies PutAccess),
   logout: () => request<void>("POST", "/auth/logout"),
 };
 

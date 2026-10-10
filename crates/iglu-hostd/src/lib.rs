@@ -6,6 +6,7 @@
 //! as the local one for development, reuse everything here but the runtime.
 
 pub mod auth;
+pub mod channel;
 pub mod config;
 #[cfg(feature = "conformance")]
 pub mod conformance;

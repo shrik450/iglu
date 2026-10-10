@@ -549,6 +549,62 @@ def styles_terminal(page: Page, name: str) -> Any:
     return {"background": background, "cols": [before, after]}
 
 
+def pastes_files(page: Page, name: str) -> Any:
+    """A screenshot pasted on a terminal, and a file dropped on it, are kept
+    in the workspace and their paths pasted, as a terminal pastes a dropped
+    file's path; agents that take images read them from there."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    page.keyboard.type("ls -l ")
+    page.evaluate(
+        """() => {
+          const files = new DataTransfer();
+          files.items.add(new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], 'image.png', { type: 'image/png' }));
+          document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: files, bubbles: true, cancelable: true }));
+        }"""
+    )
+    shows(page, "pasted/image")
+    page.keyboard.type(" ")
+    column(page, first).locator(".term-host > .wterm").evaluate(
+        """(terminal) => {
+          const files = new DataTransfer();
+          files.items.add(new File(['hello'], 'Meeting notes.txt', { type: 'text/plain' }));
+          terminal.dispatchEvent(new DragEvent('drop', { dataTransfer: files, bubbles: true, cancelable: true }));
+        }"""
+    )
+    shows(page, "Meeting-notes")
+    page.keyboard.press("Enter")
+    # Both are there, readable only by the workspace's user.
+    shown = shows(page, "-rw-------", times=2)
+    return {"screen": shown}
+
+
+def grants_access(page: Page, name: str) -> Any:
+    """What a workspace may do from inside shows in its details, starting
+    with working on its own columns; a toggle there changes it, as iglud
+    keeps it."""
+    open_workspace(page, name)
+    page.get_by_role("button", name="Details").click()
+    own = page.get_by_role("group", name="What it may do to This workspace")
+    for label, pressed in (("See", "true"), ("Type", "true"), ("Start/stop", "false")):
+        expect(own.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-pressed", pressed)
+
+    def access() -> Any:
+        ws = page.evaluate(f"async () => (await (await fetch('/v1/workspaces')).json()).find(w => w.name === {json.dumps(name)})")
+        return next(grant["permissions"] for grant in ws["access"] if grant["workspace"] == ws["id"])
+
+    own.get_by_role("button", name="Start/stop", exact=True).click()
+    expect(own.get_by_role("button", name="Start/stop", exact=True)).to_have_attribute("aria-pressed", "true")
+    granted = access()
+    assert "operate" in granted, granted
+    own.get_by_role("button", name="Start/stop", exact=True).click()
+    expect(own.get_by_role("button", name="Start/stop", exact=True)).to_have_attribute("aria-pressed", "false")
+    assert "operate" not in access()
+    page.get_by_role("button", name="Details").click()
+    return {"granted": granted}
+
+
 def mac_keys(page: Page, name: str) -> Any:
     """On a Mac, where Cmd copies and pastes, Ctrl+C and Ctrl+V reach the
     program even with text selected: the terminal ate Ctrl+C while anything
@@ -1267,6 +1323,8 @@ STEPS: dict[str, Callable[..., Any]] = {
     "mac-keys": mac_keys,
     "selected-keys": selected_keys,
     "styles-terminal": styles_terminal,
+    "grants-access": grants_access,
+    "pastes-files": pastes_files,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,

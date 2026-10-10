@@ -166,7 +166,7 @@ dev:
       }
     }
     JSON
-    cargo build -p iglud -p iglu-devhost -p iglu-guest
+    cargo build -p iglud -p iglu-devhost -p iglu-guest -p iglu-cli
     # npm records the lock file it installed from; reinstall when the lock file has changed since.
     [ console/node_modules/.package-lock.json -nt console/package-lock.json ] || (cd console && npm ci)
     (cd console && exec node build.mjs --watch) &

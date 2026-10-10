@@ -4,6 +4,8 @@
 // - press() and type() send a key or text from the host as if typed.
 // - A copy spanning rows no longer mounted reads them from the core.
 // - Plain URLs in output open on a modifier-click, as marked links do.
+// - Files pasted or dropped on the terminal go to `onPasteFiles`, and
+//   paste() pastes text from the host as a clipboard paste would.
 // - The row height isn't fixed inline at init, so the host's stylesheet can
 //   change it, with the font, while the terminal runs; new cell metrics lay
 //   the grid out again even when its size in cells stays the same.
@@ -70,6 +72,8 @@ export interface WTermOptions {
   onBell?: (count: number) => void;
   /** Application request only: the host must apply its clipboard policy. No browser clipboard access is automatic. */
   onClipboardWrite?: (text: string) => void;
+  /** Files pasted or dropped on the terminal, with no text to paste. */
+  onPasteFiles?: (files: File[]) => void;
   /** Latest shell-reported state per parser chunk. Requires a supporting core and OSC 133 markers. */
   onShellIntegration?: (state: ShellIntegrationState) => void;
   onResize?: (cols: number, rows: number) => void;
@@ -134,6 +138,7 @@ export class WTerm {
   onBell: ((count: number) => void) | null;
   onShellIntegration: ((state: ShellIntegrationState) => void) | null;
   onClipboardWrite: ((text: string) => void) | null;
+  private readonly _onPasteFiles: ((files: File[]) => void) | null;
   onResize: ((cols: number, rows: number) => void) | null;
   onSearchChange: ((state: SearchState) => void) | null;
 
@@ -161,6 +166,7 @@ export class WTerm {
     this.onBell = options.onBell || null;
     this.onShellIntegration = options.onShellIntegration || null;
     this.onClipboardWrite = options.onClipboardWrite || null;
+    this._onPasteFiles = options.onPasteFiles || null;
     this.onResize = options.onResize || null;
     this.onSearchChange = options.onSearchChange || null;
     this._search = new SearchController((reveal) => {
@@ -468,6 +474,7 @@ export class WTerm {
         },
         this._tabExit,
       );
+      this.input.onPasteFiles = this._onPasteFiles;
 
       this._setupResizeObserver();
       if (!this.autoResize) {
@@ -989,6 +996,12 @@ export class WTerm {
   /** Sends text as if typed, returning the view to the live screen. */
   type(data: string): void {
     if (this.input) this._typed(data, false);
+  }
+
+  /** Pastes text as a paste from the clipboard would: bracketed when the
+   * program asked for that. */
+  paste(text: string): void {
+    this.input?.paste(text);
   }
 
   private _typed(data: string, preserveScroll: boolean): void {

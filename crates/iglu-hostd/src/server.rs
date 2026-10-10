@@ -4,11 +4,13 @@
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Json;
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -19,11 +21,13 @@ use iglu_domain::git::GitState;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::HostId;
 use iglu_domain::listener::Listener;
+use iglu_domain::pasted;
 use iglu_domain::port::GuestPort;
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
     AttachParams, BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode,
-    HostReport, Inventory, PROTOCOL_VERSION, SessionSpec, TUNNEL_UPGRADE, TerminalInfo, path,
+    FileParams, GUEST_WORKSPACE, HostReport, Inventory, KeptFile, OutputParams, PROTOCOL_VERSION,
+    SessionSpec, TUNNEL_UPGRADE, TerminalInfo, TerminalOutput, TerminalTyping, path,
 };
 
 use crate::auth::Verifier;
@@ -123,6 +127,19 @@ fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
             "/v1/workspaces/{workspace}/ports/{port}/tunnel",
             get(tunnel::<R>),
         )
+        .route(
+            "/v1/workspaces/{workspace}/terminals/{session}/output",
+            get(output::<R>),
+        )
+        .route(
+            "/v1/workspaces/{workspace}/terminals/{session}/input",
+            post(input::<R>),
+        )
+        .route(
+            "/v1/workspaces/{workspace}/files",
+            post(keep::<R>).layer(DefaultBodyLimit::max(pasted::MAX_BYTES)),
+        )
+        .route(path::GUEST_CONNECTIONS, get(guest_connection::<R>))
         .layer(middleware::from_fn_with_state(
             app.clone(),
             authenticate::<R>,
@@ -302,6 +319,85 @@ async fn tunnel<R: Runtime>(
     response
         .headers_mut()
         .insert(header::UPGRADE, HeaderValue::from_static(TUNNEL_UPGRADE));
+    response
+}
+
+async fn output<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path((workspace, session)): Path<(WorkspaceId, SessionName)>,
+    Query(params): Query<OutputParams>,
+) -> Result<Json<TerminalOutput>, Failure> {
+    app.host
+        .output(workspace, &session, params.lines)
+        .await
+        .map(Json)
+        .map_err(Failure)
+}
+
+async fn input<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path((workspace, session)): Path<(WorkspaceId, SessionName)>,
+    Json(typing): Json<TerminalTyping>,
+) -> Result<StatusCode, Failure> {
+    app.host
+        .input(workspace, &session, &typing.text)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(Failure)
+}
+
+async fn keep<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path(workspace): Path<WorkspaceId>,
+    Query(params): Query<FileParams>,
+    bytes: Bytes,
+) -> Result<Json<KeptFile>, Failure> {
+    app.host
+        .keep(workspace, &params.name, &bytes)
+        .await
+        .map(|path| Json(KeptFile { path }))
+        .map_err(Failure)
+}
+
+/// How long iglud's ask for the next guest connection is held before it's
+/// told there's none, and asks again.
+const GUEST_WAIT: Duration = Duration::from_secs(25);
+
+/// Hands iglud the next connection a workspace makes through its channel,
+/// as a tunnel labelled with the workspace, or says there was none.
+async fn guest_connection<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    mut request: Request,
+) -> Response {
+    let wants_tunnel = request
+        .headers()
+        .get(header::UPGRADE)
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(TUNNEL_UPGRADE.as_bytes()));
+    if !wants_tunnel {
+        return (StatusCode::BAD_REQUEST, "expected an iglu-tunnel upgrade").into_response();
+    }
+    let Some((workspace, mut guest)) = app.host.channels().next(GUEST_WAIT).await else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+    let on_upgrade = hyper::upgrade::on(&mut request);
+    tokio::spawn(async move {
+        match on_upgrade.await {
+            Ok(upgraded) => {
+                let mut upgraded = TokioIo::new(upgraded);
+                if let Err(error) = tokio::io::copy_bidirectional(&mut upgraded, &mut guest).await {
+                    tracing::debug!(%workspace, %error, "guest connection closed");
+                }
+            }
+            Err(error) => tracing::debug!(%workspace, %error, "guest connection upgrade failed"),
+        }
+    });
+    let mut response = StatusCode::SWITCHING_PROTOCOLS.into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
+    headers.insert(header::UPGRADE, HeaderValue::from_static(TUNNEL_UPGRADE));
+    if let Ok(value) = HeaderValue::from_str(&workspace.to_string()) {
+        headers.insert(GUEST_WORKSPACE, value);
+    }
     response
 }
 

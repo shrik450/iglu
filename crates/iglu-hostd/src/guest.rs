@@ -11,9 +11,10 @@ use iglu_domain::git::{GitState, ObservedBranch};
 use iglu_domain::guest::{GitReport, ListenerReport, StatusEntry};
 use iglu_domain::lifecycle::SecretsGeneration;
 use iglu_domain::listener::{self, Listener, ProcessName};
+use iglu_domain::pasted::FileName;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::SecretBundle;
-use iglu_domain::terminal::SessionName;
+use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput};
 use iglu_domain::time::Timestamp;
 use iglu_proto::{ProvisionSpec, SessionSpec, TerminalInfo};
 
@@ -33,6 +34,12 @@ pub enum GuestCommand<'a> {
     /// Where the checkout stands, as JSON.
     GitState,
     Close(&'a SessionName),
+    /// Prints a session's last lines as plain text.
+    Output(&'a SessionName, OutputLines),
+    /// Types into a session; the text goes on the input.
+    Input(&'a SessionName, &'a TerminalInput),
+    /// Keeps a pasted file, which goes on the input, and prints its path.
+    Keep(&'a FileName, &'a [u8]),
 }
 
 /// Whether an open is the boot's opening of the workspace's columns, which
@@ -79,6 +86,14 @@ impl GuestCommand<'_> {
             Self::Listeners => vec!["listeners".into()],
             Self::GitState => vec!["git-state".into()],
             Self::Close(session) => vec!["close".into(), session.to_string()],
+            Self::Output(session, lines) => vec![
+                "output".into(),
+                session.to_string(),
+                "--lines".into(),
+                lines.to_string(),
+            ],
+            Self::Input(session, _) => vec!["input".into(), session.to_string()],
+            Self::Keep(name, _) => vec!["keep".into(), name.to_string()],
         }
     }
 
@@ -99,11 +114,14 @@ impl GuestCommand<'_> {
                 serde_json::to_vec(&OpenRequest { sessions })
                     .expect("session specs have only string keys, so they always serialize"),
             ),
+            Self::Input(_, text) => Some(text.as_str().as_bytes().to_vec()),
+            Self::Keep(_, bytes) => Some(bytes.to_vec()),
             Self::Provision(_)
             | Self::Sessions
             | Self::Listeners
             | Self::GitState
-            | Self::Close(_) => None,
+            | Self::Close(_)
+            | Self::Output(..) => None,
         }
     }
 }

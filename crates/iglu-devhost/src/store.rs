@@ -80,6 +80,13 @@ impl Layout {
     pub fn run(&self, slot: Slot) -> PathBuf {
         self.runtime.join(slot.to_string())
     }
+
+    /// Where a workspace's channel to iglu is, for its processes and for
+    /// hostd alike: there's no other side to a local workspace. The short
+    /// directory keeps it within [`longest_socket_path`].
+    pub fn channel(&self, name: InstanceName) -> PathBuf {
+        self.runtime.join("ch").join(format!("{name}.sock"))
+    }
 }
 
 /// Names a workspace's runtime directory. Handed out once each, in order,
@@ -282,6 +289,9 @@ mod tests {
     fn a_cache_path_under_a_home_leaves_room_for_every_session() {
         let fits = Path::new("/Users/someone/.cache/iglu/0123abcd");
         assert!(longest_socket_path(fits) <= MAX_SOCKET_PATH);
+        let channel = Layout::new(PathBuf::new(), fits.to_owned())
+            .channel(WorkspaceId::from_uuid(uuid::Uuid::nil()).instance_name());
+        assert!(channel.as_os_str().len() <= longest_socket_path(fits));
         let worktree =
             Path::new("/Users/someone/worktrees/iglu/local-runtime/.dev/state/devhost/run");
         assert!(longest_socket_path(worktree) > MAX_SOCKET_PATH);

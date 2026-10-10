@@ -40,6 +40,9 @@ use self::client::{Incus, IncusError, StateAction};
 use self::exec::Program;
 use self::guestfs::paths;
 use self::observe::keys;
+
+/// The proxy device that is an instance's channel to iglu.
+const CHANNEL_DEVICE: &str = "iglu-channel";
 use crate::config::{self, Timeouts};
 use crate::guest::{self, GuestCommand};
 use crate::runtime::{
@@ -55,6 +58,8 @@ pub struct IncusRuntime {
     build: config::Build,
     /// Where proxy devices put their host-side sockets.
     sockets: PathBuf,
+    /// Where hostd listens for each instance's channel.
+    channels: PathBuf,
     timeouts: Timeouts,
 }
 
@@ -100,11 +105,13 @@ impl IncusRuntime {
         tokio::fs::create_dir_all(&sockets)
             .await
             .map_err(IncusError::Connect)?;
+        let channels = runtime_dir.join("channels");
         Ok(Self {
             incus,
             settings,
             build,
             sockets,
+            channels,
             timeouts,
         })
     }
@@ -167,6 +174,17 @@ impl Runtime for IncusRuntime {
             Err(error) => return Err(failed(error)),
         }
         let guest_user = serde_json::to_string(&spec.user).map_err(RuntimeError::failed)?;
+        // The instance's end of its channel, which only the workspace user
+        // can open; the host's end is hostd's listener for this instance.
+        let channel = json!({
+            "type": "proxy",
+            "bind": "instance",
+            "listen": format!("unix:{}", guest_tools::INSTANCE_CHANNEL),
+            "connect": format!("unix:{}", self.channel(name).display()),
+            "uid": spec.user.uid.get().to_string(),
+            "gid": spec.user.gid.get().to_string(),
+            "mode": "0600",
+        });
         let body = json!({
             "name": name.to_string(),
             "type": "container",
@@ -187,6 +205,7 @@ impl Runtime for IncusRuntime {
                 // The image was just checked to speak this host's interface.
                 keys::GUEST_INTERFACE: guest_tools::INTERFACE.to_string(),
             },
+            "devices": { CHANNEL_DEVICE: channel },
         });
         self.incus
             .run(
@@ -313,6 +332,10 @@ impl Runtime for IncusRuntime {
         guestfs::read(guest.boot.get(), path)
             .await
             .map_err(RuntimeError::failed)
+    }
+
+    fn channel(&self, name: InstanceName) -> PathBuf {
+        self.channels.join(format!("{name}.sock"))
     }
 
     async fn connect(&self, guest: &Guest, port: GuestPort) -> Result<UnixStream, RuntimeError> {

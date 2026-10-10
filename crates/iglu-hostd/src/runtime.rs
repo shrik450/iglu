@@ -112,6 +112,12 @@ pub trait Runtime: Send + Sync + 'static {
         file: GuestFile,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, RuntimeError>> + Send;
 
+    /// Where hostd listens for what the instance sends through its channel
+    /// to iglu. The runtime connects the instance's end, at the path it
+    /// tells the guest tools in [`iglu_domain::guest::CHANNEL_ENV`], to it,
+    /// and to nothing else.
+    fn channel(&self, name: InstanceName) -> std::path::PathBuf;
+
     /// Connects to a port the guest serves on its own loopback.
     fn connect(
         &self,

@@ -19,6 +19,7 @@ pub enum DirsError {
 pub struct Dirs {
     home: PathBuf,
     runtime: PathBuf,
+    channel: Option<PathBuf>,
 }
 
 fn absolute(name: &'static str) -> Result<PathBuf, DirsError> {
@@ -38,6 +39,7 @@ impl Dirs {
         Ok(Self {
             home: absolute("HOME")?,
             runtime: absolute("XDG_RUNTIME_DIR")?,
+            channel: absolute(guest::CHANNEL_ENV).ok(),
         })
     }
 
@@ -49,6 +51,12 @@ impl Dirs {
     #[must_use]
     pub fn runtime(&self) -> &Path {
         &self.runtime
+    }
+
+    /// The workspace's channel to iglu, where the host gave one.
+    #[must_use]
+    pub fn channel(&self) -> Option<&Path> {
+        self.channel.as_deref()
     }
 
     /// Written once a boot has opened the workspace's columns.

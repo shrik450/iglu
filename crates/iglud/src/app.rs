@@ -10,7 +10,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use iglu_api::{ErrorBody, ErrorKind, Field};
-use iglu_domain::auth::{Action, Decision, Resource, authorize};
+use iglu_domain::auth::{self, Action, Decision, DenyReason, Grant, Resource, authorize};
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
 use iglu_domain::preview::{
@@ -24,7 +24,7 @@ use crate::config::Config;
 use crate::crypto::{self, Binding, Sealer};
 use crate::db::{self, Db, DbError, SessionKind, SessionRow};
 use crate::hosts::HostClient;
-use crate::model::PrincipalRecord;
+use crate::model::{PrincipalRecord, WorkspaceRecord};
 use crate::oidc::RelyingParty;
 
 pub const CONSOLE_COOKIE: &str = "__Host-iglu";
@@ -288,6 +288,14 @@ pub async fn no_such_path() -> ApiError {
     ApiError::NotFound
 }
 
+/// Answers what a workspace can't ask for at all: its owner's account, and
+/// everything else that isn't a workspace's to do.
+pub async fn not_for_workspaces() -> ApiError {
+    ApiError::Forbidden(
+        "a workspace can't do this from inside; its owner can, in the console or with their own `iglu`".into(),
+    )
+}
+
 /// Answers API paths that exist, but not with the request's method. axum
 /// adds the `Allow` header.
 pub async fn no_such_method() -> ApiError {
@@ -354,12 +362,83 @@ pub struct Caller {
 
 impl Caller {
     pub fn authorize(&self, action: Action, owner: PrincipalId) -> Result<(), ApiError> {
-        match authorize(self.principal.principal(), action, Resource { owner }) {
-            Decision::Allow => Ok(()),
-            // Other people's resources look missing, not forbidden.
-            Decision::Deny(iglu_domain::auth::DenyReason::NotOwner) => Err(ApiError::NotFound),
-            Decision::Deny(reason) => Err(ApiError::Forbidden(reason.to_string())),
+        let actor = auth::Actor::Person(self.principal.principal());
+        decided(authorize(actor, action, Resource::owned_by(owner)), false)
+    }
+}
+
+/// An answer for a caller: what they can't see looks missing, not forbidden.
+fn decided(decision: Decision, visible: bool) -> Result<(), ApiError> {
+    match decision {
+        Decision::Allow => Ok(()),
+        Decision::Deny(DenyReason::NotOwner) => Err(ApiError::NotFound),
+        Decision::Deny(DenyReason::NotGranted) if !visible => Err(ApiError::NotFound),
+        Decision::Deny(reason) => Err(ApiError::Forbidden(reason.to_string())),
+    }
+}
+
+/// Marks a request that came from inside a workspace, through its channel.
+/// Only the guest ingress adds it, after checking the channel is that
+/// workspace's; no header can.
+#[derive(Clone, Copy, Debug)]
+pub struct FromWorkspace(pub WorkspaceId);
+
+/// A workspace asking through its channel, for its owner as far as its
+/// grants go.
+#[derive(Clone)]
+pub struct WorkspaceCaller {
+    pub workspace: WorkspaceRecord,
+    pub owner: PrincipalRecord,
+    pub grants: Vec<Grant>,
+}
+
+/// Whoever is asking, where a person or a workspace may.
+#[derive(Clone)]
+pub enum Actor {
+    Person(Caller),
+    Workspace(Box<WorkspaceCaller>),
+}
+
+impl Actor {
+    /// The person it acts for: whose workspaces it can see at all.
+    pub const fn owner(&self) -> &PrincipalRecord {
+        match self {
+            Self::Person(caller) => &caller.principal,
+            Self::Workspace(caller) => &caller.owner,
         }
+    }
+
+    pub fn by(&self) -> db::By {
+        db::By {
+            person: self.owner().id,
+            via: match self {
+                Self::Person(_) => None,
+                Self::Workspace(caller) => Some(caller.workspace.id),
+            },
+        }
+    }
+
+    const fn domain(&self) -> auth::Actor<'_> {
+        match self {
+            Self::Person(caller) => auth::Actor::Person(caller.principal.principal()),
+            Self::Workspace(caller) => auth::Actor::Workspace {
+                owner: caller.owner.principal(),
+                grants: caller.grants.as_slice(),
+            },
+        }
+    }
+
+    pub fn may(&self, action: Action, ws: &WorkspaceRecord) -> bool {
+        authorize(self.domain(), action, Resource::workspace(ws.id, ws.owner)) == Decision::Allow
+    }
+
+    /// Whether it may do `action` to the workspace. A workspace it can't
+    /// see looks missing.
+    pub fn authorize(&self, action: Action, ws: &WorkspaceRecord) -> Result<(), ApiError> {
+        decided(
+            authorize(self.domain(), action, Resource::workspace(ws.id, ws.owner)),
+            self.may(Action::ViewWorkspace, ws),
+        )
     }
 }
 
@@ -396,6 +475,10 @@ impl FromRequestParts<Arc<App>> for Caller {
         parts: &mut Parts,
         app: &Arc<App>,
     ) -> Result<Self, Self::Rejection> {
+        // What only a person may do, a workspace can't, whatever it sends.
+        if parts.extensions.get::<FromWorkspace>().is_some() {
+            return Err(ApiError::Forbidden("only a person can do this".into()));
+        }
         let bearer = parts
             .headers
             .get(header::AUTHORIZATION)
@@ -439,6 +522,47 @@ impl FromRequestParts<Arc<App>> for Caller {
             csrf_token: row.csrf,
             kind,
         })
+    }
+}
+
+impl FromRequestParts<Arc<App>> for Actor {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        app: &Arc<App>,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(&FromWorkspace(id)) = parts.extensions.get::<FromWorkspace>() else {
+            return Caller::from_request_parts(parts, app)
+                .await
+                .map(Self::Person);
+        };
+        // Loaded for each request, so a change to its grants applies to the
+        // next one.
+        let found = app
+            .db
+            .call(move |tx| {
+                let Some(workspace) = db::workspace(tx, id)? else {
+                    return Ok(None);
+                };
+                let Some(owner) = db::principal(tx, workspace.owner)? else {
+                    return Ok(None);
+                };
+                Ok(Some(WorkspaceCaller {
+                    grants: db::grants(tx, id)?,
+                    workspace,
+                    owner,
+                }))
+            })
+            .await?;
+        match found {
+            Some(caller)
+                if caller.workspace.desired != iglu_domain::lifecycle::DesiredState::Deleted =>
+            {
+                Ok(Self::Workspace(Box::new(caller)))
+            }
+            _ => Err(ApiError::Unauthorized),
+        }
     }
 }
 

@@ -9,7 +9,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use iglu_domain::column::{Arg, Argv};
-use iglu_domain::terminal::SessionName;
+use iglu_domain::guest::CHANNEL_ENV;
+use iglu_domain::terminal::{SessionName, TerminalInput};
 use serde::{Deserialize, Serialize};
 
 use crate::paths::Dirs;
@@ -42,8 +43,16 @@ pub fn parse_list(output: &str) -> Vec<Info> {
 /// The environment for a session: the delivered secrets first, then the
 /// platform's own variables, which secrets can't override.
 #[must_use]
-pub fn session_env(secrets: BTreeMap<String, String>, zmx_dir: &Path) -> BTreeMap<String, String> {
+pub fn session_env(
+    secrets: BTreeMap<String, String>,
+    zmx_dir: &Path,
+    channel: Option<&Path>,
+) -> BTreeMap<String, String> {
     let mut env = secrets;
+    // Where `iglu` reaches the control plane from.
+    if let Some(channel) = channel {
+        env.insert(CHANNEL_ENV.into(), channel.display().to_string());
+    }
     env.insert("ZMX_DIR".into(), zmx_dir.display().to_string());
     env.insert("ZMX_NO_DETACH_KEY".into(), "1".into());
     env.insert("TERM".into(), "xterm-256color".into());
@@ -86,6 +95,49 @@ pub fn close(dirs: &Dirs, name: &SessionName) -> std::io::Result<()> {
     }
 }
 
+/// A session's history and screen as plain text, as zmx keeps them.
+///
+/// # Errors
+///
+/// When the session isn't open or zmx can't read it.
+pub fn history(dirs: &Dirs, name: &SessionName) -> std::io::Result<String> {
+    let output = zmx(dirs).arg("history").arg(name.as_str()).output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Types into an open session, exactly as given.
+///
+/// # Errors
+///
+/// When the session isn't open or zmx can't reach it.
+pub fn send(dirs: &Dirs, name: &SessionName, text: &TerminalInput) -> std::io::Result<()> {
+    // zmx would take a closed session's leftover socket for a busy one.
+    if !list(dirs)?.iter().any(|info| info.name == *name) {
+        return Err(std::io::Error::other(format!(
+            "no session called \"{name}\" is open"
+        )));
+    }
+    // As one argument: zmx sends it as it is, where from its input it would
+    // drop a final newline.
+    let output = zmx(dirs)
+        .arg("send")
+        .arg(name.as_str())
+        .arg(text.as_str())
+        .output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ))
+    }
+}
+
 /// `zmx attach` for a session, in the checkout, with the delivered secrets.
 /// With a command, a new session runs it as given, argument by argument;
 /// without one, it runs the login shell.
@@ -109,7 +161,7 @@ fn zmx_attach(dirs: &Dirs, name: &SessionName, command: Option<&Argv>) -> Comman
     if let Some(command) = command {
         zmx.args(command.args().iter().map(Arg::as_str));
     }
-    zmx.envs(session_env(secrets, &zmx_dir(dirs)))
+    zmx.envs(session_env(secrets, &zmx_dir(dirs), dirs.channel()))
         .env("SHELL", shell)
         .current_dir(checkout);
     zmx
@@ -327,9 +379,14 @@ mod tests {
             ("TERM".to_owned(), "dumb".to_owned()),
             ("API_KEY".to_owned(), "k".to_owned()),
         ]);
-        let env = session_env(secrets, Path::new("/run/user/1000/zmx"));
+        let env = session_env(
+            secrets,
+            Path::new("/run/user/1000/zmx"),
+            Some(Path::new("/var/lib/iglu-api.sock")),
+        );
         assert_eq!(env["TERM"], "xterm-256color");
         assert_eq!(env["API_KEY"], "k");
         assert_eq!(env["ZMX_DIR"], "/run/user/1000/zmx");
+        assert_eq!(env[CHANNEL_ENV], "/var/lib/iglu-api.sock");
     }
 }

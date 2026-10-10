@@ -3,17 +3,21 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use iglu_domain::env::EnvSource;
+use bytes::Bytes;
+use iglu_api::ColumnOutput;
+use iglu_domain::env::{EnvSource, GuestPath};
 use iglu_domain::git::GitState;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::HostId;
 use iglu_domain::listener::Listener;
+use iglu_domain::pasted::FileName;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
-use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{
-    BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode, Inventory,
-    PROTOCOL_VERSION, SessionSpec, TUNNEL_UPGRADE, TerminalInfo, path,
+    BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode, GUEST_WORKSPACE,
+    Inventory, KeptFile, PROTOCOL_VERSION, SessionSpec, TUNNEL_UPGRADE, TerminalInfo,
+    TerminalOutput, TerminalTyping, path,
 };
 use serde::de::DeserializeOwned;
 use tokio::net::TcpStream;
@@ -181,23 +185,12 @@ impl HostClient {
         workspace: WorkspaceId,
         session: &SessionSpec,
     ) -> Result<(), HostError> {
-        let response = self
-            .http
-            .post(self.url(&path::terminals(workspace))?)
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .json(session)
-            .timeout(Duration::from_secs(60))
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(match response.json::<CommandError>().await {
-                Ok(error) => HostError::Command(error),
-                Err(e) => HostError::Unreachable(e.to_string()),
-            })
-        }
+        self.empty(
+            self.http
+                .post(self.url(&path::terminals(workspace))?)
+                .json(session),
+        )
+        .await
     }
 
     pub async fn close_terminal(
@@ -205,9 +198,16 @@ impl HostClient {
         workspace: WorkspaceId,
         session: &SessionName,
     ) -> Result<(), HostError> {
-        let response = self
-            .http
-            .delete(self.url(&path::terminal(workspace, session))?)
+        self.empty(
+            self.http
+                .delete(self.url(&path::terminal(workspace, session))?),
+        )
+        .await
+    }
+
+    /// Sends a request that answers with nothing but whether it worked.
+    async fn empty(&self, request: reqwest::RequestBuilder) -> Result<(), HostError> {
+        let response = request
             .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
             .timeout(Duration::from_secs(60))
             .send()
@@ -272,6 +272,90 @@ impl HostClient {
         .await
         .map_err(|e| HostError::Unreachable(e.to_string()))?;
         Ok(socket)
+    }
+
+    pub async fn output(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionName,
+        lines: OutputLines,
+    ) -> Result<ColumnOutput, HostError> {
+        let output: TerminalOutput = self
+            .json(
+                self.http
+                    .get(self.url(&path::output(workspace, session, lines))?),
+            )
+            .await?;
+        Ok(ColumnOutput {
+            text: output.text,
+            truncated: output.truncated,
+        })
+    }
+
+    pub async fn send_input(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionName,
+        text: &TerminalInput,
+    ) -> Result<(), HostError> {
+        let typing = TerminalTyping { text: text.clone() };
+        self.empty(
+            self.http
+                .post(self.url(&path::input(workspace, session))?)
+                .json(&typing),
+        )
+        .await
+    }
+
+    pub async fn keep(
+        &self,
+        workspace: WorkspaceId,
+        name: &FileName,
+        bytes: Bytes,
+    ) -> Result<GuestPath, HostError> {
+        let kept: KeptFile = self
+            .json(
+                self.http
+                    .post(self.url(&path::files(workspace, name))?)
+                    .body(bytes)
+                    .timeout(Duration::from_secs(120)),
+            )
+            .await?;
+        Ok(kept.path)
+    }
+
+    /// Waits for the next connection a workspace on this host makes through
+    /// its channel. `None` when none came while hostd held the request.
+    pub async fn guest_connection(
+        &self,
+    ) -> Result<Option<(WorkspaceId, reqwest::Upgraded)>, HostError> {
+        let response = self
+            .http
+            .get(self.url(path::GUEST_CONNECTIONS)?)
+            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
+            .header(reqwest::header::CONNECTION, "upgrade")
+            .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE)
+            .send()
+            .await
+            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        match response.status() {
+            reqwest::StatusCode::NO_CONTENT => return Ok(None),
+            reqwest::StatusCode::SWITCHING_PROTOCOLS => {}
+            status => return Err(HostError::Unreachable(format!("host answered {status}"))),
+        }
+        let workspace = response
+            .headers()
+            .get(GUEST_WORKSPACE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<WorkspaceId>().ok())
+            .ok_or_else(|| {
+                HostError::Unreachable("a guest connection without its workspace".into())
+            })?;
+        let upgraded = response
+            .upgrade()
+            .await
+            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        Ok(Some((workspace, upgraded)))
     }
 
     /// Opens a raw byte stream to a guest port.

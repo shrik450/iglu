@@ -267,6 +267,16 @@ pub enum ColumnState {
     Adopted,
 }
 
+impl fmt::Display for ColumnState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Open => "open",
+            Self::Ended => "ended",
+            Self::Adopted => "adopted",
+        })
+    }
+}
+
 /// Puts what was asked for next to what's open: every asked-for column in
 /// order, then the open sessions nobody asked for, in name order. Each comes
 /// with its attached-client count.

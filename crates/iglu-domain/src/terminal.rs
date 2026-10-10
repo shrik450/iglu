@@ -107,9 +107,160 @@ pub enum TerminalControl {
     Resize(TerminalSize),
 }
 
+/// What's typed into a terminal from outside it: exact text, as bytes the
+/// program reads, up to 64 KiB and without NUL. Nothing is added; a program
+/// that waits for Enter needs a carriage return at the end.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
+#[serde(try_from = "String", into = "String")]
+pub struct TerminalInput(String);
+
+impl TerminalInput {
+    pub const MAX_BYTES: usize = 64 * 1024;
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for TerminalInput {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() || s.len() > Self::MAX_BYTES || s.contains('\0') {
+            return Err(ParseError::new(
+                "terminal input",
+                "must be 1 byte to 64 KiB without NUL",
+            ));
+        }
+        Ok(Self(s.to_owned()))
+    }
+}
+
+impl fmt::Display for TerminalInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+text_type!(TerminalInput);
+
+/// How many of a terminal's last lines to read: 1 to 2000.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
+#[serde(try_from = "u16", into = "u16")]
+pub struct OutputLines(u16);
+
+impl OutputLines {
+    pub const MOST: u16 = 2000;
+    pub const DEFAULT: Self = Self(200);
+
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl TryFrom<u16> for OutputLines {
+    type Error = ParseError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        if (1..=Self::MOST).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(ParseError::new("lines", "must be 1 to 2000"))
+        }
+    }
+}
+
+impl From<OutputLines> for u16 {
+    fn from(value: OutputLines) -> Self {
+        value.0
+    }
+}
+
+impl FromStr for OutputLines {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<u16>()
+            .map_err(|_| ParseError::new("lines", "must be 1 to 2000"))
+            .and_then(Self::try_from)
+    }
+}
+
+impl fmt::Display for OutputLines {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// The text a terminal shows, read from zmx: its last lines, history
+/// included, as plain text. At most this much comes back.
+pub const OUTPUT_MAX_BYTES: usize = 128 * 1024;
+
+/// The last `lines` lines of `history`, without the blank ones a screen
+/// ends with, and cut to [`OUTPUT_MAX_BYTES`] from the end at a character
+/// boundary. Says whether anything was cut.
+#[must_use]
+pub fn last_lines(history: &str, lines: OutputLines) -> (String, bool) {
+    let all: Vec<&str> = history.trim_end().lines().collect();
+    let from = all.len().saturating_sub(usize::from(lines.get()));
+    let mut text = all[from..].join("\n");
+    let mut truncated = from > 0;
+    if text.len() > OUTPUT_MAX_BYTES {
+        let mut cut = text.len() - OUTPUT_MAX_BYTES;
+        while !text.is_char_boundary(cut) {
+            cut += 1;
+        }
+        text = text[cut..].to_owned();
+        truncated = true;
+    }
+    (text, truncated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_is_exact_and_bounded() {
+        assert_eq!(
+            "ls\r".parse::<TerminalInput>().map(|i| i.to_string()),
+            Ok("ls\r".to_owned())
+        );
+        assert!("".parse::<TerminalInput>().is_err());
+        assert!("a\0b".parse::<TerminalInput>().is_err());
+        assert!(
+            "x".repeat(TerminalInput::MAX_BYTES + 1)
+                .parse::<TerminalInput>()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn output_is_the_last_lines_without_the_blank_end() {
+        let lines = OutputLines::try_from(2).expect("lines");
+        assert_eq!(
+            last_lines("a\nb\nc\n\n\n", lines),
+            ("b\nc".to_owned(), true)
+        );
+        assert_eq!(last_lines("a\n", lines), ("a".to_owned(), false));
+        assert_eq!(last_lines("", lines), (String::new(), false));
+        assert!(OutputLines::try_from(0).is_err());
+        assert!("2001".parse::<OutputLines>().is_err());
+    }
+
+    #[test]
+    fn long_output_keeps_its_end_whole() {
+        let line = "é".repeat(1000);
+        let history = vec![line.as_str(); 100].join("\n");
+        let (text, truncated) = last_lines(&history, OutputLines::try_from(100).expect("lines"));
+        assert!(truncated);
+        assert!(text.len() <= OUTPUT_MAX_BYTES);
+        assert!(text.ends_with('é'));
+    }
 
     #[test]
     fn session_names_are_bounded() {

@@ -13,12 +13,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
 use futures_util::Stream;
 use iglu_api::{
-    ActivityEntry, AddColumn, BuildStarted, ColumnStatus, CreateEnvironment, CreateWorkspace,
-    EnvironmentView, LabelColumn, ListenerView, LiveView, Me, PublishPort, PutLayout, PutSecret,
-    RenameWorkspace, RouteView, SecretView, SetDesiredState, Snapshot, WorkspaceView,
+    ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
+    CreateWorkspace, EnvironmentView, Identity, KeptFile, LabelColumn, ListenerView, LiveView, Me,
+    PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace, RouteView, SecretView,
+    SendInput, SetDesiredState, Snapshot, WorkspaceView,
 };
 use iglu_domain::agent::{self, Prompt};
-use iglu_domain::auth::Action;
+use iglu_domain::auth::{Action, Grant, Permission};
 use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
 use iglu_domain::env::EnvName;
 use iglu_domain::git;
@@ -26,20 +27,24 @@ use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, 
 use iglu_domain::label::{HostId, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Revision, allow_transition};
 use iglu_domain::names;
+use iglu_domain::pasted::{self, FileName};
 use iglu_domain::port::GuestPort;
 use iglu_domain::preferences::Preferences;
 use iglu_domain::project;
 use iglu_domain::secret::{FetchTokens, SecretName};
-use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{BuildOutcome, SessionSpec};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::app::{ApiError, App, Caller, Problem, no_such_method, no_such_path, now, open_secrets};
+use crate::app::{
+    Actor, ApiError, App, Caller, Problem, no_such_method, no_such_path, not_for_workspaces, now,
+    open_secrets,
+};
 use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, RenameOutcome, SealedSecret};
-use crate::extract::{Body, Path, Query, Upgrade};
+use crate::extract::{Body, Path, Query, Raw, Upgrade};
 use crate::model::{ColumnRecord, RouteRecord, WorkspaceRecord};
 use crate::views::{ordered, route_view, workspace_view};
 
@@ -48,6 +53,7 @@ mod projects;
 pub fn router() -> Router<Arc<App>> {
     Router::new()
         .route("/v1/me", get(me))
+        .route("/v1/identity", get(identity))
         .route(
             "/v1/me/preferences",
             get(get_preferences).put(put_preferences),
@@ -82,6 +88,16 @@ pub fn router() -> Router<Arc<App>> {
             "/v1/workspaces/{id}/columns/{session}/attach",
             get(attach_column),
         )
+        .route(
+            "/v1/workspaces/{id}/columns/{session}/output",
+            get(column_output),
+        )
+        .route(
+            "/v1/workspaces/{id}/columns/{session}/input",
+            post(send_input),
+        )
+        .route("/v1/workspaces/{id}/access", put(put_access))
+        .route("/v1/workspaces/{id}/files", files_route())
         .route("/v1/workspaces/{id}/live", get(live))
         .route(
             "/v1/workspaces/{id}/routes",
@@ -103,6 +119,71 @@ pub fn router() -> Router<Arc<App>> {
         .merge(projects::router())
         .route("/v1/{*rest}", any(no_such_path))
         .method_not_allowed_fallback(no_such_method)
+}
+
+/// What a workspace may ask through its channel: each route it can reach is
+/// named here, so a route added to the API isn't reachable from inside a
+/// workspace until it's added here too. What it may do to which workspace
+/// is still decided per request by its grants.
+pub fn guest_router() -> Router<Arc<App>> {
+    Router::new()
+        .route("/v1/identity", get(identity))
+        .route("/v1/workspaces", get(list_workspaces))
+        .route("/v1/workspaces/{id}", get(get_workspace))
+        .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
+        .route("/v1/workspaces/{id}/name", put(rename_workspace))
+        .route("/v1/workspaces/{id}/activity", get(activity))
+        .route(
+            "/v1/workspaces/{id}/columns",
+            get(list_columns).post(add_column),
+        )
+        .route("/v1/workspaces/{id}/layout", put(put_layout))
+        .route(
+            "/v1/workspaces/{id}/columns/{session}",
+            delete(close_column),
+        )
+        .route(
+            "/v1/workspaces/{id}/columns/{session}/label",
+            put(label_column),
+        )
+        .route(
+            "/v1/workspaces/{id}/columns/{session}/restart",
+            post(restart_column),
+        )
+        .route(
+            "/v1/workspaces/{id}/columns/{session}/output",
+            get(column_output),
+        )
+        .route(
+            "/v1/workspaces/{id}/columns/{session}/input",
+            post(send_input),
+        )
+        .route("/v1/workspaces/{id}/files", files_route())
+        .route("/v1/workspaces/{id}/live", get(live))
+        .route(
+            "/v1/workspaces/{id}/routes",
+            get(list_routes).post(publish_route),
+        )
+        .route(
+            "/v1/workspaces/{id}/routes/{route}",
+            delete(unpublish_route),
+        )
+        .route("/v1/{*rest}", any(not_for_workspaces))
+        .method_not_allowed_fallback(no_such_method)
+}
+
+async fn identity(actor: Actor) -> Json<Identity> {
+    Json(match actor {
+        Actor::Person(caller) => Identity::Person {
+            id: caller.principal.id,
+            name: caller.principal.name,
+            email: caller.principal.email,
+        },
+        Actor::Workspace(caller) => Identity::Workspace {
+            id: caller.workspace.id,
+            name: caller.workspace.name,
+        },
+    })
 }
 
 async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, ApiError> {
@@ -143,20 +224,35 @@ async fn put_preferences(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Loads a live workspace the caller may act on.
+/// Loads a live workspace the person may act on.
 async fn owned_workspace(
     app: &App,
     caller: &Caller,
     id: WorkspaceId,
     action: Action,
 ) -> Result<WorkspaceRecord, ApiError> {
-    let ws = app
-        .db
-        .call(move |tx| db::workspace(tx, id))
-        .await?
-        .ok_or(ApiError::NotFound)?;
+    let ws = live_workspace(app, id).await?;
     caller.authorize(action, ws.owner)?;
     Ok(ws)
+}
+
+/// Loads a live workspace the person or workspace asking may act on.
+async fn workspace_for(
+    app: &App,
+    actor: &Actor,
+    id: WorkspaceId,
+    action: Action,
+) -> Result<WorkspaceRecord, ApiError> {
+    let ws = live_workspace(app, id).await?;
+    actor.authorize(action, &ws)?;
+    Ok(ws)
+}
+
+async fn live_workspace(app: &App, id: WorkspaceId) -> Result<WorkspaceRecord, ApiError> {
+    app.db
+        .call(move |tx| db::workspace(tx, id))
+        .await?
+        .ok_or(ApiError::NotFound)
 }
 
 async fn view(app: &Arc<App>, ws: WorkspaceRecord) -> Result<WorkspaceView, ApiError> {
@@ -170,12 +266,22 @@ async fn view(app: &Arc<App>, ws: WorkspaceRecord) -> Result<WorkspaceView, ApiE
 
 /// The owner's workspaces, most pressing first.
 pub async fn views_for(app: &Arc<App>, owner: PrincipalId) -> Result<Vec<WorkspaceView>, ApiError> {
+    views_where(app, owner, |_| true).await
+}
+
+/// Those of the owner's workspaces that pass `visible`, most pressing first.
+async fn views_where(
+    app: &Arc<App>,
+    owner: PrincipalId,
+    visible: impl Fn(&WorkspaceRecord) -> bool + Send + 'static,
+) -> Result<Vec<WorkspaceView>, ApiError> {
     let app2 = app.clone();
     Ok(ordered(
         app.db
             .call(move |tx| {
                 db::workspaces(tx, owner)?
                     .into_iter()
+                    .filter(|ws| visible(ws))
                     .map(|ws| workspace_view(tx, &app2.config, ws))
                     .collect()
             })
@@ -209,18 +315,21 @@ async fn snapshot(app: &Arc<App>, owner: PrincipalId) -> Result<Snapshot, ApiErr
 }
 
 async fn list_workspaces(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
 ) -> Result<Json<Vec<WorkspaceView>>, ApiError> {
-    Ok(Json(views_for(&app, caller.principal.id).await?))
+    let owner = actor.owner().id;
+    Ok(Json(
+        views_where(&app, owner, move |ws| actor.may(Action::ViewWorkspace, ws)).await?,
+    ))
 }
 
 async fn get_workspace(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<WorkspaceView>, ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
+    let ws = workspace_for(&app, &actor, id, Action::ViewWorkspace).await?;
     Ok(Json(view(&app, ws).await?))
 }
 
@@ -346,6 +455,14 @@ fn insert_requested(
         created_at: now(),
     };
     db::insert_workspace(tx, &record, fresh.key.as_deref(), &fresh.request_hash)?;
+    let own: Vec<Grant> = Permission::OWN
+        .into_iter()
+        .map(|permission| Grant {
+            workspace: fresh.id,
+            permission,
+        })
+        .collect();
+    db::replace_grants(tx, fresh.id, &own)?;
     let columns: Vec<ColumnRecord> = started
         .columns
         .into_iter()
@@ -362,7 +479,14 @@ fn insert_requested(
         Some(checkout) => format!("{} on {}", checkout.branch, checkout.repo),
         None => format!("in {}", project.name),
     };
-    db::add_activity(tx, Some(fresh.id), Some(owner), "requested", &what, now())?;
+    db::add_activity(
+        tx,
+        Some(fresh.id),
+        Some(db::By::person(owner)),
+        "requested",
+        &what,
+        now(),
+    )?;
     for (n, port) in (0u64..).zip(project.ports.ports()) {
         publish_in(
             tx,
@@ -382,7 +506,7 @@ fn publish_in(
     tx: &rusqlite::Connection,
     workspace: WorkspaceId,
     owner: PrincipalId,
-    actor: Option<PrincipalId>,
+    actor: Option<db::By>,
     port: GuestPort,
     entropy: u64,
 ) -> Result<RouteRecord, db::DbError> {
@@ -459,7 +583,7 @@ fn choose_name(
 }
 
 async fn set_desired_state(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
     Body(request): Body<SetDesiredState>,
@@ -470,10 +594,10 @@ async fn set_desired_state(
             Action::OperateWorkspace
         }
     };
-    let ws = owned_workspace(&app, &caller, id, action).await?;
+    let ws = workspace_for(&app, &actor, id, action).await?;
     allow_transition(ws.phase(), request.state)
         .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
-    let actor = caller.principal.id;
+    let by = actor.by();
     let updated = app
         .db
         .call(move |tx| {
@@ -482,7 +606,7 @@ async fn set_desired_state(
                 db::add_activity(
                     tx,
                     Some(id),
-                    Some(actor),
+                    Some(by),
                     "requested",
                     &format!("set to {}", request.state),
                     now(),
@@ -494,7 +618,7 @@ async fn set_desired_state(
         })
         .await?
         .ok_or_else(|| ApiError::Conflict("the workspace changed; reload and retry".into()))?;
-    tracing::info!(workspace = %id, state = %request.state, by = %actor, "workspace state requested");
+    tracing::info!(workspace = %id, state = %request.state, by = %by.person, via = ?by.via, "workspace state requested");
     app.usage.used(id);
     app.kick();
     app.changed();
@@ -502,13 +626,13 @@ async fn set_desired_state(
 }
 
 async fn rename_workspace(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
     Body(request): Body<RenameWorkspace>,
 ) -> Result<Json<WorkspaceView>, ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
-    let actor = caller.principal.id;
+    let ws = workspace_for(&app, &actor, id, Action::OperateWorkspace).await?;
+    let by = actor.by();
     let owner = ws.owner;
     let renamed = app
         .db
@@ -518,7 +642,7 @@ async fn rename_workspace(
                 db::add_activity(
                     tx,
                     Some(id),
-                    Some(actor),
+                    Some(by),
                     "renamed",
                     &format!("{} to {}", ws.name, request.name),
                     now(),
@@ -555,11 +679,11 @@ async fn mark_seen(
 }
 
 async fn activity(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<Vec<ActivityEntry>>, ApiError> {
-    owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
+    workspace_for(&app, &actor, id, Action::ViewWorkspace).await?;
     Ok(Json(
         app.db.call(move |tx| db::activity(tx, id, 100)).await?,
     ))
@@ -587,11 +711,11 @@ pub fn host_error(error: crate::hosts::HostError) -> ApiError {
 
 /// The workspace's columns, with whether each one's session is open.
 async fn list_columns(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<Vec<ColumnStatus>>, ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
+    let ws = workspace_for(&app, &actor, id, Action::ViewWorkspace).await?;
     let asked: Vec<SessionName> = app
         .db
         .call(move |tx| db::columns(tx, id))
@@ -616,6 +740,28 @@ async fn list_columns(
             })
             .collect(),
     ))
+}
+
+/// A change to a workspace's columns, for its history when a workspace made
+/// it: the owner sees what their workspaces did, not what they did themselves.
+struct Noted(Option<(db::By, &'static str, String)>);
+
+fn noted(actor: &Actor, kind: &'static str, detail: String) -> Noted {
+    Noted(match actor {
+        Actor::Person(_) => None,
+        Actor::Workspace(_) => Some((actor.by(), kind, detail)),
+    })
+}
+
+impl Noted {
+    fn add(&self, tx: &rusqlite::Connection, id: WorkspaceId) -> Result<(), db::DbError> {
+        match &self.0 {
+            Some((by, kind, detail)) => {
+                db::add_activity(tx, Some(id), Some(*by), kind, detail, now())
+            }
+            None => Ok(()),
+        }
+    }
 }
 
 /// What a column runs, resolving an agent through the workspace's environment.
@@ -650,12 +796,18 @@ async fn session_for(
 }
 
 async fn add_column(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
     Body(request): Body<AddColumn>,
 ) -> Result<(StatusCode, Json<ColumnSpec>), ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    let ws = workspace_for(&app, &actor, id, Action::ManageColumns).await?;
+    if request.prompt.is_some() && !matches!(request.kind, ColumnKind::Agent { .. }) {
+        return Err(ApiError::BadRequest(Problem::at(
+            "prompt",
+            "only an agent column starts on a prompt",
+        )));
+    }
     let host = host_for(&app, &ws)?;
     let _editing = app.column_edits.lock(id).await;
     let columns = app.db.call(move |tx| db::columns(tx, id)).await?;
@@ -681,14 +833,19 @@ async fn add_column(
         width: request.width.unwrap_or(ColumnWidth::Half),
         label: None,
     };
-    host.open_terminal(id, &session_for(&app, &ws, &spec, None).await?)
-        .await
-        .map_err(host_error)?;
+    host.open_terminal(
+        id,
+        &session_for(&app, &ws, &spec, request.prompt.as_ref()).await?,
+    )
+    .await
+    .map_err(host_error)?;
     // Read again: other changes may have landed while the session opened.
     let added = spec.clone();
     let after = request.after;
+    let noted = noted(&actor, "column-added", spec.name.to_string());
     app.db
         .call(move |tx| {
+            noted.add(tx, id)?;
             let mut columns = db::columns(tx, id)?;
             let at = after
                 .and_then(|after| columns.iter().position(|c| c.spec.name == after))
@@ -708,12 +865,12 @@ async fn add_column(
 }
 
 async fn put_layout(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
     Body(request): Body<PutLayout>,
 ) -> Result<StatusCode, ApiError> {
-    owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    workspace_for(&app, &actor, id, Action::ManageColumns).await?;
     let layout: Vec<(SessionName, ColumnWidth)> = request
         .columns
         .into_iter()
@@ -749,12 +906,12 @@ async fn put_layout(
 }
 
 async fn label_column(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path((id, name)): Path<(WorkspaceId, SessionName)>,
     Body(request): Body<LabelColumn>,
 ) -> Result<StatusCode, ApiError> {
-    owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    workspace_for(&app, &actor, id, Action::ManageColumns).await?;
     let found = app
         .db
         .call(move |tx| db::label_column(tx, id, &name, request.label.as_ref()))
@@ -767,11 +924,11 @@ async fn label_column(
 }
 
 async fn restart_column(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path((id, name)): Path<(WorkspaceId, SessionName)>,
 ) -> Result<StatusCode, ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    let ws = workspace_for(&app, &actor, id, Action::ManageColumns).await?;
     // Held from reading the column to opening its session, so a close in
     // between can't leave a session for a column that's gone.
     let _editing = app.column_edits.lock(id).await;
@@ -789,27 +946,33 @@ async fn restart_column(
         .open_terminal(id, &session)
         .await
         .map_err(host_error)?;
+    let noted = noted(&actor, "column-restarted", name.to_string());
     app.db
-        .call(move |tx| db::clear_prompts(tx, id, &[name]))
+        .call(move |tx| {
+            noted.add(tx, id)?;
+            db::clear_prompts(tx, id, &[name])
+        })
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Ends a column's session and everything running in it, and drops the column.
 async fn close_column(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path((id, name)): Path<(WorkspaceId, SessionName)>,
 ) -> Result<StatusCode, ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    let ws = workspace_for(&app, &actor, id, Action::ManageColumns).await?;
     let host = host_for(&app, &ws)?;
     let _editing = app.column_edits.lock(id).await;
     let open = host.terminals(id).await.map_err(host_error)?;
     if open.iter().any(|t| t.name == name) {
         host.close_terminal(id, &name).await.map_err(host_error)?;
     }
+    let noted = noted(&actor, "column-closed", name.to_string());
     app.db
         .call(move |tx| {
+            noted.add(tx, id)?;
             let mut columns = db::columns(tx, id)?;
             columns.retain(|c| c.spec.name != name);
             db::replace_columns(tx, id, &columns)
@@ -817,6 +980,143 @@ async fn close_column(
         .await?;
     app.changed();
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct OutputQuery {
+    lines: Option<OutputLines>,
+}
+
+/// The column's last lines, as its terminal shows them.
+async fn column_output(
+    actor: Actor,
+    State(app): State<Arc<App>>,
+    Path((id, session)): Path<(WorkspaceId, SessionName)>,
+    Query(query): Query<OutputQuery>,
+) -> Result<Json<ColumnOutput>, ApiError> {
+    let ws = workspace_for(&app, &actor, id, Action::ReadColumnOutput).await?;
+    let lines = query.lines.unwrap_or(OutputLines::DEFAULT);
+    let output = host_for(&app, &ws)?
+        .output(id, &session, lines)
+        .await
+        .map_err(host_error)?;
+    Ok(Json(output))
+}
+
+/// Types into the column's terminal. Done means handed to the terminal, not
+/// that whatever runs there read it.
+async fn send_input(
+    actor: Actor,
+    State(app): State<Arc<App>>,
+    Path((id, session)): Path<(WorkspaceId, SessionName)>,
+    Body(request): Body<SendInput>,
+) -> Result<StatusCode, ApiError> {
+    if request.text.is_none() && !request.enter {
+        return Err(ApiError::BadRequest(Problem::at(
+            "text",
+            "say what to type, or to press Enter",
+        )));
+    }
+    let ws = workspace_for(&app, &actor, id, Action::SendColumnInput).await?;
+    let host = host_for(&app, &ws)?;
+    if let Some(text) = &request.text {
+        host.send_input(id, &session, text)
+            .await
+            .map_err(host_error)?;
+    }
+    if request.enter {
+        if request.text.is_some() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let enter: TerminalInput = "\r".parse()?;
+        host.send_input(id, &session, &enter)
+            .await
+            .map_err(host_error)?;
+    }
+    app.usage.used(id);
+    let noted = noted(&actor, "typed", format!("into {session}"));
+    app.db.call(move |tx| noted.add(tx, id)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Keeping a pasted file takes a body as large as the file.
+fn files_route() -> axum::routing::MethodRouter<Arc<App>> {
+    post(keep_file).layer(axum::extract::DefaultBodyLimit::max(pasted::MAX_BYTES))
+}
+
+#[derive(Deserialize)]
+struct FileQuery {
+    name: String,
+}
+
+/// Keeps a file pasted or dropped on one of the workspace's terminals, and
+/// says where, for the console to paste the path. Putting something in front
+/// of whatever runs there is typing into it, so it takes the same grant.
+async fn keep_file(
+    actor: Actor,
+    State(app): State<Arc<App>>,
+    Path(id): Path<WorkspaceId>,
+    Query(query): Query<FileQuery>,
+    Raw(bytes): Raw,
+) -> Result<Json<KeptFile>, ApiError> {
+    let ws = workspace_for(&app, &actor, id, Action::SendColumnInput).await?;
+    let name = FileName::from_browser(&query.name);
+    let path = host_for(&app, &ws)?
+        .keep(id, &name, bytes)
+        .await
+        .map_err(host_error)?;
+    app.usage.used(id);
+    let noted = noted(&actor, "file-kept", path.to_string());
+    app.db.call(move |tx| noted.add(tx, id)).await?;
+    Ok(Json(KeptFile { path }))
+}
+
+/// Replaces what a workspace may do from inside. Only its owner can, and
+/// only on workspaces they own.
+async fn put_access(
+    caller: Caller,
+    State(app): State<Arc<App>>,
+    Path(id): Path<WorkspaceId>,
+    Body(request): Body<PutAccess>,
+) -> Result<Json<WorkspaceView>, ApiError> {
+    let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    let owner = ws.owner;
+    let grants: Vec<Grant> = request
+        .grants
+        .iter()
+        .flat_map(|access| {
+            access.permissions.iter().map(|&permission| Grant {
+                workspace: access.workspace,
+                permission,
+            })
+        })
+        .collect();
+    let updated = app
+        .db
+        .call(move |tx| {
+            for grant in &grants {
+                if db::workspace(tx, grant.workspace)?.is_none_or(|on| on.owner != owner) {
+                    return Ok(Err(ApiError::BadRequest(Problem::at(
+                        "grants",
+                        format!("no workspace {} to grant", grant.workspace),
+                    ))));
+                }
+            }
+            db::replace_grants(tx, id, &grants)?;
+            db::add_activity(
+                tx,
+                Some(id),
+                Some(db::By::person(owner)),
+                "access-changed",
+                "",
+                now(),
+            )?;
+            Ok(Ok(db::workspace(tx, id)?))
+        })
+        .await??
+        .ok_or(ApiError::NotFound)?;
+    app.changed();
+    Ok(Json(view(&app, updated).await?))
 }
 
 #[derive(Deserialize)]
@@ -843,11 +1143,11 @@ async fn attach_column(
 /// What's going on inside a running workspace now: what's listening, each
 /// with its preview if published, and where the checkout stands.
 async fn live(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<LiveView>, ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
+    let ws = workspace_for(&app, &actor, id, Action::ViewWorkspace).await?;
     // The console asks while the workspace is open in front of someone.
     app.usage.used(id);
     let host = host_for(&app, &ws)?;
@@ -872,11 +1172,11 @@ async fn live(
 }
 
 async fn list_routes(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<Vec<RouteView>>, ApiError> {
-    owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
+    workspace_for(&app, &actor, id, Action::ViewWorkspace).await?;
     let app2 = app.clone();
     Ok(Json(
         app.db
@@ -891,29 +1191,29 @@ async fn list_routes(
 }
 
 async fn publish_route(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
     Body(request): Body<PublishPort>,
 ) -> Result<(StatusCode, Json<RouteView>), ApiError> {
-    let ws = owned_workspace(&app, &caller, id, Action::PublishRoute).await?;
+    let ws = workspace_for(&app, &actor, id, Action::PublishRoute).await?;
     let entropy = crypto::random_u64()?;
     let owner = ws.owner;
-    let actor = caller.principal.id;
+    let by = actor.by();
     let route = app
         .db
-        .call(move |tx| publish_in(tx, id, owner, Some(actor), request.port, entropy))
+        .call(move |tx| publish_in(tx, id, owner, Some(by), request.port, entropy))
         .await?;
     app.changed();
     Ok((StatusCode::CREATED, Json(route_view(&app.config, &route))))
 }
 
 async fn unpublish_route(
-    caller: Caller,
+    actor: Actor,
     State(app): State<Arc<App>>,
     Path((id, route)): Path<(WorkspaceId, RouteId)>,
 ) -> Result<StatusCode, ApiError> {
-    owned_workspace(&app, &caller, id, Action::PublishRoute).await?;
+    workspace_for(&app, &actor, id, Action::PublishRoute).await?;
     let removed = app
         .db
         .call(move |tx| db::delete_route(tx, id, route))
@@ -1077,7 +1377,7 @@ async fn put_secret(
             db::add_activity(
                 tx,
                 None,
-                Some(owner),
+                Some(db::By::person(owner)),
                 "secret-updated",
                 sealed.name.as_str(),
                 now(),

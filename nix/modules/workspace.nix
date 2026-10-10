@@ -172,9 +172,17 @@ in
         linger = true;
       };
 
+      # Where `iglu` reaches the control plane from: the socket hostd's Incus
+      # runtime puts in every instance (iglu-domain's INSTANCE_CHANNEL). The
+      # guest tools pass it to columns too; this is for every other login.
+      environment.variables.IGLU_SOCKET = "/var/lib/iglu-api.sock";
+
       environment.systemPackages = [
         guest
         self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
+        # `iglu` acts as the workspace from inside it, through its channel:
+        # agents use it to open, read and type into columns.
+        self.packages.${pkgs.stdenv.hostPlatform.system}.iglu
         pkgs.git
       ];
 
