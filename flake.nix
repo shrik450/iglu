@@ -20,7 +20,14 @@
       packages = forSystems systems (
         pkgs:
         let
-          all = import ./nix/packages.nix { inherit (pkgs) lib rustPlatform buildNpmPackage zmx; };
+          all = import ./nix/packages.nix {
+            inherit (pkgs)
+              lib
+              rustPlatform
+              buildNpmPackage
+              zmx
+              ;
+          };
         in
         # Off Linux, only the CLI, and zmx for the local runtime.
         if pkgs.stdenv.hostPlatform.isLinux then all else { inherit (all) iglu zmx; }
