@@ -33,6 +33,7 @@ import {
 } from "../actions.ts";
 import { api, failure } from "../api/client.ts";
 import { FieldError, type Form, FormError, InputError, invalid, textOf, useForm, useGrab } from "../components/forms.tsx";
+import { Browser } from "../components/Browser.tsx";
 import { CopyLink, ONLY_YOU } from "../components/CopyLink.tsx";
 import { Previews } from "../components/Previews.tsx";
 import {
@@ -436,6 +437,8 @@ function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
   // What's opening: the menu stays, says so, and takes no second click until
   // the column is there (which puts the menu away) or iglu refuses it.
   const [opening, setOpening] = useState<string | null>(null);
+  // A workspace has one browser; asking for it again goes to it.
+  const browser = columnsOf(ws).find((c) => c.kind.kind === "browser");
   const add = (label: string, kind: ColumnKind) => {
     setOpening(label);
     void addColumn(ws, kind).finally(() => setOpening(null));
@@ -479,6 +482,15 @@ function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
       <button type="button" disabled={opening !== null} onClick={() => setCommand(true)}>
         Server…
       </button>
+      {browser ? (
+        <button type="button" disabled={opening !== null} onClick={() => (settle(ws, "add-column"), focusColumn(ws, browser.name))}>
+          Browser <span class="about">(open)</span>
+        </button>
+      ) : ws.browser ? (
+        <button type="button" disabled={opening !== null} onClick={() => add("Browser", { kind: "browser" })}>
+          {opening === "Browser" ? "Opening the browser…" : "Browser"}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -545,7 +557,9 @@ function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
  * or closing it, puts the search away and gives the column the keyboard. */
 function Finding({ ws, name, title }: { ws: WorkspaceView; name: string; title: string }) {
   const field = useGrab<HTMLInputElement>();
-  const pane = panes.get(`${ws.id}/${name}`);
+  const mounted = panes.get(`${ws.id}/${name}`);
+  // Finding is in a terminal's output; a browser has its own.
+  const pane = mounted instanceof TerminalPane ? mounted : undefined;
   const found = pane?.found.value ?? null;
   // However it's put away, its highlights go with it.
   useEffect(() => () => pane?.find(""), [pane]);
@@ -817,7 +831,11 @@ function ColumnBody(props: { ws: WorkspaceView; column: Shown; on: boolean; onSt
       );
     case "open":
     case "adopted":
-      return <Pane ws={ws} name={column.name} title={titleOf(column)} on={props.on} onStatus={props.onStatus} />;
+      return column.kind.kind === "browser" ? (
+        <Browser ws={ws} name={column.name} title={titleOf(column)} on={props.on} />
+      ) : (
+        <Pane ws={ws} name={column.name} title={titleOf(column)} on={props.on} onStatus={props.onStatus} />
+      );
     default:
       return unreachable(column.state);
   }

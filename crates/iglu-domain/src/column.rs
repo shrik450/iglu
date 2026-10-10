@@ -10,6 +10,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
+use crate::agent::{self, AgentError, AgentSpec, Prompt};
 use crate::label::AgentName;
 use crate::parse::{is_printable, text_type};
 use crate::terminal::SessionName;
@@ -215,6 +216,9 @@ pub enum ColumnKind {
     Agent { agent: AgentName },
     /// A long-running command, such as a dev server.
     Server { command: Argv },
+    /// A web browser in the workspace, shown in the console, which agents
+    /// in the workspace can drive too. A workspace has at most one.
+    Browser,
 }
 
 impl ColumnKind {
@@ -225,8 +229,47 @@ impl ColumnKind {
             Self::Shell => "shell",
             Self::Agent { agent } => agent.as_str(),
             Self::Server { .. } => "server",
+            Self::Browser => "browser",
         }
     }
+}
+
+/// Where a workspace's browser takes Chrome's debugging protocol (CDP), on the
+/// workspace's own loopback: where the console's view of it, and agents,
+/// reach it.
+pub const BROWSER_DEBUG_PORT: u16 = 9222;
+
+/// Why the browser's port can't be published as a preview.
+pub const BROWSER_PORT_PRIVATE: &str = "can't be 9222: that's the workspace browser's DevTools port, and a preview of it would let anyone with the link drive the browser";
+
+/// What a column's session runs; `None` is the login shell.
+///
+/// # Errors
+///
+/// When an agent column's agent isn't the environment's, or can't take the
+/// prompt.
+pub fn command(
+    kind: &ColumnKind,
+    agents: &[AgentSpec],
+    prompt: Option<&Prompt>,
+) -> Result<Option<Argv>, AgentError> {
+    match kind {
+        ColumnKind::Shell => Ok(None),
+        ColumnKind::Server { command } => Ok(Some(command.clone())),
+        ColumnKind::Browser => Ok(Some(browser_command())),
+        ColumnKind::Agent { agent } => agent::find(agents, agent)
+            .and_then(|found| agent::command(found, prompt))
+            .map(Some),
+    }
+}
+
+/// The guest tools start the browser, where they know the user's home.
+fn browser_command() -> Argv {
+    let args: Vec<Arg> = ["iglu-guest", "browser"]
+        .into_iter()
+        .map(|arg| arg.parse().expect("a constant argument is valid"))
+        .collect();
+    Argv::try_from(args).expect("a constant command is valid")
 }
 
 /// A column as the person set it up.

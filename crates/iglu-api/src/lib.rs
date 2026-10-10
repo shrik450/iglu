@@ -5,6 +5,8 @@
 //! The console gets TypeScript declarations generated from them: with the
 //! `ts` feature, the tests write one file per type (`just api-types`).
 
+pub mod browser;
+
 use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{AttentionState, Seen, Summary, ThreadKey};
 use iglu_domain::auth::{DisplayName, Email, Permission};
@@ -72,6 +74,8 @@ pub struct WorkspaceView {
     pub columns: Vec<ColumnSpec>,
     /// The agents its image can run, for agent columns.
     pub agents: Vec<AgentName>,
+    /// Whether its image has a browser, for a browser column.
+    pub browser: bool,
     pub routes: Vec<RouteView>,
     /// What it may do from inside, through the `iglu` command, to itself
     /// and to its owner's other workspaces.

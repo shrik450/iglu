@@ -96,42 +96,62 @@
         }
       );
 
-      devShells = forSystems systems (pkgs: {
-        default = pkgs.mkShell {
-          packages = with pkgs; [
-            cargo
-            rustc
-            clippy
-            rustfmt
-            rust-analyzer
-            nodejs
-            sqlite
-            just
-            nixfmt
-            actionlint
-            shellcheck
-            # The local runtime runs workspaces with these.
-            self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
-            git
-            netcat
-            lsof
-            # The dev stack's clients. The Docker daemon is yours to run.
-            docker-client
-            openssl
-            # Seeding, touring and checking the console in real browsers;
-            # see DEVELOPMENT.md.
-            (python3.withPackages (ps: [
-              ps.playwright
-              ps.pillow
-            ]))
-          ];
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+      devShells = forSystems systems (
+        pkgs:
+        let
           # Chromium and WebKit, at the version the Python package drives.
-          PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers.override { withFirefox = false; };
-          # NixOS has none of the paths Playwright checks for; empty elsewhere.
-          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "true";
-        };
-      });
+          playwrightBrowsers = pkgs.playwright-driver.browsers.override { withFirefox = false; };
+        in
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              cargo
+              rustc
+              clippy
+              rustfmt
+              rust-analyzer
+              nodejs
+              sqlite
+              just
+              nixfmt
+              actionlint
+              shellcheck
+              # The local runtime runs workspaces with these.
+              self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
+              git
+              netcat
+              lsof
+              # Local browser columns run `chromium`: nixpkgs' on Linux, and on
+              # a Mac the Chrome for Testing Playwright already brings. A local
+              # workspace has a home of its own, without the account's
+              # Keychain, and Chrome there waits on it forever to keep cookies.
+              (
+                if stdenv.hostPlatform.isDarwin then
+                  writeShellScriptBin "chromium" ''
+                    for app in ${playwrightBrowsers}/chromium-*/chrome-mac*/"Google Chrome for Testing.app"; do
+                      exec "$app/Contents/MacOS/Google Chrome for Testing" --use-mock-keychain "$@"
+                    done
+                  ''
+                else
+                  chromium
+              )
+              # The dev stack's clients. The Docker daemon is yours to run.
+              docker-client
+              openssl
+              # Seeding, touring and checking the console in real browsers;
+              # see DEVELOPMENT.md.
+              (python3.withPackages (ps: [
+                ps.playwright
+                ps.pillow
+              ]))
+            ];
+            RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+            PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsers;
+            # NixOS has none of the paths Playwright checks for; empty elsewhere.
+            PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "true";
+          };
+        }
+      );
 
       formatter = forSystems systems (pkgs: pkgs.nixfmt-tree);
     };

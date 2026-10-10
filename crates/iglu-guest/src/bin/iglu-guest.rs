@@ -23,6 +23,7 @@ const USAGE: &str = "usage:
   iglu-guest output <session> --lines <n>   (its last lines, as JSON)
   iglu-guest input <session>      (types what's on stdin into it)
   iglu-guest keep <file-name>     (keeps a pasted file from stdin; prints its path)
+  iglu-guest browser              (runs the workspace's browser, for a browser column)
   iglu-guest git-credential <get|store|erase>
   iglu-guest interface             (the version of the interface hosts use)";
 
@@ -36,6 +37,32 @@ fn flag(args: &[String], name: &str) -> Option<String> {
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1))
         .cloned()
+}
+
+fn provision_spec(rest: &[String]) -> Result<provision::Spec, String> {
+    let repo: RepoUrl = flag(rest, "--repo")
+        .ok_or("--repo is required")?
+        .parse()
+        .map_err(|e| format!("{e}"))?;
+    let branch: BranchName = flag(rest, "--branch")
+        .ok_or("--branch is required")?
+        .parse()
+        .map_err(|e| format!("{e}"))?;
+    let base = flag(rest, "--base")
+        .map(|b| b.parse::<BranchName>())
+        .transpose()
+        .map_err(|e| format!("{e}"))?;
+    Ok(provision::Spec { repo, branch, base })
+}
+
+fn print_json(value: &impl serde::Serialize) -> ExitCode {
+    match serde_json::to_string(value) {
+        Ok(json) => {
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(error),
+    }
 }
 
 fn main() -> ExitCode {
@@ -52,13 +79,7 @@ fn main() -> ExitCode {
         return git_credential(rest);
     }
     if command == "listeners" {
-        return match serde_json::to_string(&listeners::scan(std::path::Path::new("/proc"))) {
-            Ok(json) => {
-                println!("{json}");
-                ExitCode::SUCCESS
-            }
-            Err(error) => fail(error),
-        };
+        return print_json(&listeners::scan(std::path::Path::new("/proc")));
     }
     let dirs = match Dirs::from_env() {
         Ok(dirs) => dirs,
@@ -79,46 +100,17 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => fail(error),
         },
-        "provision" => {
-            let parsed = (|| -> Result<provision::Spec, String> {
-                let repo: RepoUrl = flag(rest, "--repo")
-                    .ok_or("--repo is required")?
-                    .parse()
-                    .map_err(|e| format!("{e}"))?;
-                let branch: BranchName = flag(rest, "--branch")
-                    .ok_or("--branch is required")?
-                    .parse()
-                    .map_err(|e| format!("{e}"))?;
-                let base = flag(rest, "--base")
-                    .map(|b| b.parse::<BranchName>())
-                    .transpose()
-                    .map_err(|e| format!("{e}"))?;
-                Ok(provision::Spec { repo, branch, base })
-            })();
-            match parsed {
-                Ok(spec) => match provision::run(&dirs, &spec) {
-                    Ok(()) => ExitCode::SUCCESS,
-                    Err(error) => fail(error),
-                },
-                Err(error) => fail(error),
-            }
-        }
-        "open" => open(&dirs, rest),
-        "git-state" => match serde_json::to_string(&git::state(&dirs)) {
-            Ok(json) => {
-                println!("{json}");
-                ExitCode::SUCCESS
-            }
-            Err(error) => fail(error),
-        },
-        "sessions" => match session::list(&dirs) {
-            Ok(list) => match serde_json::to_string(&list) {
-                Ok(json) => {
-                    println!("{json}");
-                    ExitCode::SUCCESS
-                }
+        "provision" => match provision_spec(rest) {
+            Ok(spec) => match provision::run(&dirs, &spec) {
+                Ok(()) => ExitCode::SUCCESS,
                 Err(error) => fail(error),
             },
+            Err(error) => fail(error),
+        },
+        "open" => open(&dirs, rest),
+        "git-state" => print_json(&git::state(&dirs)),
+        "sessions" => match session::list(&dirs) {
+            Ok(list) => print_json(&list),
             Err(error) => fail(error),
         },
         "attach" => match rest.first().map(|s| s.parse::<SessionName>()) {
@@ -137,6 +129,7 @@ fn main() -> ExitCode {
         "output" => output(&dirs, rest),
         "input" => input(&dirs, rest),
         "keep" => keep(&dirs, rest),
+        "browser" => fail(iglu_guest::browser::run(&dirs)),
         _ => fail(USAGE),
     }
 }

@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::ParseError;
 use crate::agent::{self, AgentError, AgentSpec, Prompt};
 use crate::column::{
-    ColumnKind, ColumnSpec, ColumnTemplate, ColumnWidth, free_name, name_templates,
+    BROWSER_DEBUG_PORT, BROWSER_PORT_PRIVATE, ColumnKind, ColumnSpec, ColumnTemplate, ColumnWidth,
+    free_name, name_templates,
 };
 use crate::label::{AgentName, ProjectName, WorkspaceName};
 use crate::port::GuestPort;
@@ -129,6 +130,9 @@ impl TryFrom<Vec<GuestPort>> for PreviewPorts {
                 "may have at most 16 ports",
             ));
         }
+        if ports.iter().any(|p| p.get() == BROWSER_DEBUG_PORT) {
+            return Err(ParseError::new("preview ports", BROWSER_PORT_PRIVATE));
+        }
         Ok(Self(ports))
     }
 }
@@ -190,7 +194,10 @@ pub fn start(
         ColumnKind::Agent { agent: has } if agent.is_none_or(|wanted| wanted == has) => {
             Some((column.name.clone(), has.clone()))
         }
-        ColumnKind::Agent { .. } | ColumnKind::Shell | ColumnKind::Server { .. } => None,
+        ColumnKind::Agent { .. }
+        | ColumnKind::Shell
+        | ColumnKind::Server { .. }
+        | ColumnKind::Browser => None,
     });
     let (name, chosen) = if let Some(found) = existing {
         found
@@ -424,6 +431,8 @@ mod tests {
             PreviewPorts::try_from(vec![port(5173), port(3000), port(5173)]).expect("ports");
         assert_eq!(ports.ports(), [port(3000), port(5173)]);
         assert!(PreviewPorts::try_from((1..=17).map(port).collect::<Vec<_>>()).is_err());
+        // Anyone with the link would drive the workspace's browser.
+        assert!(PreviewPorts::try_from(vec![port(3000), port(BROWSER_DEBUG_PORT)]).is_err());
     }
 
     #[test]

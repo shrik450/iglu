@@ -36,6 +36,9 @@ struct ImageManifest {
     /// fails the build with a message instead of reaching a workspace.
     #[serde(default)]
     agents: Vec<AgentSpec>,
+    /// Whether the environment has the browser, `iglu.browser.enable`.
+    #[serde(default)]
+    browser: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +84,7 @@ pub async fn build(
         arch: manifest.arch,
         user: manifest.user,
         agents: manifest.agents,
+        browser: manifest.browser,
         store_path: store_path.display().to_string(),
     })
 }

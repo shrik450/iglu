@@ -79,6 +79,8 @@ function kindText(kind: ColumnKind): string {
       return kind.agent;
     case "server":
       return kind.command.join(" ");
+    case "browser":
+      return "Browser";
     default:
       return unreachable(kind);
   }

@@ -67,20 +67,29 @@ export function pageColors(): Colors {
 
 /** Recolours every terminal after the look or the theme changes. */
 export function restyleTerminals(): void {
-  for (const pane of panes.values()) pane.restyle();
+  for (const pane of panes.values()) if (pane instanceof TerminalPane) pane.restyle();
 }
 
 /** Ctrl held from the phone's key row: what's typed next goes with it. */
 export const ctrlHeld = signal(false);
 
+/** What the console does with a column's pane: a terminal, or the browser. */
+export interface Pane {
+  focus(): void;
+  /** Sends `text` as if typed. */
+  type(text: string): void;
+  /** Presses `key`, as a KeyboardEvent names it, for keys a phone's keyboard doesn't have. */
+  press(key: string): void;
+}
+
 /** Mounted panes by `workspace/session`, so keyboard actions can focus one. */
-export const panes = new Map<string, TerminalPane>();
+export const panes = new Map<string, Pane>();
 
 /** What each mounted pane's program calls itself (OSC 0 or 2), by
  * `workspace/session`. zmx sends it again to each new attach. */
 export const titles = signal<ReadonlyMap<string, string>>(new Map());
 
-function setTitle(key: string, title: string): void {
+export function setTitle(key: string, title: string): void {
   if ((titles.peek().get(key) ?? "") === title) return;
   const next = new Map(titles.peek());
   if (title) next.set(key, title);
@@ -95,7 +104,7 @@ export function activeScreen(): string {
   return lastFocused?.screen() ?? "";
 }
 
-export class TerminalPane {
+export class TerminalPane implements Pane {
   /** What finding in this terminal's output has found, while a search is on. */
   readonly found = signal<SearchState | null>(null);
   private readonly term: WTerm;

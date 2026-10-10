@@ -156,6 +156,11 @@ fn fingerprint(source: &EnvSource) -> ImageFingerprint {
 /// Reads a small regular file the guest wrote, as Incus's guest reads do:
 /// without following a final symlink or blocking on a FIFO. Anything else
 /// reads as absent.
+/// Whether `program` is on `path`, the `PATH` workspaces get.
+fn on_path(path: Option<&OsString>, program: &str) -> bool {
+    path.is_some_and(|path| std::env::split_paths(path).any(|dir| dir.join(program).is_file()))
+}
+
 fn read_guest_file(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
     use rustix::fs::{Mode, OFlags};
 
@@ -613,6 +618,8 @@ impl Runtime for LocalRuntime {
             arch: iglu_hostd::host_arch().map_err(|e| BuildFailure(e.to_string()))?,
             user: self.user.clone(),
             agents: self.agents.clone(),
+            // Local workspaces use the machine's own; the dev shell has one.
+            browser: on_path(self.inherited.get("PATH"), "chromium"),
             // Nothing was built.
             store_path: String::new(),
         })

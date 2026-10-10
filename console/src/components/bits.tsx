@@ -50,6 +50,7 @@ const ICON = {
   search: "M11.6 7A4.6 4.6 0 1 1 2.4 7a4.6 4.6 0 0 1 9.2 0Zm-1.2 3.4 3.4 3.4",
   up: "m3.5 10 4.5-4.5 4.5 4.5",
   down: "m3.5 6 4.5 4.5L12.5 6",
+  reload: "M12.8 9.2A5 5 0 1 1 11.5 4.4M12 2v3h-3",
 } as const;
 
 export function Icon({ name, size = 14 }: { name: keyof typeof ICON; size?: number }) {

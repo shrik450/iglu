@@ -39,6 +39,7 @@ let
             inherit name;
             inherit (agent) command prompt attention;
           }) cfg.agents;
+          browser = cfg.browser.enable;
         };
       }
       ''
@@ -127,6 +128,16 @@ in
       description = ''
         The agents this environment's workspaces can run in a column. Their
         programs must be installed in the environment.
+      '';
+    };
+
+    browser.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Install Chromium and fonts for its pages, so a workspace can open a
+        browser column: a browser the console shows and agents drive over
+        the DevTools protocol at `$IGLU_BROWSER` (http://127.0.0.1:9222).
       '';
     };
 
@@ -239,6 +250,17 @@ in
 
     # Home Manager as a NixOS module activates the user's files from a
     # system service. The user's manager, and so every terminal, waits for it.
+    (lib.mkIf cfg.browser.enable {
+      environment.systemPackages = [ pkgs.chromium ];
+      # The port iglu-guest's browser listens on (iglu-domain's
+      # BROWSER_DEBUG_PORT), for Playwright, chrome-devtools-mcp and the like.
+      environment.variables.IGLU_BROWSER = "http://127.0.0.1:9222";
+      fonts.packages = [
+        pkgs.noto-fonts
+        pkgs.noto-fonts-color-emoji
+      ];
+    })
+
     (lib.mkIf (options ? home-manager && config.home-manager.users ? ${cfg.user}) {
       systemd.services."user@${uid}" = {
         after = [ "home-manager-${cfg.user}.service" ];

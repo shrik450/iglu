@@ -580,6 +580,72 @@ def pastes_files(page: Page, name: str) -> Any:
     return {"screen": shown}
 
 
+# A page to drive without a server: a field that names the page after what's
+# typed in it, and a button that asks, each where a click can find it.
+PAGE = (
+    "data:text/html,<title>Blank</title><style>*{margin:0}</style>"
+    "<input style='position:fixed;left:0;top:0;width:300px;height:60px' "
+    "onkeydown=\"if(event.key==='Enter')document.title='typed '+this.value\">"
+    "<button style='position:fixed;left:0;top:100px;width:300px;height:60px' "
+    "onclick=\"document.title=confirm('Sure?')?'confirmed':'refused'\">Ask</button>"
+    "<a href='about:blank' target='_blank' style='position:fixed;left:0;top:200px;width:300px;height:60px'>Open</a>"
+)
+
+
+def browses(page: Page, name: str) -> Any:
+    """A browser column shows the workspace's browser: what's typed and
+    clicked reaches the page, and a dialog it opens is answered from the
+    console. Agents in the workspace drive the same browser."""
+    open_workspace(page, name)
+    page.get_by_role("button", name="Add a column").click()
+    page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser").click()
+    browser = column(page, "browser")
+    browser.locator(".browser-wait").wait_for(state="detached", timeout=90_000)
+    address = browser.locator(".browser-address")
+    address.fill(PAGE)
+    address.press("Enter")
+    title = browser.locator(".col-h .ct")
+    expect(title).to_have_text("Blank", timeout=30_000)
+    screen = browser.locator("canvas")
+    screen.click(position={"x": 20, "y": 20})
+    page.keyboard.type("hello")
+    page.keyboard.press("Enter")
+    expect(title).to_have_text("typed hello", timeout=10_000)
+    screen.click(position={"x": 20, "y": 120})
+    asking = browser.get_by_role("alertdialog")
+    expect(asking).to_contain_text("Sure?", timeout=10_000)
+    asking.get_by_role("button", name="OK").click()
+    expect(title).to_have_text("confirmed", timeout=10_000)
+    # A link to a new tab opens it in front; closing it goes back.
+    screen.click(position={"x": 20, "y": 220})
+    tabs = browser.get_by_role("tab")
+    expect(tabs).to_have_count(2, timeout=10_000)
+    expect(title).to_have_text("New tab")
+    browser.get_by_role("button", name="Close New tab").click()
+    expect(title).to_have_text("confirmed", timeout=10_000)
+    # A right click reaches the page without a menu the screen can't show,
+    # which would hold the browser; copying and pasting go through this
+    # clipboard, not the browser's own.
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
+    screen.click(position={"x": 20, "y": 20}, button="right")
+    page.keyboard.press("Control+a")
+    page.keyboard.press("Control+c")
+    deadline = time.monotonic() + 10
+    while page.evaluate("navigator.clipboard.readText()") != "hello":
+        assert time.monotonic() < deadline, page.evaluate("navigator.clipboard.readText()")
+        time.sleep(0.2)
+    page.evaluate("navigator.clipboard.writeText('pasted')")
+    page.keyboard.press("Control+a")
+    page.keyboard.press("Control+v")
+    page.keyboard.press("Enter")
+    expect(title).to_have_text("typed pasted", timeout=10_000)
+    # A second browser would want the same port: asking again goes to this one.
+    page.get_by_role("button", name="Add a column").click()
+    expect(page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser")).to_contain_text("open")
+    page.keyboard.press("Escape")
+    return {"title": title.inner_text()}
+
+
 # A query's answer, read back raw from the terminal, then printed quoted on
 # one line that the command as typed can't be mistaken for.
 ANSWER = (
@@ -1362,6 +1428,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "grants-access": grants_access,
     "names-itself": names_itself,
     "pastes-files": pastes_files,
+    "browses": browses,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,

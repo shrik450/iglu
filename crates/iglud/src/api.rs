@@ -12,13 +12,14 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
 use futures_util::Stream;
+use iglu_api::browser::BrowserSize;
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
     CreateWorkspace, EnvironmentView, Identity, KeptFile, LabelColumn, ListenerView, LiveView, Me,
     PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace, RouteView, SecretView,
     SendInput, SetDesiredState, Snapshot, WorkspaceView,
 };
-use iglu_domain::agent::{self, Prompt};
+use iglu_domain::agent::Prompt;
 use iglu_domain::auth::{Action, Grant, Permission};
 use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
 use iglu_domain::env::EnvName;
@@ -88,6 +89,7 @@ pub fn router() -> Router<Arc<App>> {
             "/v1/workspaces/{id}/columns/{session}/attach",
             get(attach_column),
         )
+        .route("/v1/workspaces/{id}/browser", get(open_browser))
         .route(
             "/v1/workspaces/{id}/columns/{session}/output",
             get(column_output),
@@ -783,24 +785,32 @@ async fn session_for(
     spec: &ColumnSpec,
     prompt: Option<&Prompt>,
 ) -> Result<SessionSpec, ApiError> {
-    let command = match &spec.kind {
-        ColumnKind::Shell => None,
-        ColumnKind::Server { command } => Some(command.clone()),
-        ColumnKind::Agent { agent } => {
-            let revision = ws.env_revision;
-            let agents = app
+    let revision = ws.env_revision;
+    let agents = match &spec.kind {
+        ColumnKind::Agent { .. } => app
+            .db
+            .call(move |tx| db::revision_image(tx, revision))
+            .await?
+            .map(|image| image.agents)
+            .unwrap_or_default(),
+        ColumnKind::Browser => {
+            let image = app
                 .db
                 .call(move |tx| db::revision_image(tx, revision))
-                .await?
-                .map(|image| image.agents)
-                .unwrap_or_default();
-            Some(
-                agent::find(&agents, agent)
-                    .and_then(|found| agent::command(found, prompt))
-                    .map_err(|e| ApiError::Conflict(e.to_string().into()))?,
-            )
+                .await?;
+            if !image.is_some_and(|image| image.browser) {
+                return Err(ApiError::Conflict(
+                    "this workspace's image has no browser: rebuild its environment with \
+                     iglu.browser.enable, and recreate the workspace"
+                        .into(),
+                ));
+            }
+            Vec::new()
         }
+        ColumnKind::Shell | ColumnKind::Server { .. } => Vec::new(),
     };
+    let command = column::command(&spec.kind, &agents, prompt)
+        .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
     Ok(SessionSpec {
         name: spec.name.clone(),
         command,
@@ -823,6 +833,18 @@ async fn add_column(
     let host = host_for(&app, &ws)?;
     let _editing = app.column_edits.lock(id).await;
     let columns = app.db.call(move |tx| db::columns(tx, id)).await?;
+    // There's one debugging port for agents to find the browser on.
+    if request.kind == ColumnKind::Browser
+        && let Some(browser) = columns.iter().find(|c| c.spec.kind == ColumnKind::Browser)
+    {
+        return Err(ApiError::Conflict(
+            format!(
+                "this workspace has a browser already: {}",
+                browser.spec.name
+            )
+            .into(),
+        ));
+    }
     let open = host.terminals(id).await.map_err(host_error)?;
     let taken: Vec<SessionName> = columns
         .iter()
@@ -1161,6 +1183,22 @@ async fn attach_column(
     }))
 }
 
+/// Shows the workspace's browser: see `crate::browser`.
+async fn open_browser(
+    caller: Caller,
+    State(app): State<Arc<App>>,
+    Path(id): Path<WorkspaceId>,
+    Query(size): Query<BrowserSize>,
+    Upgrade(upgrade): Upgrade,
+) -> Result<Response, ApiError> {
+    let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    let host = host_for(&app, &ws)?;
+    Ok(
+        upgrade
+            .on_upgrade(move |socket| crate::browser::relay(app, caller, ws, host, size, socket)),
+    )
+}
+
 /// What's going on inside a running workspace now: what's listening, each
 /// with its preview if published, and where the checkout stands.
 async fn live(
@@ -1179,6 +1217,8 @@ async fn live(
     Ok(Json(LiveView {
         listeners: listeners
             .into_iter()
+            // iglu's own, for the browser column; it can't be published.
+            .filter(|listener| listener.port.get() != column::BROWSER_DEBUG_PORT)
             .map(|listener| ListenerView {
                 route: routes
                     .iter()
@@ -1217,6 +1257,12 @@ async fn publish_route(
     Path(id): Path<WorkspaceId>,
     Body(request): Body<PublishPort>,
 ) -> Result<(StatusCode, Json<RouteView>), ApiError> {
+    if request.port.get() == column::BROWSER_DEBUG_PORT {
+        return Err(ApiError::BadRequest(Problem::at(
+            "port",
+            format!("The port {}", column::BROWSER_PORT_PRIVATE),
+        )));
+    }
     let ws = workspace_for(&app, &actor, id, Action::PublishRoute).await?;
     let entropy = crypto::random_u64()?;
     let owner = ws.owner;

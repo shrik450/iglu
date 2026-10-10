@@ -355,6 +355,42 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 /* Only the terminal with the keyboard shows a block; the others keep a still underline,
    so it's plain where typing goes. */
 .term-host > .wterm:not(.focused, :active) .term-cursor { outline: none; box-shadow: inset 0 -2px 0 var(--term-app-cursor, var(--term-cursor)); }
+/* A browser column: its address bar and tabs in the find row's style, over the shown tab.
+   The screen is drawn from the top left at the size the page lays out at; while the column
+   changes size, the last image is shown whole until the next arrives. */
+.browser { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.browser-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--term-line); color: var(--term-dim); }
+.browser-bar button, .browser-tab button { border: 0; background: transparent; color: var(--term-dim); padding: 5px 6px; border-radius: 4px; display: inline-grid; place-items: center; }
+.browser-bar button:hover, .browser-tab button:hover { background: var(--term-line); color: var(--term-ink); }
+.browser-bar button:disabled, .browser .browser-address:disabled { opacity: .45; }
+.browser-bar button:disabled:hover { background: transparent; color: var(--term-dim); }
+.browser-bar button.loading .i { animation: browser-spin 1s linear infinite; }
+@keyframes browser-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .browser-bar button:disabled, .browser .browser-address:disabled { opacity: .45; }
+.browser-bar button:disabled:hover { background: transparent; color: var(--term-dim); }
+.browser-bar button.loading .i { animation: none; } .browser-bar button.loading { color: var(--accent); } }
+.browser-go { flex: 1; min-width: 0; display: flex; margin: 0 4px; }
+.browser .browser-address { flex: 1; min-width: 0; padding: 3px 8px; font: 12px/1.3 var(--mono); background: var(--term-bg); color: var(--term-ink); border: 1px solid var(--term-line); border-radius: 5px; }
+.browser .browser-address:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.browser .browser-address::placeholder { color: var(--term-dim); }
+.browser-tabs { display: flex; gap: 2px; padding: 3px 6px; border-bottom: 1px solid var(--term-line); overflow-x: auto; scrollbar-width: none; }
+.browser-tab { display: flex; align-items: center; flex: 0 1 180px; min-width: 70px; border-radius: 5px; }
+.browser-tab.on { background: var(--term-line); }
+.browser-tab button[role="tab"] { flex: 1; min-width: 0; display: block; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/1.2 var(--ui); padding: 4px 6px; }
+.browser-tab.on button[role="tab"] { color: var(--term-ink); }
+.browser-tab .browser-tab-x { flex: none; padding: 4px; }
+.browser-dialog { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--term-line); background: color-mix(in srgb, var(--accent) 10%, var(--term-bg)); color: var(--term-ink); font-size: 13px; }
+.browser-dialog form { display: contents; }
+.browser-dialog p { margin: 0; flex: 1 1 200px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.browser-dialog input { flex: 1 1 160px; min-width: 0; padding: 4px 8px; }
+.browser-dialog-do { display: flex; gap: 6px; margin-left: auto; }
+.browser-stage { position: relative; flex: 1; min-height: 0; }
+.browser-screen { position: absolute; inset: 0; overflow: hidden; background: var(--term-bg); }
+.browser-screen canvas { display: block; width: 100%; height: 100%; object-fit: contain; object-position: left top; touch-action: none; }
+.browser-screen:has(.browser-input:focus-visible) { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
+/* Holds the keyboard for the page: an input method composes into it, a paste lands in it. */
+.browser-input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; }
+.browser-wait { position: absolute; inset: 0; margin: 0; display: grid; place-items: center; padding: 20px; text-align: center; color: var(--term-dim); font-size: 13px; pointer-events: none; }
 .col-ended { flex: 1; display: grid; place-items: center; align-content: center; gap: 10px; color: var(--term-dim); font-size: 13px; }
 .cols-note { display: grid; place-items: center; align-content: center; gap: 12px; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; border: 1px dashed var(--line); border-radius: 8px; position: relative; overflow: hidden; }
 .cols-note.problem { justify-items: center; max-width: 100%; }

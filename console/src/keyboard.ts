@@ -121,7 +121,8 @@ export function perform(action: Action): void {
 
 function focusOf(target: EventTarget | null): Focus {
   if (!(target instanceof Element)) return "page";
-  if (target.closest(".term-host")) return "terminal";
+  // The browser's screen takes keys as a terminal does: the console's first.
+  if (target.closest(".term-host, .browser-screen")) return "terminal";
   if (target.closest("input, textarea, select, [contenteditable='true']")) return "field";
   if (target.closest("button, a[href], summary, [role='button'], [role='option'], dialog")) return "control";
   return "page";

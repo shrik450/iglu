@@ -5,4 +5,4 @@ import type { Argv } from "./Argv";
 /**
  * What a column runs.
  */
-export type ColumnKind = { "kind": "shell" } | { "kind": "agent", agent: AgentName, } | { "kind": "server", command: Argv, };
+export type ColumnKind = { "kind": "shell" } | { "kind": "agent", agent: AgentName, } | { "kind": "server", command: Argv, } | { "kind": "browser" };

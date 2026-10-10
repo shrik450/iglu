@@ -46,7 +46,9 @@ pub fn workspace_view(
     let routes = db::routes(tx, ws.id)?;
     let columns = db::columns(tx, ws.id)?;
     let access = access(&db::grants(tx, ws.id)?);
-    let agents = db::revision_image(tx, ws.env_revision)?
+    let image = db::revision_image(tx, ws.env_revision)?;
+    let browser = image.as_ref().is_some_and(|image| image.browser);
+    let agents = image
         .map(|image| image.agents.into_iter().map(|agent| agent.name).collect())
         .unwrap_or_default();
     let environment = db::environment_name_of_revision(tx, ws.env_revision)?.unwrap_or_else(|| {
@@ -99,6 +101,7 @@ pub fn workspace_view(
         },
         columns: columns.into_iter().map(|column| column.spec).collect(),
         agents,
+        browser,
         routes: routes
             .iter()
             .map(|route| route_view(config, route))

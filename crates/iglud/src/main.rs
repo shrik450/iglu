@@ -4,6 +4,7 @@
 mod api;
 mod app;
 mod backup;
+mod browser;
 mod config;
 mod crypto;
 mod db;

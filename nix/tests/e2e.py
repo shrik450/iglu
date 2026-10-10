@@ -295,6 +295,16 @@ try:
         browser("questions-end", "demo")
         assert second["columns"] == ["shell", "shell-2"], second
 
+    with subtest("a browser column shows the workspace's browser, which its agents drive too"):
+        browser("browses", "demo")
+        # Agents find the same browser, on the same tab, at $IGLU_BROWSER.
+        tabs = json.loads(guest("curl -sf $IGLU_BROWSER/json/list"))
+        assert any(t["type"] == "page" and t["title"] == "typed pasted" for t in tabs), tabs
+        # Its port is iglu's own, and never published.
+        refused = client.fail(f"{IGLU} port demo 9222 2>&1")
+        assert "DevTools" in refused, refused
+        client.succeed(f"{IGLU} column close browser -w demo")
+
     token = json.loads(client.succeed("cat /root/.config/iglu/credentials.json"))["token"]
     api = f"curl -sS --fail-with-body -H 'Authorization: Bearer {token}'"
 

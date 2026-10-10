@@ -5,9 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use iglu_domain::agent;
 use iglu_domain::capacity::Room;
-use iglu_domain::column::ColumnKind;
+use iglu_domain::column;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::idle;
 use iglu_domain::lifecycle::{
@@ -498,13 +497,7 @@ async fn sessions_for(app: &App, ws: &WorkspaceRecord) -> Result<Vec<SessionSpec
                 .unwrap_or_default();
             let mut sessions = Vec::with_capacity(columns.len());
             for column in columns {
-                let command = match &column.spec.kind {
-                    ColumnKind::Shell => Ok(None),
-                    ColumnKind::Server { command } => Ok(Some(command.clone())),
-                    ColumnKind::Agent { agent } => agent::find(&agents, agent)
-                        .and_then(|spec| agent::command(spec, column.prompt.as_ref()))
-                        .map(Some),
-                };
+                let command = column::command(&column.spec.kind, &agents, column.prompt.as_ref());
                 match command {
                     Ok(command) => sessions.push(SessionSpec {
                         name: column.spec.name,

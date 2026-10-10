@@ -54,7 +54,11 @@ columns: Array<ColumnSpec>,
 /**
  * The agents its image can run, for agent columns.
  */
-agents: Array<AgentName>, routes: Array<RouteView>, 
+agents: Array<AgentName>, 
+/**
+ * Whether its image has a browser, for a browser column.
+ */
+browser: boolean, routes: Array<RouteView>, 
 /**
  * What it may do from inside, through the `iglu` command, to itself
  * and to its owner's other workspaces.

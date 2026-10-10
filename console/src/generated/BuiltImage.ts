@@ -13,6 +13,11 @@ export type BuiltImage = { fingerprint: ImageFingerprint, arch: Arch, user: Gues
  */
 agents: Array<AgentSpec>, 
 /**
+ * Whether it has the browser a browser column runs: images from before
+ * iglu had one don't.
+ */
+browser: boolean, 
+/**
  * The Nix store path the image came from, for provenance.
  */
 store_path: string, };

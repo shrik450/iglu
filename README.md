@@ -234,6 +234,36 @@ token is meant for sharing across machines; copied OAuth login files aren't.
 
 Every command takes `--json`.
 
+### From inside a workspace
+
+`iglu` also runs inside a workspace, where it acts as that workspace through
+the workspace's own channel to iglu, `$IGLU_SOCKET`, with no token to keep.
+Agents use it to open, read and type into the workspace's columns:
+
+```sh
+iglu whoami
+iglu column new --agent claude --prompt "Review the diff"
+iglu column output claude --lines 50
+iglu column send shell "make test" --enter
+```
+
+A workspace reaches another of yours only as far as you allow, in its
+Details in the console or with
+`iglu access set <workspace> --on <other> --allow read_output,send_input`.
+It can't touch secrets, environments or projects.
+
+### The browser
+
+A browser column (Add a column, then Browser) shows a Chromium that runs in
+the workspace, so `localhost:3000` is the workspace's own server. Agents
+drive the same browser over Chrome's debugging protocol at `$IGLU_BROWSER`,
+for example with `npx @playwright/mcp --cdp-endpoint $IGLU_BROWSER`, and you
+watch what they do. A workspace has one browser. It keeps sign-ins in
+`~/.cache/iglu/browser` and starts each time with one blank tab. Copying and
+pasting go through your own clipboard. Popups the page doesn't draw itself,
+such as `<select>` menus and file pickers, and downloads don't show. Turn it
+off with `iglu.browser.enable = false` in your environment.
+
 ## Developing
 
 See [AGENTS.md](AGENTS.md) for the layout, commands, and design rules. In

@@ -312,6 +312,10 @@ pub struct BuiltImage {
     pub user: GuestUser,
     /// The agents the environment declares, which its workspaces can run.
     pub agents: Vec<AgentSpec>,
+    /// Whether it has the browser a browser column runs: images from before
+    /// iglu had one don't.
+    #[serde(default)]
+    pub browser: bool,
     /// The Nix store path the image came from, for provenance.
     pub store_path: String,
 }

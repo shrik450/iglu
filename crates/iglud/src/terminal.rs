@@ -24,7 +24,7 @@ const THAW: Duration = Duration::from_secs(60);
 /// says why, for the console and CLI to show.
 const REFUSED: u16 = 4000;
 
-fn refusal(reason: &str) -> Browser {
+pub fn refusal(reason: &str) -> Browser {
     Browser::Close(Some(CloseFrame {
         code: REFUSED,
         reason: close_reason(reason).into(),
@@ -84,7 +84,7 @@ pub async fn lease_valid(app: &App, caller: &Caller, used: Use) -> bool {
     result.unwrap_or(false)
 }
 
-async fn still_allowed(app: &App, caller: &Caller, ws: &WorkspaceRecord, used: Use) -> bool {
+pub async fn still_allowed(app: &App, caller: &Caller, ws: &WorkspaceRecord, used: Use) -> bool {
     let id = ws.id;
     let live = app
         .db
