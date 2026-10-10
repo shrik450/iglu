@@ -148,18 +148,34 @@ where
     }
 }
 
-/// A request body taken as it is, such as a file, within the route's limit.
-pub struct Raw(pub Bytes);
-
-impl<S> FromRequest<S> for Raw
-where
-    S: Send + Sync,
-{
-    type Rejection = ApiError;
-
-    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        read(request, state).await.map(Self)
+/// Reads a body taken as it is, such as a file, once the request has been
+/// authorized: up to `limit` bytes, within `time`.
+pub async fn read_within(
+    body: axum::body::Body,
+    limit: usize,
+    time: std::time::Duration,
+) -> Result<Bytes, ApiError> {
+    match tokio::time::timeout(time, axum::body::to_bytes(body, limit)).await {
+        Ok(Ok(bytes)) => Ok(bytes),
+        Ok(Err(error)) if is_too_long(&error) => Err(ApiError::TooLarge),
+        Ok(Err(_)) => Err(ApiError::BadRequest(
+            "the request body couldn't be read".into(),
+        )),
+        Err(_) => Err(ApiError::BadRequest(
+            "the request body took too long to arrive".into(),
+        )),
     }
+}
+
+fn is_too_long(error: &axum::Error) -> bool {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(error) = source {
+        if error.is::<http_body_util::LengthLimitError>() {
+            return true;
+        }
+        source = error.source();
+    }
+    false
 }
 
 async fn read<S: Send + Sync>(request: Request, state: &S) -> Result<Bytes, ApiError> {

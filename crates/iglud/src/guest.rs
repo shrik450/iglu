@@ -15,44 +15,34 @@ use axum::Extension;
 use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
 use iglu_domain::id::WorkspaceId;
-use tokio::sync::Semaphore;
 
 use crate::app::{App, FromWorkspace};
 use crate::db;
 use crate::hosts::HostClient;
 
 /// How many connections each host may have asked for at once: one is
-/// handed over while another waits.
+/// handed over while another waits. How many each workspace may have open
+/// is hostd's to limit, before they're handed over.
 const ASKING: usize = 2;
-
-/// How many guest connections each host's workspaces may have open at once.
-const SERVING: usize = 64;
 
 /// Asks every host for its workspaces' connections, for as long as iglud runs.
 pub fn serve(app: &Arc<App>) {
     for host in &app.hosts {
-        let serving = Arc::new(Semaphore::new(SERVING));
         for _ in 0..ASKING {
-            tokio::spawn(ask(app.clone(), host.clone(), serving.clone()));
+            tokio::spawn(ask(app.clone(), host.clone()));
         }
     }
 }
 
-async fn ask(app: Arc<App>, host: Arc<HostClient>, serving: Arc<Semaphore>) {
+async fn ask(app: Arc<App>, host: Arc<HostClient>) {
     let mut backoff = Duration::from_secs(1);
     loop {
-        let Ok(permit) = serving.clone().acquire_owned().await else {
-            return;
-        };
         match host.guest_connection().await {
             Ok(Some((workspace, stream))) => {
                 backoff = Duration::from_secs(1);
                 let app = app.clone();
                 let host = host.clone();
-                tokio::spawn(async move {
-                    answer(app, &host, workspace, stream).await;
-                    drop(permit);
-                });
+                tokio::spawn(async move { answer(app, &host, workspace, stream).await });
             }
             Ok(None) => backoff = Duration::from_secs(1),
             Err(error) => {

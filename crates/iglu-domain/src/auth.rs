@@ -223,7 +223,8 @@ pub enum Action {
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
 pub enum Permission {
-    /// See it, its columns and what they're doing.
+    /// See it, its columns and what they're doing. Every other permission
+    /// on a workspace includes this.
     View,
     ReadOutput,
     SendInput,
@@ -391,10 +392,13 @@ pub fn authorize(actor: Actor<'_>, action: Action, resource: Resource) -> Decisi
             | Action::SendColumnInput => Decision::Allow,
         },
         Actor::Workspace { grants, .. } => {
+            // Any grant on a workspace includes seeing it: whatever may type
+            // into it or stop it can learn what it is anyway.
             let granted = resource.workspace.is_some_and(|workspace| {
-                grants
-                    .iter()
-                    .any(|g| g.workspace == workspace && g.permission.action() == action)
+                grants.iter().any(|g| {
+                    g.workspace == workspace
+                        && (g.permission.action() == action || action == Action::ViewWorkspace)
+                })
             });
             if granted {
                 Decision::Allow
@@ -509,10 +513,15 @@ mod tests {
             authorize(actor, Action::SendColumnInput, workspace(8, 1)),
             Decision::Allow
         );
-        // Not on another workspace, and not another permission.
+        // Not on another workspace, and not another permission; but any
+        // permission on a workspace includes seeing it.
         assert_eq!(
             authorize(actor, Action::SendColumnInput, workspace(7, 1)),
             Decision::Deny(DenyReason::NotGranted)
+        );
+        assert_eq!(
+            authorize(actor, Action::ViewWorkspace, workspace(8, 1)),
+            Decision::Allow
         );
         assert_eq!(
             authorize(actor, Action::ViewWorkspace, workspace(9, 1)),

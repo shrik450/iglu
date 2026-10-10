@@ -235,7 +235,8 @@ enum AccessCommand {
         #[arg(long)]
         on: Option<String>,
         /// Any of `view`, `read_output`, `send_input`, `manage_columns`,
-        /// `publish_routes` and `operate`, separated by commas.
+        /// `publish_routes` and `operate`, separated by commas. Each
+        /// includes `view`.
         #[arg(long, value_delimiter = ',', num_args = 0..)]
         allow: Vec<Permission>,
     },
@@ -727,9 +728,14 @@ async fn access(client: &Client, json_mode: bool, command: AccessCommand) -> any
                 .filter(|g| g.workspace != on)
                 .collect();
             if !allow.is_empty() {
+                // Every permission includes seeing the workspace.
+                let mut permissions = allow;
+                if !permissions.contains(&Permission::View) {
+                    permissions.insert(0, Permission::View);
+                }
                 grants.push(AccessGrant {
                     workspace: on,
-                    permissions: allow,
+                    permissions,
                 });
             }
             let ws = client.put_access(ws.id, &PutAccess { grants }).await?;

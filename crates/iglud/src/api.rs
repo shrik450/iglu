@@ -44,7 +44,7 @@ use crate::app::{
 };
 use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, RenameOutcome, SealedSecret};
-use crate::extract::{Body, Path, Query, Raw, Upgrade};
+use crate::extract::{Body, Path, Query, Upgrade, read_within};
 use crate::model::{ColumnRecord, RouteRecord, WorkspaceRecord};
 use crate::views::{ordered, route_view, workspace_view};
 
@@ -319,8 +319,10 @@ async fn list_workspaces(
     State(app): State<Arc<App>>,
 ) -> Result<Json<Vec<WorkspaceView>>, ApiError> {
     let owner = actor.owner().id;
+    let shown = actor.clone();
+    let views = views_where(&app, owner, move |ws| actor.may(Action::ViewWorkspace, ws)).await?;
     Ok(Json(
-        views_where(&app, owner, move |ws| actor.may(Action::ViewWorkspace, ws)).await?,
+        views.into_iter().map(|view| shown.shown(view)).collect(),
     ))
 }
 
@@ -330,7 +332,7 @@ async fn get_workspace(
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<WorkspaceView>, ApiError> {
     let ws = workspace_for(&app, &actor, id, Action::ViewWorkspace).await?;
-    Ok(Json(view(&app, ws).await?))
+    Ok(Json(actor.shown(view(&app, ws).await?)))
 }
 
 async fn create_workspace(
@@ -622,7 +624,7 @@ async fn set_desired_state(
     app.usage.used(id);
     app.kick();
     app.changed();
-    Ok(Json(view(&app, updated).await?))
+    Ok(Json(actor.shown(view(&app, updated).await?)))
 }
 
 async fn rename_workspace(
@@ -662,7 +664,7 @@ async fn rename_workspace(
         (RenameOutcome::Missing | RenameOutcome::Done, _) => return Err(ApiError::NotFound),
     };
     app.changed();
-    Ok(Json(view(&app, updated).await?))
+    Ok(Json(actor.shown(view(&app, updated).await?)))
 }
 
 async fn mark_seen(
@@ -684,8 +686,18 @@ async fn activity(
     Path(id): Path<WorkspaceId>,
 ) -> Result<Json<Vec<ActivityEntry>>, ApiError> {
     workspace_for(&app, &actor, id, Action::ViewWorkspace).await?;
+    let entries = app.db.call(move |tx| db::activity(tx, id, 100)).await?;
     Ok(Json(
-        app.db.call(move |tx| db::activity(tx, id, 100)).await?,
+        entries
+            .into_iter()
+            .map(|(mut entry, via)| {
+                // Which workspace did it is only for whoever can see that one.
+                if via.is_some_and(|via| !actor.sees(via)) {
+                    entry.via = None;
+                }
+                entry
+            })
+            .collect(),
     ))
 }
 
@@ -1039,10 +1051,12 @@ async fn send_input(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Keeping a pasted file takes a body as large as the file.
 fn files_route() -> axum::routing::MethodRouter<Arc<App>> {
-    post(keep_file).layer(axum::extract::DefaultBodyLimit::max(pasted::MAX_BYTES))
+    post(keep_file)
 }
+
+/// How long a pasted file may take to arrive.
+const UPLOAD_TIME: Duration = Duration::from_secs(120);
 
 #[derive(Deserialize)]
 struct FileQuery {
@@ -1057,9 +1071,16 @@ async fn keep_file(
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
     Query(query): Query<FileQuery>,
-    Raw(bytes): Raw,
+    body: axum::body::Body,
 ) -> Result<Json<KeptFile>, ApiError> {
     let ws = workspace_for(&app, &actor, id, Action::SendColumnInput).await?;
+    // Read only once allowed, and only a few at a time: each is held whole.
+    let _turn = app
+        .uploads
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal)?;
+    let bytes = read_within(body, pasted::MAX_BYTES, UPLOAD_TIME).await?;
     let name = FileName::from_browser(&query.name);
     let path = host_for(&app, &ws)?
         .keep(id, &name, bytes)

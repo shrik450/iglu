@@ -172,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
         usage: idle::Usage::new(app::now()),
         boot: iglu_api::BootId::from_uuid(uuid::Uuid::new_v4()),
         column_edits: app::ColumnEdits::default(),
+        uploads: tokio::sync::Semaphore::new(4),
     });
     tokio::spawn(reconcile::run(app.clone()));
     guest::serve(&app);

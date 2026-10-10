@@ -1694,24 +1694,29 @@ pub fn add_activity(
     Ok(())
 }
 
+/// A workspace's history, newest first, each entry with the workspace it
+/// came through, when one did.
 pub fn activity(
     tx: &Connection,
     workspace: WorkspaceId,
     limit: u32,
-) -> Result<Vec<ActivityEntry>, DbError> {
+) -> Result<Vec<(ActivityEntry, Option<WorkspaceId>)>, DbError> {
     let mut statement = tx.prepare(
-        "SELECT a.kind, a.detail, a.at, v.name FROM activity a
+        "SELECT a.kind, a.detail, a.at, v.name, a.via_workspace_id FROM activity a
          LEFT JOIN workspace v ON v.id = a.via_workspace_id
          WHERE a.workspace_id = ?1 ORDER BY a.at DESC, a.id DESC LIMIT ?2",
     )?;
     Ok(statement
         .query_map(params![workspace.to_string(), limit], |row| {
-            Ok(ActivityEntry {
-                kind: row.get(0)?,
-                detail: row.get(1)?,
-                at: timestamp(row, 2)?,
-                via: opt_text(row, 3)?,
-            })
+            Ok((
+                ActivityEntry {
+                    kind: row.get(0)?,
+                    detail: row.get(1)?,
+                    at: timestamp(row, 2)?,
+                    via: opt_text(row, 3)?,
+                },
+                opt_text(row, 4)?,
+            ))
         })?
         .collect::<Result<_, _>>()?)
 }
@@ -1928,10 +1933,11 @@ mod tests {
         .expect("through a workspace");
         let log = activity(&conn, one.id, 10).expect("read");
         assert_eq!(
-            log[0].via.as_ref().map(ToString::to_string).as_deref(),
+            log[0].0.via.as_ref().map(ToString::to_string).as_deref(),
             Some("two")
         );
-        assert_eq!(log[1].via, None);
+        assert_eq!(log[0].1, Some(two.id));
+        assert_eq!((log[1].0.via.as_ref(), log[1].1), (None, None));
     }
 
     #[test]

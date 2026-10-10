@@ -384,7 +384,9 @@ async fn guest_connection<R: Runtime>(
         match on_upgrade.await {
             Ok(upgraded) => {
                 let mut upgraded = TokioIo::new(upgraded);
-                if let Err(error) = tokio::io::copy_bidirectional(&mut upgraded, &mut guest).await {
+                if let Err(error) =
+                    tokio::io::copy_bidirectional(&mut upgraded, &mut guest.stream).await
+                {
                     tracing::debug!(%workspace, %error, "guest connection closed");
                 }
             }

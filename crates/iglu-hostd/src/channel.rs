@@ -10,21 +10,33 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use iglu_domain::id::{InstanceName, WorkspaceId};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 
 /// Connections waiting for iglud. More wait in their guest's backlog.
 const WAITING: usize = 32;
 
+/// How many connections one workspace may have open or waiting at once.
+/// The rest wait in that workspace's own backlog, so a workspace that opens
+/// too many holds up only itself.
+const EACH: usize = 8;
+
+/// A connection a workspace made through its channel. It counts against the
+/// workspace's share until it's dropped.
+pub struct Connection {
+    pub stream: UnixStream,
+    _share: OwnedSemaphorePermit,
+}
+
 pub struct Channels {
     listening: Mutex<HashMap<InstanceName, JoinHandle<()>>>,
-    sender: mpsc::Sender<(WorkspaceId, UnixStream)>,
-    receiver: tokio::sync::Mutex<mpsc::Receiver<(WorkspaceId, UnixStream)>>,
+    sender: mpsc::Sender<(WorkspaceId, Connection)>,
+    receiver: tokio::sync::Mutex<mpsc::Receiver<(WorkspaceId, Connection)>>,
 }
 
 impl Default for Channels {
@@ -74,7 +86,7 @@ impl Channels {
     }
 
     /// The next connection a workspace made, if one comes within `wait`.
-    pub async fn next(&self, wait: Duration) -> Option<(WorkspaceId, UnixStream)> {
+    pub async fn next(&self, wait: Duration) -> Option<(WorkspaceId, Connection)> {
         let mut receiver = self.receiver.lock().await;
         tokio::time::timeout(wait, receiver.recv())
             .await
@@ -99,12 +111,20 @@ fn bind(path: &PathBuf) -> std::io::Result<UnixListener> {
 async fn accept(
     listener: UnixListener,
     workspace: WorkspaceId,
-    sender: mpsc::Sender<(WorkspaceId, UnixStream)>,
+    sender: mpsc::Sender<(WorkspaceId, Connection)>,
 ) {
+    let shares = Arc::new(Semaphore::new(EACH));
     loop {
+        let Ok(share) = shares.clone().acquire_owned().await else {
+            return;
+        };
         match listener.accept().await {
             Ok((stream, _)) => {
-                if sender.send((workspace, stream)).await.is_err() {
+                let connection = Connection {
+                    stream,
+                    _share: share,
+                };
+                if sender.send((workspace, connection)).await.is_err() {
                     return;
                 }
             }

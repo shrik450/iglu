@@ -8,7 +8,14 @@ test("a permission is given and taken away, and an emptied workspace drops out",
   assert.deepEqual(given, [{ workspace: "b", permissions: ["view"] }]);
   const more = toggled(given, "b", "read_output");
   assert.ok(holds(more, "b", "read_output"));
-  assert.deepEqual(toggled(toggled(more, "b", "view"), "b", "read_output"), []);
+  assert.deepEqual(toggled(more, "b", "read_output"), given);
+});
+
+test("every permission includes seeing, so taking that away takes the rest", () => {
+  assert.deepEqual(toggled([], "b", "send_input"), [{ workspace: "b", permissions: ["view", "send_input"] }]);
+  const both = toggled([], "b", "send_input");
+  assert.deepEqual(toggled(both, "b", "view"), []);
+  assert.deepEqual(toggled(both, "b", "send_input"), [{ workspace: "b", permissions: ["view"] }]);
 });
 
 test("other workspaces' grants are left as they were", () => {
@@ -17,6 +24,7 @@ test("other workspaces' grants are left as they were", () => {
     { workspace: "b", permissions: ["view" as const] },
   ];
   assert.deepEqual(toggled(access, "b", "view"), [{ workspace: "a", permissions: ["view"] }]);
+  assert.deepEqual(toggled(access, "a", "operate")[0], { workspace: "b", permissions: ["view"] });
 });
 
 test("the workspace itself comes first, even with nothing granted on it", () => {

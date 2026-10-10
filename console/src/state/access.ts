@@ -7,7 +7,7 @@ import type { WorkspaceId } from "../generated/WorkspaceId.ts";
 /** Every permission, in the order the console shows them, with what each
  * lets a workspace do, said plainly. */
 export const PERMISSIONS: readonly { permission: Permission; label: string; title: string }[] = [
-  { permission: "view", label: "See", title: "See the workspace, its columns and what they're doing" },
+  { permission: "view", label: "See", title: "See the workspace, its columns and what they're doing; every other permission includes this" },
   { permission: "read_output", label: "Read", title: "Read what its terminals show" },
   { permission: "send_input", label: "Type", title: "Type into its terminals: as much as running commands there" },
   { permission: "manage_columns", label: "Columns", title: "Open, close and restart its columns" },
@@ -19,18 +19,18 @@ export function holds(access: readonly AccessGrant[], workspace: WorkspaceId, pe
   return access.some((grant) => grant.workspace === workspace && grant.permissions.includes(permission));
 }
 
-/** `access` with `permission` on `workspace` given or taken away. A
- * workspace left with nothing drops out. */
+/** `access` with `permission` on `workspace` given or taken away. Every
+ * permission includes seeing the workspace, as iglud has it, so giving one
+ * gives `view` too, and taking `view` away takes everything on it. */
 export function toggled(access: readonly AccessGrant[], workspace: WorkspaceId, permission: Permission): AccessGrant[] {
-  const had = holds(access, workspace, permission);
-  const found = access.some((grant) => grant.workspace === workspace);
-  const next = access.map((grant) =>
-    grant.workspace !== workspace
-      ? grant
-      : { ...grant, permissions: had ? grant.permissions.filter((p) => p !== permission) : [...grant.permissions, permission] },
-  );
-  if (!found) next.push({ workspace, permissions: [permission] });
-  return next.filter((grant) => grant.permissions.length > 0);
+  const others = access.filter((grant) => grant.workspace !== workspace);
+  const held = access.find((grant) => grant.workspace === workspace)?.permissions ?? [];
+  if (held.includes(permission)) {
+    const left = permission === "view" ? [] : held.filter((p) => p !== permission);
+    return left.length ? [...others, { workspace, permissions: left }] : others;
+  }
+  const given: Permission[] = held.includes("view") || permission === "view" ? [...held, permission] : ["view", ...held, permission];
+  return [...others, { workspace, permissions: given }];
 }
 
 /** The workspaces `access` names, the workspace itself first. */

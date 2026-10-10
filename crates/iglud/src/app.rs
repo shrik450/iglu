@@ -9,7 +9,7 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use iglu_api::{ErrorBody, ErrorKind, Field};
+use iglu_api::{ErrorBody, ErrorKind, Field, WorkspaceView};
 use iglu_domain::auth::{self, Action, Decision, DenyReason, Grant, Resource, authorize};
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
@@ -48,6 +48,8 @@ pub struct App {
     /// This run of iglud, which the console compares to notice an upgrade.
     pub boot: iglu_api::BootId,
     pub column_edits: ColumnEdits,
+    /// Files being received for workspaces, each held whole: a few at once.
+    pub uploads: tokio::sync::Semaphore,
 }
 
 /// One change at a time to a workspace's columns. Adding one picks a free
@@ -426,6 +428,21 @@ impl Actor {
                 grants: caller.grants.as_slice(),
             },
         }
+    }
+
+    /// Whether it may see the workspace `id`, one of its owner's.
+    pub fn sees(&self, id: WorkspaceId) -> bool {
+        match self {
+            Self::Person(_) => true,
+            Self::Workspace(caller) => caller.grants.iter().any(|g| g.workspace == id),
+        }
+    }
+
+    /// A workspace as it may see it: a workspace sees no grants on, and no
+    /// history from, workspaces it can't see.
+    pub fn shown(&self, mut view: WorkspaceView) -> WorkspaceView {
+        view.access.retain(|grant| self.sees(grant.workspace));
+        view
     }
 
     pub fn may(&self, action: Action, ws: &WorkspaceRecord) -> bool {
