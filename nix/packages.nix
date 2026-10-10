@@ -36,8 +36,13 @@ in
 {
   # The guest tools' terminal sessions. With ZMX_NO_CREATE set, `zmx attach`
   # only attaches: one racing a column's close can't open the session again.
+  # `zmx history` fails when it can't read a session, rather than printing
+  # nothing, and writes all of a long one.
   zmx = zmx.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ [ ./zmx-attach-only.patch ];
+    patches = (old.patches or [ ]) ++ [
+      ./zmx-attach-only.patch
+      ./zmx-history.patch
+    ];
   });
 
   iglud = crate {

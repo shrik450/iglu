@@ -1,0 +1,51 @@
+diff -ru a/src/main.zig b/src/main.zig
+--- a/src/main.zig	2026-10-10 16:31:07
++++ b/src/main.zig	2026-10-10 16:31:07
+@@ -1461,8 +1461,10 @@
+     defer lib_posix.close(fd);
+ 
+     const format_byte = [_]u8{@intFromEnum(format)};
++    // Changed by iglu: every way of not getting the history is a failure,
++    // so a caller can tell an empty screen from one it couldn't read.
+     ipc.send(fd, .History, &format_byte) catch |err| switch (err) {
+-        error.BrokenPipe, error.ConnectionResetByPeer => return,
++        error.BrokenPipe, error.ConnectionResetByPeer => return printError(io, "session \"{s}\" went away", .{session_name}),
+         else => return err,
+     };
+ 
+@@ -1471,21 +1473,30 @@
+ 
+     while (true) {
+         var poll_fds = [_]lib_posix.pollfd{.{ .fd = fd, .events = lib_posix.POLL.IN, .revents = 0 }};
+-        const poll_result = lib_posix.poll(&poll_fds, 5000) catch return;
++        const poll_result = lib_posix.poll(&poll_fds, 5000) catch |err| return printError(io, "waiting for the history failed ({s})", .{@errorName(err)});
+         if (poll_result == 0) {
+             std.log.err("timeout waiting for history response", .{});
+-            return;
++            return printError(io, "session \"{s}\" didn't send its history in time", .{session_name});
+         }
+ 
+-        const n = sb.read(fd) catch return;
+-        if (n == 0) return;
++        const n = sb.read(fd) catch |err| return printError(io, "reading the history failed ({s})", .{@errorName(err)});
++        if (n == 0) return printError(io, "session \"{s}\" went away", .{session_name});
+ 
+         while (sb.next()) |msg| {
+             if (msg.header.tag == .History) {
+-                _ = lib_posix.write(lib_posix.STDOUT_FILENO, msg.payload) catch return;
++                writeAll(msg.payload) catch |err| return printError(io, "writing the history failed ({s})", .{@errorName(err)});
+                 return;
+             }
+         }
++    }
++}
++
++/// Changed by iglu: the whole payload, which one write may not take.
++fn writeAll(bytes: []const u8) !void {
++    var rest = bytes;
++    while (rest.len > 0) {
++        const n = try lib_posix.write(lib_posix.STDOUT_FILENO, rest);
++        rest = rest[n..];
+     }
+ }
+ 
