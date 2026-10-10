@@ -491,10 +491,10 @@ def selected_keys(page: Page, name: str) -> Any:
 
 
 # The terminal's background, as a program asks for it, and its size, as the
-# shell has it.
+# shell has it, in one line that the command as typed can't be mistaken for.
 STYLE = (
     "bash -c 'printf \"\\e]11;?\\a\" >/dev/tty; IFS= read -rs -t 5 -d $(printf \"\\a\") a </dev/tty; "
-    "printf \"style-{mark} %s \" \"${{a#?}}\"; stty size'"
+    "s=$(stty size); printf \"style-%s %s %s.\\n\" {mark} \"${{a#?}}\" \"$s\"'"
 )
 
 
@@ -518,7 +518,7 @@ def styles_terminal(page: Page, name: str) -> Any:
     def style(expected: str = "") -> tuple[str, int]:
         mark = str(time.time_ns())
         shown = run_in_column(page, first, STYLE.format(mark=mark), f"style-{mark} {expected}")
-        found = re.search(rf"style-{mark} (\S+) (\d+) (\d+)", shown.replace("\n", ""))
+        found = re.search(rf"style-{mark} (\S*) (\d+) (\d+)\.", shown.replace("\n", ""))
         assert found, shown
         return found[1], int(found[3])
 
