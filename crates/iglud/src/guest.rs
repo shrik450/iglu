@@ -74,7 +74,10 @@ async fn answer(
     let service = crate::api::guest_router()
         .layer(Extension(FromWorkspace(workspace)))
         .with_state(app);
+    // Clients such as `nc -N` stop writing once they've sent the request,
+    // and still want the answer.
     if let Err(error) = hyper::server::conn::http1::Builder::new()
+        .half_close(true)
         .serve_connection(TokioIo::new(stream), TowerToHyperService::new(service))
         .await
     {
