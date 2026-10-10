@@ -68,6 +68,17 @@ export function moved(columns: readonly ColumnSpec[], name: string, step: -1 | 1
   return next;
 }
 
+/** The columns with `name` put just before or after `target`, or null when
+ * that changes nothing or either isn't there. */
+export function placed(columns: readonly ColumnSpec[], name: string, target: string, after: boolean): ColumnSpec[] | null {
+  const column = columns.find((c) => c.name === name);
+  if (!column || name === target || !columns.some((c) => c.name === target)) return null;
+  const rest = columns.filter((c) => c.name !== name);
+  const at = rest.findIndex((c) => c.name === target) + (after ? 1 : 0);
+  const next = [...rest.slice(0, at), column, ...rest.slice(at)];
+  return next.every((c, i) => c.name === columns[i]?.name) ? null : next;
+}
+
 /** The columns with `name` at the next width, or null when there's no such column. */
 export function widened(columns: readonly ColumnSpec[], name: string): ColumnSpec[] | null {
   if (!columns.some((c) => c.name === name)) return null;

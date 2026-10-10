@@ -239,3 +239,13 @@ export function metaBytes(code: string, shift: boolean): string | null {
   const symbol = PUNCTUATION[code];
   return symbol ? `\x1b${symbol[shift ? 1 : 0]}` : null;
 }
+
+/** What Ctrl makes of a typed character: a letter, or one of @ [ \\ ] ^ _ ?,
+ * becomes its control character, as a terminal sends it. Anything else, or
+ * more than one character, goes as it is. */
+export function withCtrl(typed: string): string {
+  if (typed.length !== 1) return typed;
+  if (typed === "?") return "\x7f";
+  const code = typed.toUpperCase().charCodeAt(0);
+  return code >= 0x40 && code <= 0x5f ? String.fromCharCode(code & 0x1f) : typed;
+}

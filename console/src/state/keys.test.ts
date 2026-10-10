@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type Chord, chordLabel, DEFAULT_PREFIX, type KeyInput, type Keymap, metaBytes, prefixBytes, resolve } from "./keys.ts";
+import { type Chord, chordLabel, DEFAULT_PREFIX, withCtrl, type KeyInput, type Keymap, metaBytes, prefixBytes, resolve } from "./keys.ts";
 
 const mac: Keymap = { mac: true, prefix: DEFAULT_PREFIX, altMoves: true };
 const linux: Keymap = { ...mac, mac: false };
@@ -100,4 +100,15 @@ test("a chord shows the key as it's printed", () => {
   assert.equal(chordLabel(chord("Backslash"), false), "Ctrl+\\");
   assert.equal(chordLabel(chord("KeyB"), true), "⌃B");
   assert.equal(chordLabel(chord("Space"), false), "Ctrl+Space");
+});
+
+test("Ctrl makes control characters of letters and a few symbols, and leaves the rest", () => {
+  assert.equal(withCtrl("c"), "\x03");
+  assert.equal(withCtrl("C"), "\x03");
+  assert.equal(withCtrl("["), "\x1b");
+  assert.equal(withCtrl("@"), "\x00");
+  assert.equal(withCtrl("?"), "\x7f");
+  assert.equal(withCtrl("1"), "1");
+  assert.equal(withCtrl("é"), "é");
+  assert.equal(withCtrl("ls"), "ls");
 });

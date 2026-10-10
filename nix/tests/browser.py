@@ -522,9 +522,14 @@ def names_column(page: Page, name: str) -> Any:
     reaches(page, first)
     page.reload()
     expect(header).to_have_text("the tests")
+    # Leaving the field keeps what's in it, as there's no Enter on a phone.
     header.dblclick()
-    field = page.get_by_role("textbox", name="Name of the tests")
-    expect(field).to_have_value("the tests")
+    page.get_by_role("textbox", name="Name of the tests").fill("left behind")
+    column(page, first).locator(".term-host").click()
+    expect(header).to_have_text("left behind")
+    header.dblclick()
+    field = page.get_by_role("textbox", name="Name of left behind")
+    expect(field).to_have_value("left behind")
     field.fill("")
     page.keyboard.press("Enter")
     expect(header).to_have_text(first)
@@ -542,11 +547,11 @@ def zooms(page: Page, name: str) -> Any:
     prefix(page, "KeyZ")
     expect(column(page, first)).to_have_attribute("style", re.compile(r"--cw:\s*1\b"))
     expect(sidebar).to_be_hidden()
-    expect(column(page, first).get_by_role("button", name=re.compile("^Put .* back$"))).to_have_attribute("aria-pressed", "true")
+    expect(column(page, first).get_by_role("button", name=re.compile("^Unzoom "))).to_have_attribute("aria-pressed", "true")
     reaches(page, first)
     # The palette has the column's actions too.
     prefix(page, "Slash")
-    page.get_by_role("combobox", name="Search").fill("put back")
+    page.get_by_role("combobox", name="Search").fill("unzoom")
     page.keyboard.press("Enter")
     expect(sidebar).to_be_visible()
     expect(column(page, first).get_by_role("button", name=re.compile("^Width of "))).to_have_text(width)
@@ -570,6 +575,92 @@ def goes_back(page: Page, name: str, other: str | None = None) -> Any:
     prefix(page, "Semicolon")
     page.wait_for_url(f"{CONSOLE}/w/{other}")
     return {"back": other}
+
+
+def drags_column(page: Page, name: str) -> Any:
+    """Dragging a column's chip onto another's left half puts it before that
+    one, and the order is what iglu keeps."""
+    open_workspace(page, name)
+    before = columns(page)
+    assert len(before) >= 2, before
+    chips = page.get_by_role("navigation", name="Columns").get_by_role("button")
+
+    def drag(source: int, target: int) -> None:
+        box = chips.nth(target).bounding_box()
+        assert box, target
+        chips.nth(source).drag_to(chips.nth(target), target_position={"x": 3, "y": box["height"] / 2})
+
+    drag(1, 0)
+    swapped = [before[1], before[0], *before[2:]]
+    expect(page.locator("section[data-column]").first).to_have_attribute("data-column", before[1])
+    page.reload()
+    expect(page.locator("section[data-column]").first).to_have_attribute("data-column", before[1])
+    assert columns(page) == swapped, columns(page)
+    drag(1, 0)
+    expect(page.locator("section[data-column]").first).to_have_attribute("data-column", before[0])
+    return {"swapped": swapped}
+
+
+def phone_keys(page: Page, name: str) -> Any:
+    """On a phone, the key row sends what the on-screen keyboard lacks, to
+    the column with the keyboard and without taking it: ^C stops a command,
+    and Ctrl goes with the next letter typed."""
+    browser = page.context.browser
+    assert browser
+    phone = browser.new_context(
+        storage_state=page.context.storage_state(), viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True
+    )
+    try:
+        tap = phone.new_page()
+        open_workspace(tap, name)
+        first = columns(tap)[0]
+        at_prompt(tap, first)
+        keys = tap.get_by_role("toolbar", name="Terminal keys")
+        tap.keyboard.type("sleep 300")
+        tap.keyboard.press("Enter")
+        time.sleep(1)
+        keys.get_by_role("button", name="Interrupt (Ctrl+C)").tap()
+        reaches(tap, first)
+        # Ctrl then u clears what's typed so far, in bash and fish alike.
+        mark = str(time.time_ns())
+        tap.keyboard.type(f"echo gone{mark}")
+        ctrl = keys.get_by_role("button", name="Ctrl, for the next key")
+        ctrl.tap()
+        expect(ctrl).to_have_attribute("aria-pressed", "true")
+        tap.keyboard.type("u")
+        expect(ctrl).to_have_attribute("aria-pressed", "false")
+        tap.keyboard.type(f"echo kept{mark}")
+        tap.keyboard.press("Enter")
+        shows(tap, f"kept{mark}", 2)
+        assert f"gone{mark}echo" not in screen(tap).replace("\n", ""), screen(tap)
+        return {"column": first}
+    finally:
+        phone.close()
+
+
+def acts_where_shown(page: Page, name: str) -> Any:
+    """A column acted on, from its header or the palette, takes the keyboard:
+    what's typed next goes to the column shown, and a question it asks has
+    the keyboard until it's answered."""
+    open_workspace(page, name)
+    first, second = columns(page)[:2]
+    at_prompt(page, first)
+    column(page, second).locator(".col-h").hover()
+    column(page, second).get_by_role("button", name=re.compile("^Zoom ")).click()
+    reaches(page, second)
+    column(page, second).get_by_role("button", name=re.compile("^Unzoom ")).click()
+    search = page.get_by_role("combobox", name="Search")
+    prefix(page, "Slash")
+    search.fill(f"go to column {first}")
+    page.keyboard.press("Enter")
+    reaches(page, first)
+    prefix(page, "Slash")
+    search.fill(f"end {first}")
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("button", name=f"End {first}", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    reaches(page, first)
+    return {"columns": [first, second]}
 
 
 def renames_follow(page: Page, name: str) -> Any:
@@ -762,6 +853,9 @@ STEPS: dict[str, Callable[..., Any]] = {
     "prefix-cancels": prefix_cancels,
     "names-column": names_column,
     "zooms": zooms,
+    "acts-where-shown": acts_where_shown,
+    "drags-column": drags_column,
+    "phone-keys": phone_keys,
     "goes-back": goes_back,
     "renames-follow": renames_follow,
     "drafts-survive": drafts_survive,

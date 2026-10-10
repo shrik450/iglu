@@ -104,7 +104,8 @@ export type Question =
   | { kind: "end"; column: string }
   | { kind: "label"; column: string }
   | { kind: "port" }
-  | { kind: "add-column" };
+  /** A column to add; `server` opens straight at the server's command. */
+  | { kind: "add-column"; server?: true };
 
 /** One question at a time, held with the workspace that asked it, so it never
  * carries over to another: an armed delete stays with its own workspace. */

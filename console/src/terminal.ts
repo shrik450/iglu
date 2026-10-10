@@ -3,8 +3,10 @@
 // A dropped connection reconnects on its own, after telling the owner, which
 // may find the session ended and dispose the pane instead.
 
+import { signal } from "@preact/signals";
 import { FitAddon, Ghostty, Terminal } from "ghostty-web";
 
+import { withCtrl } from "./state/keys.ts";
 import { scan } from "./state/replies.ts";
 
 let ghostty: Promise<Ghostty> | null = null;
@@ -36,6 +38,9 @@ function themeOf(where: Element) {
 export function restyleTerminals(): void {
   for (const pane of panes.values()) pane.restyle();
 }
+
+/** Ctrl held from the phone's key row: what's typed next goes with it. */
+export const ctrlHeld = signal(false);
 
 /** Mounted panes by `workspace/session`, so keyboard actions can focus one. */
 export const panes = new Map<string, TerminalPane>();
@@ -109,7 +114,11 @@ export class TerminalPane {
     this.fit.observeResize();
     // Unlike xterm.js, ghostty-web drops the key when the handler returns true.
     this.term.attachCustomKeyEventHandler((event) => shortcuts(event, (text) => this.send(this.encoder.encode(text))));
-    this.term.onData((data) => this.send(this.encoder.encode(data)));
+    this.term.onData((data) => {
+      const typed = ctrlHeld.peek() ? withCtrl(data) : data;
+      ctrlHeld.value = false;
+      this.send(this.encoder.encode(typed));
+    });
     // Every pane tells its session its own size when that changes, focused
     // or not. zmx applies the most recent size from any client, so a
     // browser in the background stays quiet, and focusing claims the size.
@@ -213,8 +222,16 @@ export class TerminalPane {
     return lines.join("\n");
   }
 
+  /** Gives this terminal the keyboard, now. ghostty-web's own focus() does
+   * it again a moment later, which would take the keyboard back from a field
+   * opened in between, such as the column's name. */
   focus(): void {
-    this.term.focus();
+    this.term.element?.focus();
+  }
+
+  /** Sends `text` as if typed, for keys a phone's keyboard doesn't have. */
+  type(text: string): void {
+    this.send(this.encoder.encode(text));
   }
 
   dispose(): void {

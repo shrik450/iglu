@@ -236,7 +236,7 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .wsv { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 16px; height: 100%; }
 .side { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; }
 /* A zoomed column has the page: the list of workspaces folds away until it's put back. */
-.wsv.zoomed { grid-template-columns: minmax(0, 1fr); }
+.wsv.zoomed { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .wsv.zoomed > .side { display: none; }
 .tree { display: flex; flex-direction: column; gap: 1px; overflow: auto; min-height: 0; }
 .t-group { display: flex; align-items: center; gap: 2px; padding: 10px 0 2px; }
@@ -252,7 +252,11 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .t-ws[aria-current="page"] .n { font-weight: 600; }
 .t-ws.needs .n { color: var(--waiting); }
 .t-ws.asleep .n { color: var(--muted); }
-.main { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 10px; min-width: 0; min-height: 0; }
+.main { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; min-width: 0; min-height: 0; }
+.keyrow { display: flex; gap: 5px; padding-bottom: env(safe-area-inset-bottom); }
+.keyrow button { flex: 1 1 0; min-width: 0; padding: 0; min-height: 42px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 600 13px/1 var(--mono); box-shadow: var(--lift); }
+.keyrow button:active { transform: translateY(1px); box-shadow: none; background: var(--sunk); }
+.keyrow button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .w-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
 .w-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1 1 auto; }
 .w-title h1 { margin: 0; font: 500 18px/1.2 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -280,6 +284,9 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .sc:hover { color: var(--ink); }
 .sc.vis { color: var(--ink); background: var(--raised); }
 .sc[aria-current] { border-color: var(--accent); color: var(--ink); }
+.sc.dragging { opacity: .45; }
+.sc[data-drop="before"] { box-shadow: -3px 0 0 -1px var(--accent); }
+.sc[data-drop="after"] { box-shadow: 3px 0 0 -1px var(--accent); }
 .sc-add { flex: none; display: inline-grid; place-items: center; width: 28px; height: 26px; border: 1px solid var(--line); background: transparent; border-radius: 7px; padding: 0; color: var(--muted); }
 .sc-add:hover { color: var(--ink); border-color: var(--accent); }
 .sc.ended { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
@@ -463,8 +470,9 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
   .search .wide, .search kbd { display: none; }
   .search .narrow { display: block; }
   .search { gap: 0; padding: 7px; }
-  .pv-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
-  .pv-row .to { grid-column: 2; }
+  /* The address gets the row's width; what's done with it goes beneath. */
+  .pv-row { grid-template-columns: 14px minmax(0, 1fr); }
+  .pv-row .to, .pv-row .pv-acts { grid-column: 2; }
 }
 @media (max-width: 520px) {
   .topbar { gap: 8px; padding: 8px 10px; }
@@ -476,6 +484,9 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
    value, like the prefix, still shows: a tablet can have a keyboard. */
 @media (hover: none) and (pointer: coarse) {
   .search kbd, .pitem .h { display: none; }
+  /* A finger needs more than a mouse does to pick one column control. */
+  .col-ctl { gap: 4px; }
+  .col-ctl button { min-width: 34px; min-height: 32px; display: inline-grid; place-items: center; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 0s !important; }
