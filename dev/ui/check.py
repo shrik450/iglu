@@ -75,6 +75,7 @@ def main() -> None:
             step("copies-out", browser.copies_out, page, NAME)
             step("finds-output", browser.finds_output, page, NAME)
             step("inserts-text", browser.inserts_text, page, NAME)
+            step("opens-links", browser.opens_links, page, NAME)
             step("copies-history", browser.copies_history, page, NAME)
             step("mac-keys", browser.mac_keys, page, NAME)
             added = step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")["added"]

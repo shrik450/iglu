@@ -21,6 +21,7 @@ function Chord({ keys }: { keys: string }) {
 function ways(binding: Binding, prefix: string): string[] {
   const all: string[] = [];
   if (binding.action.kind === "palette") all.push(onKeyboard("⌘ K", mac));
+  if (binding.action.kind === "find") all.push(onKeyboard(mac ? "⌘ F" : "⌃⇧ F", mac));
   if (binding.after) all.push(`${prefix} ${binding.after.label}`);
   if (binding.alt && keyboard.value.altMoves) all.push(onKeyboard(`⌥${binding.alt.label.toUpperCase()}`, mac));
   return all;
@@ -67,12 +68,20 @@ export function Keys() {
                   </div>
                 ))}
                 {group === "Columns" ? (
-                  <div>
-                    <dt>
-                      <Chord keys={`${prefix} 1–9`} />
-                    </dt>
-                    <dd>Go to a column</dd>
-                  </div>
+                  <>
+                    <div>
+                      <dt>
+                        <Chord keys={`${prefix} 1–9`} />
+                      </dt>
+                      <dd>Go to a column</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        <Chord keys={onKeyboard("⌘ click", mac)} />
+                      </dt>
+                      <dd>Open a link in its output</dd>
+                    </div>
+                  </>
                 ) : null}
               </dl>
             </section>

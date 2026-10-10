@@ -264,6 +264,7 @@ try:
         browser("copies-out", "demo")
         browser("finds-output", "demo")
         browser("inserts-text", "demo")
+        browser("opens-links", "demo")
         browser("copies-history", "demo")
         browser("mac-keys", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")

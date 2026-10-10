@@ -372,6 +372,31 @@ def copies_history(page: Page, name: str) -> Any:
     return {"from": numbers[0], "to": numbers[-1]}
 
 
+def opens_links(page: Page, name: str) -> Any:
+    """A URL printed as plain text opens in a new tab on a modifier-click,
+    though it wraps across rows: programs print most links as text, and
+    those couldn't be opened at all."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    # Long enough to wrap, and put together by the shell, so only the output holds it whole.
+    tail = "x" * 120
+    url = f"{CONSOLE}/links-{mark}/{tail}"
+    run_in_column(page, first, f"printf '%s/links-%s/%s\\n' {CONSOLE} {mark} {tail}; printf 'end-%s\\n' {mark}", f"end-{mark}")
+    rows = column(page, first).locator(".term-row:not(.term-scrollback-row)")
+    start = rows.filter(has_text=f"links-{mark}").last
+    # The row after it continues the URL.
+    wrapped = start.locator("xpath=following-sibling::div[contains(@class, 'term-row')][1]")
+    with page.context.expect_page() as opened:
+        wrapped.click(position={"x": 20, "y": 8}, modifiers=["ControlOrMeta"])
+    tab = opened.value
+    try:
+        assert tab.url == url, {"opened": tab.url, "printed": url}
+    finally:
+        tab.close()
+    return {"url": url}
+
+
 def inserts_text(page: Page, name: str) -> Any:
     """Text that arrives without key presses, as dictation, an input method
     or a phone's keyboard sends it, reaches the terminal; it was dropped."""
@@ -1098,6 +1123,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "copies-out": copies_out,
     "finds-output": finds_output,
     "inserts-text": inserts_text,
+    "opens-links": opens_links,
     "copies-history": copies_history,
     "mac-keys": mac_keys,
     "palette-from-terminal": palette_from_terminal,

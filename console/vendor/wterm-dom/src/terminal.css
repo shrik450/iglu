@@ -1,6 +1,8 @@
 /* Changed by iglu, not upstream (see ../UPSTREAM):
    - Rounded corners start on the same whole pixel as the straight box strokes
-     beside them. */
+     beside them.
+   - A plain URL under the pointer, with the link modifier held, shows it can
+     be opened. */
 
 .wterm {
   /* Application overrides are owned by the renderer; each terminal is isolated. */
@@ -202,6 +204,10 @@
 
 .wterm.link-modifier-active .term-link:hover,
 .term-link:focus-visible {
+  cursor: pointer;
+}
+
+.wterm.url-hover {
   cursor: pointer;
 }
 

@@ -3,6 +3,7 @@
 // - `tabExit: false` turns off Escape then Tab leaving the terminal.
 // - press() and type() send a key or text from the host as if typed.
 // - A copy spanning rows no longer mounted reads them from the core.
+// - Plain URLs in output open on a modifier-click, as marked links do.
 
 import {
   WasmBridge,
@@ -19,6 +20,7 @@ import { TextCapture } from "./text-capture.js";
 import { OutputAnnouncements } from "./output-announcements.js";
 import { DebugAdapter } from "./debug.js";
 import { isLinkActivationModifier } from "./hyperlink.js";
+import { urlAt } from "./links.js";
 import {
   SearchController,
   type SearchOptions,
@@ -113,6 +115,8 @@ export class WTerm {
   private _outputAnnouncements: OutputAnnouncements;
   private _searchReveal = false;
   private _onClickFocus: (event: MouseEvent) => void;
+  private readonly _onUrlClick: (event: MouseEvent) => void;
+  private readonly _onUrlHover: (event: MouseEvent) => void;
   private _onScroll: () => void;
   private _onModifierChange: (event: KeyboardEvent) => void;
   private _onWindowBlur: () => void;
@@ -294,17 +298,34 @@ export class WTerm {
     // collapse a replacement range on mouseup. Run before click-to-focus.
     this.element.addEventListener("click", this._onMouseSelect);
     this.element.addEventListener("click", this._onClickFocus);
-    this._onModifierChange = (event) => {
-      this.element.classList.toggle(
-        "link-modifier-active",
-        isLinkActivationModifier(
-          event,
-          this.element.ownerDocument.defaultView?.navigator ?? navigator,
-        ),
+    // A plain URL opens on a modifier-click, before selection or focus see
+    // the click.
+    this._onUrlClick = (event) => {
+      const url = this._urlUnder(event);
+      if (!url) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.element.ownerDocument.defaultView?.open(
+        url,
+        "_blank",
+        "noopener,noreferrer",
       );
     };
+    this._onUrlHover = (event) => {
+      this.element.classList.toggle("url-hover", this._urlUnder(event) !== null);
+    };
+    this.element.addEventListener("click", this._onUrlClick, true);
+    this.element.addEventListener("mousemove", this._onUrlHover);
+    this._onModifierChange = (event) => {
+      const active = isLinkActivationModifier(
+        event,
+        this.element.ownerDocument.defaultView?.navigator ?? navigator,
+      );
+      this.element.classList.toggle("link-modifier-active", active);
+      if (!active) this.element.classList.remove("url-hover");
+    };
     this._onWindowBlur = () => {
-      this.element.classList.remove("link-modifier-active");
+      this.element.classList.remove("link-modifier-active", "url-hover");
     };
     this.element.ownerDocument.addEventListener(
       "keydown",
@@ -672,6 +693,28 @@ export class WTerm {
   }
   getSearchState(): SearchState {
     return this._search.snapshot();
+  }
+
+  /** The plain URL under the pointer, while the link modifier is held. */
+  private _urlUnder(event: MouseEvent): string | null {
+    const target = event.target;
+    if (
+      !this.bridge ||
+      !this.renderer ||
+      !(target instanceof Element) ||
+      target.closest(".term-link") ||
+      !isLinkActivationModifier(
+        event,
+        this.element.ownerDocument.defaultView?.navigator ?? navigator,
+      )
+    )
+      return null;
+    const position = this.renderer.positionAt(
+      target,
+      event.clientX,
+      this._charWidth,
+    );
+    return position ? urlAt(this.bridge, position) : null;
   }
 
   /** Scroll to the previous (-1) or next (1) shell prompt from the viewport top. */
@@ -1363,6 +1406,8 @@ export class WTerm {
     this.renderer?.destroy();
     this.renderer = null;
     this.element.removeEventListener("click", this._onClickFocus);
+    this.element.removeEventListener("click", this._onUrlClick, true);
+    this.element.removeEventListener("mousemove", this._onUrlHover);
     this.element.removeEventListener("click", this._onMouseSelect);
     this.element.removeEventListener("scroll", this._onScroll);
     this.element.ownerDocument.removeEventListener("copy", this._onCopy);
