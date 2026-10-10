@@ -122,7 +122,12 @@ let
         export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
         export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
         export BROWSER_RESOLVER_RULES='MAP iglu.example.test ${control}, MAP *.dev.example.test ${control}, MAP auth.idp.test ${idp}'
-        exec ${pkgs.python3.withPackages (ps: [ ps.playwright ps.pillow ])}/bin/python3 ${./browser.py} "$@"
+        exec ${
+          pkgs.python3.withPackages (ps: [
+            ps.playwright
+            ps.pillow
+          ])
+        }/bin/python3 ${./browser.py} "$@"
       '';
     };
 
