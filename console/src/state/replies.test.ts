@@ -48,3 +48,8 @@ test("a long unfinished sequence isn't a query, so it isn't carried", () => {
   const long = bytes(`\x1b]7;file://host/${"x".repeat(64)}`);
   assert.deepEqual(scan(none, long, cursor).carry, none);
 });
+
+test("a long sequence of another kind passes, however long", () => {
+  const copy = bytes(`\x1b]52;c;${"QUFB".repeat(100_000)}\x07\x1b[>c`);
+  assert.deepEqual(scan(none, copy, cursor).replies, [{ end: copy.length, text: "\x1b[>1;10;0c" }]);
+});

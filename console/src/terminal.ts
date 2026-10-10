@@ -237,11 +237,11 @@ export class TerminalPane {
     this.carry = carry;
     let shown = 0;
     for (const reply of replies) {
-      this.term.write(bytes.subarray(shown, reply.end));
+      if (reply.end > shown) this.term.write(bytes.subarray(shown, reply.end));
       this.send(this.encoder.encode(reply.text));
       shown = reply.end;
     }
-    this.term.write(bytes.subarray(shown));
+    if (shown < bytes.length) this.term.write(bytes.subarray(shown));
   }
 
   /** The visible screen as text, one line per row. */

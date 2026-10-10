@@ -24,6 +24,7 @@ const ST = 0x5c; // `\`, which ends `ESC \`
 /** Queries are short; a longer sequence is something else, and isn't carried. */
 const LONGEST = 32;
 
+const CURSOR_QUERY = "12;?";
 /** xterm's form: type 1, firmware version 10, no ROM cartridge. */
 const SECONDARY = "\x1b[>1;10;0c";
 
@@ -75,7 +76,8 @@ export function scan(carry: Uint8Array, chunk: Uint8Array, cursor: string): Scan
       if (j >= bytes.length || (bytes[j] === ESC && j + 1 >= bytes.length)) return unfinished(start);
       const end = bytes[j] === BEL ? "\x07" : "\x1b\\";
       const after = j + end.length;
-      const colour = text(bytes, i + 2, j) === "12;?" ? xcolour(cursor) : null;
+      // Only a body as short as the query is read: copies can run to megabytes.
+      const colour = j - (i + 2) === CURSOR_QUERY.length && text(bytes, i + 2, j) === CURSOR_QUERY ? xcolour(cursor) : null;
       if (colour) reply(after, `\x1b]12;${colour}${end}`);
       i = after;
     } else {

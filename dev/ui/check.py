@@ -72,6 +72,8 @@ def main() -> None:
             step("answers-queries", browser.answers_queries, page, NAME)
             step("draws-blocks", browser.draws_blocks, page, NAME)
             step("wheels-pager", browser.wheels_pager, page, NAME)
+            step("copies-out", browser.copies_out, page, NAME)
+            step("inserts-text", browser.inserts_text, page, NAME)
             added = step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")["added"]
             step("attention", browser.terminal, page, NAME, "iglu-status set waiting Check needs you; printf 'set-%s\\n' 42", "set-42")
             step("palette-from-terminal", browser.palette_from_terminal, page, NAME)

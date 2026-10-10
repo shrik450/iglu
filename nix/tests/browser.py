@@ -325,6 +325,37 @@ def wheels_pager(page: Page, name: str) -> Any:
     return {"screen": shows(page, f"wheel-{mark} $'\\E[B\\E[A'")}
 
 
+def inserts_text(page: Page, name: str) -> Any:
+    """Text that arrives without key presses, as dictation, an input method
+    or a phone's keyboard sends it, reaches the terminal; it was dropped."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    at_prompt(page, first)
+    mark = str(time.time_ns())
+    page.keyboard.insert_text(f"echo inserted-{mark}")
+    page.keyboard.press("Enter")
+    return {"screen": shows(page, f"inserted-{mark}", 2)}
+
+
+def copies_out(page: Page, name: str) -> Any:
+    """A program's copy (OSC 52) reaches the page's clipboard, and a large
+    one passes without stopping output: a 150 KB copy once wedged the
+    terminal until a reload."""
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    # base64 of "copied-<mark>", made by the shell, so typing it is plain ASCII.
+    run_in_column(page, first, f"printf '\\e]52;c;%s\\a' $(printf copied-{mark} | base64); echo small-{mark}", f"small-{mark}")
+    deadline = time.monotonic() + 10
+    while page.evaluate("navigator.clipboard.readText()") != f"copied-{mark}":
+        assert time.monotonic() < deadline, page.evaluate("navigator.clipboard.readText()")
+        time.sleep(0.2)
+    run_in_column(page, first, f"printf '\\e]52;c;%s\\a' $(head -c 150000 /dev/zero | tr '\\0' A); echo large-{mark}", f"large-{mark}")
+    run_in_column(page, first, f"echo after-{mark}", f"after-{mark}")
+    return {"column": first}
+
+
 def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
     """Coming back to a workspace where an agent waits lands on that agent's
     column, whichever column you were in when you left."""
@@ -918,6 +949,8 @@ STEPS: dict[str, Callable[..., Any]] = {
     "answers-queries": answers_queries,
     "draws-blocks": draws_blocks,
     "wheels-pager": wheels_pager,
+    "copies-out": copies_out,
+    "inserts-text": inserts_text,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,
