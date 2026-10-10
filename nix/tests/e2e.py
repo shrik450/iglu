@@ -259,6 +259,7 @@ try:
     with subtest("the browser's terminal runs in the workspace with secrets in its environment"):
         browser("terminal", "demo", "echo token=$TEST_TOKEN", "token=hunter2")
         browser("answers-queries", "demo")
+        browser("draws-blocks", "demo")
         second = browser("new-column", "demo", "echo $((6*7))-second", "42-second")
         browser("palette-from-terminal", "demo")
         browser("palette-ranks", "demo")

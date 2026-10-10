@@ -328,7 +328,19 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .col-ctl button[aria-pressed="true"] { color: var(--accent); }
 /* Positioned, so the terminal's hidden input sits inside its own column:
    focusing it otherwise scrolled the strip back to its start. */
-.term-host { position: relative; flex: 1; min-height: 0; padding: 4px 6px; }
+.term-host { position: relative; flex: 1; min-height: 0; }
+/* wterm fills its column in the console's face. At 13⅓px JetBrains Mono advances exactly 8px,
+   so every cell, and the block and box glyphs drawn in them, lands on whole pixels. */
+.term-host > .wterm {
+  position: absolute; inset: 0; padding: 4px 6px; border-radius: 0; box-shadow: none;
+  --term-font-family: var(--mono); --term-font-size: 13.333px; --term-row-height: 17px;
+  --term-selection-bg: rgba(143,216,255,.25);
+  scrollbar-width: thin; scrollbar-color: var(--term-line) transparent;
+}
+.term-host > .wterm ::selection { background: rgba(143,216,255,.25); }
+/* Only the terminal with the keyboard shows a block; the others keep a still underline,
+   so it's plain where typing goes. */
+.term-host > .wterm:not(.focused, :active) .term-cursor { outline: none; box-shadow: inset 0 -2px 0 var(--term-app-cursor, var(--term-cursor)); }
 .col-ended { flex: 1; display: grid; place-items: center; align-content: center; gap: 10px; color: var(--term-dim); font-size: 13px; }
 .cols-note { display: grid; place-items: center; align-content: center; gap: 12px; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; border: 1px dashed var(--line); border-radius: 8px; position: relative; overflow: hidden; }
 .cols-note.problem { justify-items: center; max-width: 100%; }

@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc -b vendor/wterm-dom && tsc --noEmit",
     "test": "node --test 'src/**/*.test.ts'",
-    "build": "tsc --noEmit && node --test 'src/**/*.test.ts' && node build.mjs"
+    "build": "npm run check && node --test 'src/**/*.test.ts' && node build.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

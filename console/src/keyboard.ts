@@ -216,7 +216,7 @@ export function onPageKey(event: KeyboardEvent): void {
   if (focus !== "terminal") handle(event, focus);
 }
 
-/** For ghostty: returns true when the console took the key, so the terminal drops it. */
+/** For a terminal: returns true when the console took the key, so the terminal never sees it. */
 export function terminalKey(event: KeyboardEvent, send: (text: string) => void): boolean {
   return handle(event, "terminal", send);
 }

@@ -58,7 +58,7 @@ import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, settle } from "../state/store.ts";
-import { ctrlHeld, loadGhostty, panes, TerminalPane } from "../terminal.ts";
+import { ctrlHeld, newCore, panes, TerminalPane } from "../terminal.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
   const r = route.value;
@@ -753,17 +753,17 @@ function ColumnBody(props: { ws: WorkspaceView; column: Shown; on: boolean; onSt
 function Pane(props: { ws: WorkspaceView; name: string; on: boolean; onStatus: (status: string) => void }) {
   const { ws, name, onStatus } = props;
   const host = useRef<HTMLDivElement>(null);
-  // Loading ghostty is asynchronous; by the time it's done another column may be active.
+  // Opening a terminal is asynchronous; by the time it's done another column may be active.
   const on = useRef(props.on);
   on.current = props.on;
   useEffect(() => {
     let pane: TerminalPane | null = null;
     let cancelled = false;
-    void loadGhostty().then((ghostty) => {
-      if (cancelled || !host.current) return;
+    void newCore().then((core) => {
+      if (cancelled || !host.current) return core.dispose();
       pane = new TerminalPane({
         container: host.current,
-        ghostty,
+        core,
         workspace: ws.id,
         session: name,
         shortcuts: terminalKey,

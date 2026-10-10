@@ -12,6 +12,7 @@ BROWSER_SHOTS. BROWSER_RESOLVER_RULES is only for where DNS doesn't resolve
 the console.
 """
 
+import io
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from PIL import Image
 from playwright.sync_api import Locator, Page, expect, sync_playwright
 
 CONSOLE = os.environ.get("IGLU_CONSOLE", "https://iglu.example.test")
@@ -239,12 +241,14 @@ def new_column(page: Page, name: str, command: str, expected: str) -> Any:
 
 
 # Asks the terminal for its device attributes and background colour, as
-# fish does after every command, and prints the answers without their ESC
-# after a mark, so an earlier run's answers on screen don't count.
+# fish does after every command, and the secondary attributes and cursor
+# colour, which the console answers itself since wterm doesn't. It prints
+# the answers without their ESC after a mark, so an earlier run's answers on
+# screen don't count.
 QUERIES = (
-    "bash -c 'printf \"\\e[c\" >/dev/tty; IFS= read -rs -t 5 -d c d </dev/tty; "
-    "printf \"\\e]11;?\\a\" >/dev/tty; IFS= read -rs -t 5 -d \"$(printf \"\\a\")\" o </dev/tty; "
-    "printf \"answers-%s %s %s\\n\" {mark} \"${{d#?}}\" \"${{o#?}}\"'"
+    "bash -c 'ask() {{ printf \"$1\" >/dev/tty; IFS= read -rs -t 5 -d \"$2\" a </dev/tty; printf \" %s\" \"${{a#?}}\"; }}; "
+    "printf answers-{mark}; ask \"\\e[c\" c; ask \"\\e[>c\" c; "
+    "ask \"\\e]12;?\\a\" $(printf \"\\a\"); ask \"\\e]11;?\\a\" $(printf \"\\a\"); echo'"
 )
 
 
@@ -254,9 +258,46 @@ def answers_queries(page: Page, name: str) -> Any:
     open_workspace(page, name)
     first = columns(page)[0]
     mark = str(time.time_ns())
-    shown = run_in_column(page, first, QUERIES.format(mark=mark), f"answers-{mark} [?62;22 ]11;rgb:")
-    answers = re.search(rf"answers-{mark} (\S+ \]11;rgb:[0-9a-f/]+)", shown.replace("\n", ""))
+    shown = run_in_column(page, first, QUERIES.format(mark=mark), f"answers-{mark} [?1;2 [>1;10;0 ]12;rgb:")
+    answers = re.search(rf"answers-{mark} (\S+ \S+ \]12;rgb:[0-9a-f/]+ \]11;rgb:[0-9a-f/]+)", shown.replace("\n", ""))
+    assert answers, f"the console's own answers never came: {shown!r}"
     return {"column": first, "answers": answers and answers[1]}
+
+
+# Four quadrants in red that meet in a square across two cells and two
+# rows, and a box cross in green, written as octal UTF-8 so typing them is
+# plain ASCII in any shell.
+BLOCKS = (
+    "clear; printf '\\e[38;2;255;0;0m\\342\\226\\227\\342\\226\\226\\n\\342\\226\\235\\342\\226\\230 "
+    "\\e[38;2;0;255;0m\\342\\225\\266\\342\\224\\200\\342\\224\\274\\342\\224\\200\\342\\225\\264\\e[0m\\nblocks-%s\\n' {mark}"
+)
+
+
+def draws_blocks(page: Page, name: str) -> Any:
+    """Block glyphs that meet across cells meet without a seam, and box
+    strokes are whole pixels: wterm split quadrants at 8.5px, so Claude
+    Code's logo showed a faint line under each eye and arm, and drew 1px
+    strokes across two pixels at half strength."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, BLOCKS.format(mark=mark), f"blocks-{mark}")
+    # The screen's first two rows, below any history, hold only the glyphs.
+    rows = column(page, first).locator(".term-row:not(.term-scrollback-row)")
+    pixels = [px for row in (0, 1) for px in Image.open(io.BytesIO(rows.nth(row).screenshot())).convert("RGB").getdata()]
+    # Every pixel the glyph touches is its colour exactly; a blended one is
+    # an edge drawn between two pixels.
+    found = {}
+    for label, ink, touched in (
+        ("quadrants", (255, 0, 0), lambda r, g, b: r - max(g, b) > 24),
+        ("box", (0, 255, 0), lambda r, g, b: g - max(r, b) > 24),
+    ):
+        hits = [px for px in pixels if touched(*px)]
+        blended = [px for px in hits if px != ink]
+        assert hits, f"no {label} drawn"
+        assert not blended, {label: len(blended), "of": len(hits), "some": sorted(set(blended))[:5]}
+        found[label] = len(hits)
+    return found
 
 
 def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
@@ -435,7 +476,7 @@ def selects_in_place(page: Page, name: str) -> Any:
     before = strip.evaluate("(s) => s.scrollLeft")
     assert before > 0, before
     strip.evaluate("(s) => { window.stripMoves = []; s.addEventListener('scroll', () => window.stripMoves.push(s.scrollLeft)); }")
-    box = second.locator("canvas").first.bounding_box()
+    box = second.locator(".term-grid").bounding_box()
     assert box
     page.mouse.move(box["x"] + 40, box["y"] + 20)
     page.mouse.down()
@@ -841,6 +882,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "terminal": terminal,
     "new-column": new_column,
     "answers-queries": answers_queries,
+    "draws-blocks": draws_blocks,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,

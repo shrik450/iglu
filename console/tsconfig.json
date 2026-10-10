@@ -16,7 +16,10 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // wterm's DOM renderer is vendored, and checked with its own settings, not these.
+    "paths": { "@wterm/dom": ["./vendor/wterm-dom/src/index.ts"] }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "./vendor/wterm-dom" }]
 }

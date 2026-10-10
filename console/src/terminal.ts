@@ -1,37 +1,56 @@
-// One ghostty-web terminal attached to one zmx session over a WebSocket.
+// One wterm terminal attached to one zmx session over a WebSocket.
 // Closing the pane only detaches; the session keeps running in the guest.
 // A dropped connection reconnects on its own, after telling the owner, which
 // may find the session ended and dispose the pane instead.
 
 import { signal } from "@preact/signals";
-import { FitAddon, Ghostty, Terminal } from "ghostty-web";
+import type { TerminalThemeColors } from "@wterm/core";
+import { WTerm } from "@wterm/dom";
+import { GhosttyCore } from "@wterm/ghostty";
 
 import { withCtrl } from "./state/keys.ts";
 import { scan } from "./state/replies.ts";
 
-let ghostty: Promise<Ghostty> | null = null;
+const WASM = "/ghostty-vt.wasm";
+/** Each terminal's history, in bytes: ghostty keeps it in pages, so the rows
+ * it holds depend on the width. */
+const SCROLLBACK = 10_000_000;
 
-/** The console's monospace face; terminals draw with it once it's loaded,
- * since a canvas measures its cells with whatever font is there at the time. */
-const FONT = "'JetBrains Mono', ui-monospace, Menlo, monospace";
+let loaded: Promise<unknown> | null = null;
 
-/** ghostty's WebAssembly and the terminal font, loaded once for every pane. */
-export function loadGhostty(): Promise<Ghostty> {
-  ghostty ??= Promise.all([Ghostty.load("/ghostty-vt.wasm"), document.fonts.load(`13px ${FONT}`).catch(() => [])]).then(([loaded]) => loaded);
-  return ghostty;
+/** The terminal font and ghostty's WebAssembly, loaded once for every pane:
+ * a terminal measures its cells with whatever font is there when it opens. */
+export function loadTerminals(): Promise<unknown> {
+  loaded ??= Promise.all([document.fonts.load("13px 'JetBrains Mono'").catch(() => []), GhosttyCore.load({ wasmPath: WASM }).then((core) => core.dispose())]);
+  return loaded;
 }
 
-/** A terminal's colours, read from the page's look where it sits, so the
- * canvas matches its column in either look. */
-function themeOf(where: Element) {
+/** xterm's 16 colours, which ghostty-web drew with before. */
+const PALETTE = [
+  0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db,
+  0xffffff,
+];
+
+interface Theme {
+  background: string;
+  foreground: string;
+  cursor: string;
+}
+
+/** A terminal's colours, read from the page's look where it sits, so it
+ * matches its column in either look. */
+function themeOf(where: Element): Theme {
   const css = getComputedStyle(where);
-  const color = (name: string, otherwise: string) => css.getPropertyValue(name).trim() || otherwise;
-  return {
-    background: color("--term-bg", "#070c18"),
-    foreground: color("--term-ink", "#d4e0f4"),
-    cursor: color("--accent", "#8fd8ff"),
-    selectionBackground: "#22315a",
+  const color = (name: string, otherwise: string) => {
+    const value = css.getPropertyValue(name).trim();
+    return /^#[0-9a-f]{6}$/i.test(value) ? value : otherwise;
   };
+  return { background: color("--term-bg", "#070c18"), foreground: color("--term-ink", "#d4e0f4"), cursor: color("--accent", "#8fd8ff") };
+}
+
+function colorsOf(theme: Theme): TerminalThemeColors {
+  const rgb = (hex: string) => parseInt(hex.slice(1), 16);
+  return { foreground: rgb(theme.foreground), background: rgb(theme.background), cursor: rgb(theme.cursor), palette: PALETTE };
 }
 
 /** Recolours every terminal after the look changes. */
@@ -53,10 +72,13 @@ export function activeScreen(): string {
 }
 
 export class TerminalPane {
-  private readonly term: Terminal;
-  private readonly fit: FitAddon;
+  private readonly term: WTerm;
+  private readonly core: GhosttyCore;
   private readonly encoder = new TextEncoder();
+  /** Pauses drawing while the column is out of sight; output still lands. */
+  private readonly sight: IntersectionObserver;
   private socket: WebSocket | null = null;
+  private opened = false;
   private focused = false;
   private closed = false;
   private retries = 0;
@@ -65,19 +87,21 @@ export class TerminalPane {
   private sent = "";
   /** The start of a query the next output may finish. */
   private carry: Uint8Array = new Uint8Array();
-  private theme: ReturnType<typeof themeOf>;
+  private theme: Theme;
 
   private readonly key: string;
   private readonly container: HTMLElement;
   private readonly workspace: string;
   private readonly session: string;
+  private readonly shortcuts: (event: KeyboardEvent, send: (text: string) => void) => boolean;
   private readonly onFocus: () => void;
   private readonly onStatus: (status: string) => void;
   private readonly onDrop: () => void;
 
   constructor(options: {
     container: HTMLElement;
-    ghostty: Ghostty;
+    /** A core of its own, from `GhosttyCore.load`; the pane disposes it. */
+    core: GhosttyCore;
     workspace: string;
     session: string;
     /** Whether the console takes a key; it may write to the terminal instead. */
@@ -88,81 +112,87 @@ export class TerminalPane {
     onStatus: (status: string) => void;
     onDrop: () => void;
   }) {
-    const { container, ghostty, workspace, session, shortcuts } = options;
+    const { container, core, workspace, session } = options;
     this.key = `${workspace}/${session}`;
     this.container = container;
+    this.core = core;
     this.workspace = workspace;
     this.session = session;
+    this.shortcuts = options.shortcuts;
     this.onFocus = options.onFocus;
     this.onStatus = options.onStatus;
     this.onDrop = options.onDrop;
     this.theme = themeOf(container);
-    this.term = new Terminal({ ghostty, fontSize: 13, fontFamily: FONT, scrollback: 10000, theme: this.theme, cursorBlink: false, cursorStyle: "underline" });
-    this.fit = new FitAddon();
-    this.term.loadAddon(this.fit);
-    // ghostty-web focuses a terminal as it opens, and again a moment later,
-    // so the last column to open would take focus from the one meant to have
-    // it. Its focus is switched off while it opens; then the pane focuses if
-    // it's the one that should.
-    this.term.focus = () => {};
-    this.term.open(container);
-    Reflect.deleteProperty(this.term, "focus");
-    window.setTimeout(() => {
-      if (options.wantsFocus()) this.focus();
+    // wterm takes over the element it's given, colours included, so the
+    // look is read from the host around it.
+    const element = document.createElement("div");
+    container.append(element);
+    this.term = new WTerm(element, {
+      core,
+      cursorBlink: true,
+      onData: (data) => {
+        const typed = ctrlHeld.peek() ? withCtrl(data) : data;
+        ctrlHeld.value = false;
+        this.send(this.encoder.encode(typed));
+      },
+      // Mouse reports in the older encodings aren't text.
+      onBinary: (data) => this.send(data),
+      onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
+      // Every pane tells its session its own size when that changes, focused
+      // or not. zmx applies the most recent size from any client, so a
+      // browser in the background stays quiet, and focusing claims the size.
+      onResize: (cols, rows) => {
+        if (document.visibilityState === "visible") this.sendResize(cols, rows);
+      },
     });
-    this.fit.fit();
-    this.fit.observeResize();
-    // Unlike xterm.js, ghostty-web drops the key when the handler returns true.
-    this.term.attachCustomKeyEventHandler((event) => shortcuts(event, (text) => this.send(this.encoder.encode(text))));
-    this.term.onData((data) => {
-      const typed = ctrlHeld.peek() ? withCtrl(data) : data;
-      ctrlHeld.value = false;
-      this.send(this.encoder.encode(typed));
-    });
-    // Every pane tells its session its own size when that changes, focused
-    // or not. zmx applies the most recent size from any client, so a
-    // browser in the background stays quiet, and focusing claims the size.
-    this.term.onResize(({ cols, rows }) => {
-      if (document.visibilityState === "visible") this.sendResize(cols, rows);
-    });
-    // A sideways swipe or Shift+wheel moves along the strip; the terminal
-    // keeps vertical scrolling for its scrollback.
-    this.term.attachCustomWheelEventHandler((event) => {
-      const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY) || (event.shiftKey && event.deltaX === 0);
-      if (!sideways) return false;
-      container.closest(".w-cols")?.scrollBy({ left: event.deltaX || event.deltaY });
-      return true;
-    });
+    this.term.setThemeColors(colorsOf(this.theme));
+    container.addEventListener("keydown", this.keyDown, { capture: true });
+    container.addEventListener("wheel", this.wheel, { capture: true, passive: false });
     container.addEventListener("focusin", this.focusIn);
     container.addEventListener("focusout", this.focusOut);
+    this.sight = new IntersectionObserver(([entry]) => this.term.setRenderingPaused(!entry?.isIntersecting));
+    this.sight.observe(container);
     panes.set(this.key, this);
-    this.connect();
+    void this.term.init().then(() => {
+      if (this.closed) return;
+      this.opened = true;
+      if (options.wantsFocus()) this.focus();
+      this.connect();
+    });
   }
 
   restyle(): void {
     this.theme = themeOf(this.container);
-    this.term.options.theme = this.theme;
+    this.term.setThemeColors(colorsOf(this.theme));
   }
+
+  /** The console's keys come first; a key it takes never reaches the terminal. */
+  private readonly keyDown = (event: KeyboardEvent) => {
+    if (this.shortcuts(event, (text) => this.send(this.encoder.encode(text)))) event.stopPropagation();
+  };
+
+  /** A sideways swipe or Shift+wheel moves along the strip; the terminal
+   * keeps vertical scrolling for its scrollback. */
+  private readonly wheel = (event: WheelEvent) => {
+    const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY) || (event.shiftKey && event.deltaX === 0);
+    if (!sideways) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.container.closest(".w-cols")?.scrollBy({ left: event.deltaX || event.deltaY });
+  };
 
   private readonly focusIn = () => {
     this.focused = true;
     lastFocused = this;
-    this.term.options.cursorBlink = true;
-    this.term.options.cursorStyle = "block";
     this.sendResize(this.term.cols, this.term.rows, true);
     this.onFocus();
   };
 
-  // Only the terminal with the keyboard blinks a block; the others keep a
-  // still underline, so it's plain where typing goes.
   private readonly focusOut = () => {
     this.focused = false;
-    this.term.options.cursorBlink = false;
-    this.term.options.cursorStyle = "underline";
   };
 
   private connect(): void {
-    this.fit.fit();
     const url = new URL(`/v1/workspaces/${this.workspace}/columns/${this.session}/attach`, location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("cols", String(this.term.cols));
@@ -189,21 +219,20 @@ export class TerminalPane {
       // refused before connecting reaches onDrop's reload of the columns.
       this.onStatus(event.reason ? `Reconnecting… (${event.reason})` : "Reconnecting…");
       this.retryTimer = window.setTimeout(() => {
-        if (!this.closed) {
-          this.term.reset();
-          this.carry = new Uint8Array();
-          this.connect();
-        }
+        if (this.closed) return;
+        // The session replays its screen on attach: start from a clean one.
+        this.term.write("\x1bc");
+        this.carry = new Uint8Array();
+        this.connect();
       }, delay);
     };
   }
 
-  /** Shows output, answering the queries in it in the order they were asked,
-   * interleaved with the ones ghostty answers itself as it reads. */
+  /** Shows output, answering the queries wterm leaves in the order they were
+   * asked, interleaved with the ones it answers itself as it reads. */
   private output(bytes: Uint8Array): void {
-    const { replies, copies, carry } = scan(this.carry, bytes, this.theme);
+    const { replies, carry } = scan(this.carry, bytes, this.theme.cursor);
     this.carry = carry;
-    for (const copy of copies) void navigator.clipboard?.writeText(copy).catch(() => undefined);
     let shown = 0;
     for (const reply of replies) {
       this.term.write(bytes.subarray(shown, reply.end));
@@ -213,20 +242,25 @@ export class TerminalPane {
     this.term.write(bytes.subarray(shown));
   }
 
-  /** The visible screen as text, one line per row. The canvas has no text to read. */
+  /** The visible screen as text, one line per row. */
   screen(): string {
-    const buffer = this.term.buffer.active;
-    const top = Math.max(0, buffer.length - this.term.rows);
     const lines: string[] = [];
-    for (let y = top; y < buffer.length; y++) lines.push(buffer.getLine(y)?.translateToString(true) ?? "");
+    for (let row = 0; row < this.term.rows; row++) {
+      let line = "";
+      for (let col = 0; col < this.term.cols; col++) {
+        const cell = this.core.getCell(row, col);
+        if (cell.width === 0) continue;
+        line += cell.chars ?? String.fromCodePoint(cell.char || 0x20);
+      }
+      lines.push(line.trimEnd());
+    }
     return lines.join("\n");
   }
 
-  /** Gives this terminal the keyboard, now. ghostty-web's own focus() does
-   * it again a moment later, which would take the keyboard back from a field
-   * opened in between, such as the column's name. */
+  /** Gives this terminal the keyboard, now. Before it has opened there's
+   * nothing to focus; it asks `wantsFocus` once it has. */
   focus(): void {
-    this.term.element?.focus();
+    if (this.opened) this.term.focus();
   }
 
   /** Sends `text` as if typed, for keys a phone's keyboard doesn't have. */
@@ -241,10 +275,13 @@ export class TerminalPane {
     this.socket = null;
     panes.delete(this.key);
     if (lastFocused === this) lastFocused = null;
+    this.sight.disconnect();
+    this.container.removeEventListener("keydown", this.keyDown, { capture: true });
+    this.container.removeEventListener("wheel", this.wheel, { capture: true });
     this.container.removeEventListener("focusin", this.focusIn);
     this.container.removeEventListener("focusout", this.focusOut);
-    this.fit.dispose();
-    this.term.dispose();
+    this.term.destroy();
+    this.core.dispose();
     this.container.replaceChildren();
   }
 
@@ -260,4 +297,11 @@ export class TerminalPane {
     this.sent = size;
     this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
   }
+}
+
+/** A core for one pane, ghostty's terminal state, once the font and the
+ * WebAssembly have loaded. */
+export async function newCore(): Promise<GhosttyCore> {
+  await loadTerminals();
+  return GhosttyCore.load({ wasmPath: WASM, scrollbackLimit: SCROLLBACK });
 }

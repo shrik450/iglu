@@ -94,9 +94,10 @@ in
         ../console/tsconfig.json
         ../console/src
         ../console/public
+        ../console/vendor
       ];
     };
-    npmDepsHash = "sha256-blj1Udh015TGZLYTB0SSbb5iw+6nBT2S7mdnIjpWvXk=";
+    npmDepsHash = "sha256-fH3rqzK732cb7xiQumfwS50VwETyJFoqtEnppmFb+1s=";
     installPhase = ''
       runHook preInstall
       cp -r dist $out

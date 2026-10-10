@@ -10,7 +10,7 @@ import { paintFrost } from "./components/bits.tsx";
 import { onPageKey } from "./keyboard.ts";
 import "./notify.ts";
 import { look, me, say } from "./state/store.ts";
-import { activeScreen, loadGhostty, restyleTerminals } from "./terminal.ts";
+import { activeScreen, loadTerminals, restyleTerminals } from "./terminal.ts";
 
 // Read-only access to the focused terminal's text, for the browser test.
 Object.assign(globalThis, { iglu: { screen: activeScreen } });
@@ -30,7 +30,7 @@ if (root) render(<App />, root);
 try {
   me.value = await api.me();
   watch();
-  void loadGhostty();
+  void loadTerminals();
 } catch (error) {
   say(`The console couldn't start: ${failure(error)}`);
 }

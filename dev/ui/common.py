@@ -121,7 +121,7 @@ class Api:
 
 
 def screen(page: Page) -> str:
-    """The focused terminal's visible text; the canvas has none to read."""
+    """The focused terminal's visible text, as the core holds it."""
     return str(page.evaluate("globalThis.iglu.screen()"))
 
 
