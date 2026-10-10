@@ -461,11 +461,13 @@ try:
         iglu("access set demo --on over-https --allow view,read_output")
         assert "shell" in guest("iglu column ls -w over-https")
         guest("iglu column send shell -w over-https hi 2>&1 | grep -q \"hasn't been granted\"")
-        # The owner's own token, sent through the channel, is still the workspace.
+        # The owner's own token, sent through the channel, is still the
+        # workspace. Without -N: Incus's proxy ends a connection whose client
+        # stops writing, before the answer.
         refused = guest(
             "printf 'GET /v1/secrets HTTP/1.1\\r\\nHost: iglu\\r\\n"
             f"Authorization: Bearer {token}\\r\\nConnection: close\\r\\n\\r\\n' "
-            "| nc -U -N $IGLU_SOCKET"
+            "| nc -U $IGLU_SOCKET"
         )
         assert refused.startswith("HTTP/1.1 403"), refused
         iglu("access set demo --on over-https --allow")
