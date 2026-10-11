@@ -274,6 +274,7 @@ try:
         browser("wheels-rows", "demo")
         browser("copies-out", "demo")
         browser("finds-output", "demo")
+        browser("keeps-history", "demo")
         browser("inserts-text", "demo")
         browser("opens-links", "demo")
         browser("copies-history", "demo")

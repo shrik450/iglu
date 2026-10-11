@@ -76,6 +76,7 @@ def main() -> None:
             step("wheels-rows", browser.wheels_rows, page, NAME)
             step("copies-out", browser.copies_out, page, NAME)
             step("finds-output", browser.finds_output, page, NAME)
+            step("keeps-history", browser.keeps_history, page, NAME)
             step("inserts-text", browser.inserts_text, page, NAME)
             step("opens-links", browser.opens_links, page, NAME)
             step("copies-history", browser.copies_history, page, NAME)

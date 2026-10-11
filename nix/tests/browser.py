@@ -856,6 +856,24 @@ def mac_keys(page: Page, name: str) -> Any:
         mac.close()
 
 
+def keeps_history(page: Page, name: str) -> Any:
+    """A column opened again has all of its history: the screenful just
+    above the screen was lost every time the page reattached, so scrolling
+    back jumped from the prompt into the middle of the output."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, f"bash -c 'n=k; for i in $(seq 1 120); do echo ${{n}}ept-{mark}-$i; done; echo done-{mark}'", f"done-{mark}")
+    page.reload()
+    at_prompt(page, first)
+    prefix(page, "s")
+    bar = page.get_by_role("search", name=re.compile(r"^Find in "))
+    bar.get_by_role("searchbox").fill(f"kept-{mark}-")
+    expect(bar).to_contain_text("120 of 120")
+    page.keyboard.press("Escape")
+    return {"found": 120}
+
+
 def finds_output(page: Page, name: str) -> Any:
     """The prefix and s find in a column's output, history included: it starts
     at the newest match and shows it, ↩ goes back to earlier ones, and Escape
@@ -1583,6 +1601,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "wheels-rows": wheels_rows,
     "copies-out": copies_out,
     "finds-output": finds_output,
+    "keeps-history": keeps_history,
     "inserts-text": inserts_text,
     "opens-links": opens_links,
     "copies-history": copies_history,
