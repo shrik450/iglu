@@ -329,7 +329,8 @@ try:
         guest("ln -sf /etc/passwd ~/Downloads/passwd")
         status = f"curl -sS -o /dev/null -w '%{{http_code}}' -H 'Authorization: Bearer {token}'"
         assert client.succeed(f"{status} '{downloads}/passwd'") == "404"
-        assert client.succeed(f"{status} '{downloads}/%2E%2E'") == "400"
+        # As sent: curl would otherwise fold the dots away itself.
+        assert client.succeed(f"{status} --path-as-is '{downloads}/%2E%2E'") == "400"
 
     with subtest("API tokens attach to columns too"):
         terminal = json.loads(
