@@ -21,7 +21,7 @@ use iglu_domain::secret::{FetchTokens, SecretBundle};
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput};
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Paths, so client and server can't drift.
 pub mod path {

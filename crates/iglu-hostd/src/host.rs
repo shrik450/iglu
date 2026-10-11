@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use iglu_domain::capacity::Bytes;
+use iglu_domain::download::DownloadName;
 use iglu_domain::env::{EnvSource, GuestPath};
 use iglu_domain::git::GitState;
 use iglu_domain::guest::OutputReport;
@@ -473,6 +474,29 @@ impl<R: Runtime> Host<R> {
             .trim_end()
             .parse()
             .map_err(|e| CommandError::new(ErrorCode::GuestFailed, format!("unreadable path: {e}")))
+    }
+
+    /// A file the workspace's browser downloaded, opened to stream to the
+    /// person, with its size; `None` when there's no such file.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, or the file can't be opened.
+    pub async fn download(
+        &self,
+        workspace: WorkspaceId,
+        name: &DownloadName,
+    ) -> Result<Option<(u64, tokio::fs::File)>, CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        let Some(file) = self.runtime.download(&guest, name).await? else {
+            return Ok(None);
+        };
+        let size = file
+            .metadata()
+            .await
+            .map_err(|e| CommandError::new(ErrorCode::GuestFailed, e.to_string()))?
+            .len();
+        Ok(Some((size, file)))
     }
 
     /// Attaches to an open terminal session.

@@ -41,6 +41,8 @@ export class BrowserPane {
   readonly loading = signal(false);
   readonly dialog = signal<Dialog | null>(null);
   readonly menu = signal<Menu | null>(null);
+  /** The last download the browser finished, until it's put away. */
+  readonly downloaded = signal<{ name: string | null; path: string; url: string | null } | null>(null);
   /** The file input the page asks files for, while it waits for them. */
   readonly files = signal<{ multiple: boolean; accept: string; sending: boolean } | null>(null);
   /** Why there's nothing to see yet, while there isn't. */
@@ -284,6 +286,13 @@ export class BrowserPane {
         break;
       case "files_closed":
         this.files.value = null;
+        break;
+      case "downloaded":
+        this.downloaded.value = {
+          name: event.name,
+          path: event.path,
+          url: event.name === null ? null : `/v1/workspaces/${this.workspace}/downloads/${encodeURIComponent(event.name)}`,
+        };
         break;
       case "notice":
         say(event.text);

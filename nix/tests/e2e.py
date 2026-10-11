@@ -318,6 +318,16 @@ try:
     token = json.loads(client.succeed("cat /root/.config/iglu/credentials.json"))["token"]
     api = f"curl -sS --fail-with-body -H 'Authorization: Bearer {token}'"
 
+    with subtest("a download is saved only from the workspace's Downloads, never through a link"):
+        downloads = f"{CONSOLE}/v1/workspaces/{ws['id']}/downloads"
+        saved = client.succeed(f"{api} -D /tmp/download-headers '{downloads}/note.txt'")
+        assert saved == "saved here", saved
+        assert "attachment" in client.succeed("cat /tmp/download-headers").lower()
+        guest("ln -sf /etc/passwd ~/Downloads/passwd")
+        status = f"curl -sS -o /dev/null -w '%{{http_code}}' -H 'Authorization: Bearer {token}'"
+        assert client.succeed(f"{status} '{downloads}/passwd'") == "404"
+        assert client.succeed(f"{status} '{downloads}/%2E%2E'") == "400"
+
     with subtest("API tokens attach to columns too"):
         terminal = json.loads(
             client.succeed(

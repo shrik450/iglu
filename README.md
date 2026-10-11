@@ -262,9 +262,14 @@ drive the same browser over Chrome's debugging protocol at `$IGLU_BROWSER`,
 for example with `npx @playwright/mcp --cdp-endpoint $IGLU_BROWSER`, and you
 watch what they do. A workspace has one browser. It keeps sign-ins in
 `~/.cache/iglu/browser` and starts each time with one blank tab. Copying and
-pasting go through your own clipboard. Popups the page doesn't draw itself,
-such as `<select>` menus and file pickers, and downloads don't show. Turn it
-off with `iglu.browser.enable = false` in your environment.
+pasting go through your own clipboard. The console shows a page's `<select>`
+menus and asks you for the files a file input wants, which go to the
+workspace as pasted files do, under names safe for a shell. Downloads go to
+`~/Downloads` in the workspace, and you save them from there with Save to
+this computer; while the column is open, an agent's own choice of where
+downloads go is overridden. Date and color pickers, and pages that ask for
+files with `showOpenFilePicker`, don't work. Turn it off with
+`iglu.browser.enable = false` in your environment.
 
 ## Developing
 

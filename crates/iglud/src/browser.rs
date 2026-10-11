@@ -27,6 +27,7 @@ use iglu_api::browser::{
     MenuOption, Modifiers, MouseAction, MouseButton, MouseInput,
 };
 use iglu_domain::column::BROWSER_DEBUG_PORT;
+use iglu_domain::download::DownloadName;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::port::GuestPort;
 use serde::Deserialize;
@@ -237,7 +238,8 @@ pub struct Screen {
 }
 
 impl Screen {
-    /// Starts showing the browser at `size`: first, finding its tabs.
+    /// Starts showing the browser at `size`: first, finding its tabs, and
+    /// hearing of its downloads.
     pub fn new(size: BrowserSize) -> (Self, Vec<Out>) {
         let mut screen = Self {
             next: 1,
@@ -259,7 +261,12 @@ impl Screen {
             None,
             Some(Pending::Discovered),
         );
-        (screen, vec![first])
+        // Downloads go where the browser's own settings say, the user's
+        // Downloads; only Browser events say where each landed. While this
+        // is open it replaces where an agent asked the browser to put them.
+        let downloads = json!({ "behavior": "default", "eventsEnabled": true });
+        let downloads = screen.call("Browser.setDownloadBehavior", downloads, None, None);
+        (screen, vec![first, downloads])
     }
 
     /// What to send for what the person did.
@@ -369,6 +376,9 @@ impl Screen {
         };
         if let Some(event) = method.strip_prefix("Target.") {
             return self.target_event(event, message.params);
+        }
+        if method == "Browser.downloadProgress" {
+            return downloaded(&message.params).into_iter().collect();
         }
         if method == "Page.screencastFrame" {
             return self.frame(message.session, message.params);
@@ -941,6 +951,18 @@ fn pixels(value: f64) -> u32 {
     value.round().clamp(0.0, 65_535.0) as u32
 }
 
+/// A download the browser finished, wherever it was started.
+fn downloaded(params: &Value) -> Option<Out> {
+    if params["state"] != "completed" {
+        return None;
+    }
+    let path = params["filePath"].as_str()?;
+    Some(Out::Event(BrowserEvent::Downloaded {
+        name: DownloadName::of_download(path),
+        path: path.chars().take(MAX_PATH).collect(),
+    }))
+}
+
 /// What a file input's `accept` attribute says, from the attributes the
 /// browser reports as names and values in turn; nothing when it has none.
 fn accept_of(attributes: &Value) -> String {
@@ -1398,7 +1420,10 @@ mod tests {
     #[test]
     fn opening_shows_a_tab_at_the_consoles_size() {
         let (mut screen, first) = Screen::new(SIZE);
-        assert_eq!(methods(&first), ["Target.setDiscoverTargets"]);
+        assert_eq!(
+            methods(&first),
+            ["Target.setDiscoverTargets", "Browser.setDownloadBehavior"]
+        );
         // A tab that's there is reported before discovery is answered.
         let out = screen.devtools(page("t1", None));
         assert!(methods(&out).is_empty());
@@ -1586,6 +1611,39 @@ mod tests {
             paths: vec!["/a".into()],
         };
         assert!(screen.input(none).is_empty());
+    }
+
+    #[test]
+    fn finished_downloads_are_told_by_name_when_theyre_in_downloads() {
+        let (mut screen, first) = Screen::new(SIZE);
+        assert_eq!(
+            methods(&first),
+            ["Target.setDiscoverTargets", "Browser.setDownloadBehavior"]
+        );
+        let progress = |state: &str, path: &str| {
+            incoming(
+                json!({ "method": "Browser.downloadProgress", "params": { "guid": "g", "state": state, "filePath": path } }),
+            )
+        };
+        assert!(
+            screen
+                .devtools(progress("inProgress", "/home/dev/Downloads/a.txt"))
+                .is_empty()
+        );
+        let out = screen.devtools(progress("completed", "/home/dev/Downloads/note (1).txt"));
+        assert_eq!(
+            out,
+            [Out::Event(BrowserEvent::Downloaded {
+                name: Some("note (1).txt".parse().expect("a name")),
+                path: "/home/dev/Downloads/note (1).txt".into(),
+            })]
+        );
+        // Where an agent had them go, it's only said where.
+        let out = screen.devtools(progress("completed", "/tmp/playwright/ab12"));
+        assert!(matches!(
+            out.as_slice(),
+            [Out::Event(BrowserEvent::Downloaded { name: None, .. })]
+        ));
     }
 
     #[test]

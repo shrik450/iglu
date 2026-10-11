@@ -7,6 +7,8 @@ use std::path::Path;
 use std::process::Command;
 
 use iglu_domain::column::BROWSER_DEBUG_PORT;
+use iglu_domain::download;
+use serde_json::{Value, json};
 
 use crate::paths::Dirs;
 
@@ -28,6 +30,27 @@ pub fn args(profile: &Path) -> Vec<String> {
     ]
 }
 
+/// The profile's preferences, as Chromium keeps them in `Default/Preferences`,
+/// with downloads going to `dir` without asking: a screencast can't show the
+/// browser's own prompt, and the person saves a download from there. The
+/// rest are kept; preferences Chromium can't read are started afresh, as
+/// Chromium would.
+#[must_use]
+pub fn with_downloads(preferences: Option<&str>, dir: &Path) -> String {
+    let mut preferences = preferences
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    let download = &mut preferences["download"];
+    if !download.is_object() {
+        *download = json!({});
+    }
+    download["default_directory"] = json!(dir.display().to_string());
+    download["prompt_for_download"] = json!(false);
+    download["directory_upgrade"] = json!(true);
+    preferences.to_string()
+}
+
 /// Replaces this process with Chromium. Returns only if it can't start.
 #[must_use]
 pub fn run(dirs: &Dirs) -> std::io::Error {
@@ -42,6 +65,17 @@ pub fn run(dirs: &Dirs) -> std::io::Error {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return error,
+    }
+    let downloads = dirs.home().join(download::DIR);
+    let preferences = profile.join("Default/Preferences");
+    let set = std::fs::create_dir_all(&downloads)
+        .and_then(|()| std::fs::create_dir_all(profile.join("Default")))
+        .and_then(|()| {
+            let now = std::fs::read_to_string(&preferences).ok();
+            std::fs::write(&preferences, with_downloads(now.as_deref(), &downloads))
+        });
+    if let Err(error) = set {
+        return error;
     }
     let error = Command::new("chromium").args(args(&profile)).exec();
     if error.kind() == std::io::ErrorKind::NotFound {
@@ -63,5 +97,28 @@ mod tests {
         assert!(args.contains(&"--remote-debugging-address=127.0.0.1".to_owned()));
         assert!(args.contains(&format!("--remote-debugging-port={BROWSER_DEBUG_PORT}")));
         assert!(args.contains(&"--user-data-dir=/home/dev/.cache/iglu/browser".to_owned()));
+    }
+
+    #[test]
+    fn downloads_go_to_downloads_without_asking_and_other_preferences_stay() {
+        let dir = Path::new("/home/dev/Downloads");
+        let kept = r#"{"profile":{"name":"Person"},"download":{"extensions_to_open":"x"}}"#;
+        let set: Value = serde_json::from_str(&with_downloads(Some(kept), dir)).expect("JSON");
+        assert_eq!(set["profile"]["name"], "Person");
+        assert_eq!(set["download"]["extensions_to_open"], "x");
+        assert_eq!(set["download"]["default_directory"], "/home/dev/Downloads");
+        assert_eq!(set["download"]["prompt_for_download"], false);
+        for unreadable in [
+            None,
+            Some("not json"),
+            Some("[1]"),
+            Some(r#"{"download":3}"#),
+        ] {
+            let set: Value = serde_json::from_str(&with_downloads(unreadable, dir)).expect("JSON");
+            assert_eq!(
+                set["download"]["default_directory"], "/home/dev/Downloads",
+                "{unreadable:?}"
+            );
+        }
     }
 }

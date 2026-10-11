@@ -595,6 +595,8 @@ PAGE = (
     "<optgroup label=Stone><option value=b disabled>Banana<option value=c>Cherry</optgroup></select>"
     "<input type=file accept='.txt' style='position:fixed;left:0;top:360px;width:300px;height:40px' "
     "onchange=\"this.files[0].text().then((t)=>document.title='file '+this.files[0].name+' '+t)\">"
+    "<a download='note.txt' href='data:text/plain,saved%20here' "
+    "style='position:fixed;left:0;top:420px;width:300px;height:40px'>Get</a>"
 )
 
 
@@ -655,6 +657,15 @@ def browses(page: Page, name: str) -> Any:
     chooser.value.set_files({"name": "note.txt", "mimeType": "text/plain", "buffer": b"from here"})
     expect(title).to_have_text("file note.txt from here", timeout=10_000)
     expect(asking).to_have_count(0)
+    # A download lands in the workspace's Downloads, and is saved from there.
+    screen.click(position={"x": 20, "y": 440})
+    done = browser.get_by_role("status", name="Downloaded")
+    expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)
+    with page.expect_download() as saving:
+        done.get_by_role("link", name="Save to this computer").click()
+    assert saving.value.suggested_filename == "note.txt", saving.value.suggested_filename
+    assert Path(saving.value.path()).read_text() == "saved here"
+    expect(done).to_have_count(0)
     # A right click reaches the page without a menu the screen can't show,
     # which would hold the browser; copying and pasting go through this
     # clipboard, not the browser's own.

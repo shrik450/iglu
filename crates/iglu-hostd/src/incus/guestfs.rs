@@ -45,9 +45,37 @@ pub async fn read(pid: u64, relative: String) -> Result<Option<Vec<u8>>, GuestFi
         .map_err(|e| GuestFileError::Io(std::io::Error::other(e)))?
 }
 
+/// Opens `relative` (no leading slash) in the guest whose init has `pid`,
+/// of any size, through no link at all, so the guest can't point hostd at
+/// another of its files either. Returns `None` when there's no such
+/// regular file.
+pub async fn open(pid: u64, relative: String) -> Result<Option<std::fs::File>, GuestFileError> {
+    tokio::task::spawn_blocking(move || open_blocking(pid, &relative, true))
+        .await
+        .map_err(|e| GuestFileError::Io(std::io::Error::other(e)))?
+}
+
 #[cfg(target_os = "linux")]
 fn read_blocking(pid: u64, relative: &str) -> Result<Option<Vec<u8>>, GuestFileError> {
     use std::io::Read;
+
+    let Some(file) = open_blocking(pid, relative, false)? else {
+        return Ok(None);
+    };
+    if file.metadata()?.len() > MAX_GUEST_FILE {
+        return Err(GuestFileError::TooLarge);
+    }
+    let mut content = Vec::new();
+    file.take(MAX_GUEST_FILE).read_to_end(&mut content)?;
+    Ok(Some(content))
+}
+
+#[cfg(target_os = "linux")]
+fn open_blocking(
+    pid: u64,
+    relative: &str,
+    no_links: bool,
+) -> Result<Option<std::fs::File>, GuestFileError> {
     use std::path::Path;
 
     use rustix::fs::{Mode, OFlags, ResolveFlags};
@@ -62,31 +90,39 @@ fn read_blocking(pid: u64, relative: &str) -> Result<Option<Vec<u8>>, GuestFileE
         Err(rustix::io::Errno::NOENT) => return Ok(None),
         Err(errno) => return Err(std::io::Error::from(errno).into()),
     };
+    let mut resolve = ResolveFlags::IN_ROOT | ResolveFlags::NO_MAGICLINKS;
+    if no_links {
+        resolve |= ResolveFlags::NO_SYMLINKS;
+    }
     let fd = match rustix::fs::openat2(
         &root,
         relative,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
         Mode::empty(),
-        ResolveFlags::IN_ROOT | ResolveFlags::NO_MAGICLINKS,
+        resolve,
     ) {
         Ok(fd) => fd,
-        Err(rustix::io::Errno::NOENT) => return Ok(None),
+        // A link where none may be is no such file.
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::LOOP) => return Ok(None),
         Err(errno) => return Err(std::io::Error::from(errno).into()),
     };
     let file = std::fs::File::from(fd);
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    if !file.metadata()?.is_file() {
         return Ok(None);
     }
-    if metadata.len() > MAX_GUEST_FILE {
-        return Err(GuestFileError::TooLarge);
-    }
-    let mut content = Vec::new();
-    file.take(MAX_GUEST_FILE).read_to_end(&mut content)?;
-    Ok(Some(content))
+    Ok(Some(file))
 }
 
 #[cfg(not(target_os = "linux"))]
 fn read_blocking(_pid: u64, _relative: &str) -> Result<Option<Vec<u8>>, GuestFileError> {
+    Err(std::io::Error::other("guest files can only be read on Linux").into())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_blocking(
+    _pid: u64,
+    _relative: &str,
+    _no_links: bool,
+) -> Result<Option<std::fs::File>, GuestFileError> {
     Err(std::io::Error::other("guest files can only be read on Linux").into())
 }

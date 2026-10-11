@@ -24,6 +24,7 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use hyper::Method;
 use iglu_domain::capacity;
+use iglu_domain::download::DownloadName;
 use iglu_domain::env::{BuiltImage, EnvSource};
 use iglu_domain::guest as guest_tools;
 use iglu_domain::id::InstanceName;
@@ -332,6 +333,17 @@ impl Runtime for IncusRuntime {
         guestfs::read(guest.boot.get(), path)
             .await
             .map_err(RuntimeError::failed)
+    }
+
+    async fn download(
+        &self,
+        guest: &Guest,
+        name: &DownloadName,
+    ) -> Result<Option<tokio::fs::File>, RuntimeError> {
+        let file = guestfs::open(guest.boot.get(), name.in_home(&guest.user))
+            .await
+            .map_err(RuntimeError::failed)?;
+        Ok(file.map(tokio::fs::File::from_std))
     }
 
     fn channel(&self, name: InstanceName) -> PathBuf {

@@ -16,6 +16,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use hyper_util::rt::TokioIo;
+use iglu_domain::download::DownloadName;
 use iglu_domain::env::Arch;
 use iglu_domain::git::GitState;
 use iglu_domain::id::WorkspaceId;
@@ -138,6 +139,10 @@ fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
         .route(
             "/v1/workspaces/{workspace}/files",
             post(keep::<R>).layer(DefaultBodyLimit::max(pasted::MAX_BYTES)),
+        )
+        .route(
+            "/v1/workspaces/{workspace}/downloads/{name}",
+            get(download::<R>),
         )
         .route(path::GUEST_CONNECTIONS, get(guest_connection::<R>))
         .layer(middleware::from_fn_with_state(
@@ -357,6 +362,18 @@ async fn keep<R: Runtime>(
         .await
         .map(|path| Json(KeptFile { path }))
         .map_err(Failure)
+}
+
+/// Streams a file the workspace's browser downloaded.
+async fn download<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path((workspace, name)): Path<(WorkspaceId, DownloadName)>,
+) -> Result<Response, Failure> {
+    let Some((size, file)) = app.host.download(workspace, &name).await.map_err(Failure)? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
+    Ok(([(header::CONTENT_LENGTH, size.to_string())], body).into_response())
 }
 
 /// How long iglud's ask for the next guest connection is held before it's

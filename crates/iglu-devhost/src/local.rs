@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use iglu_domain::capacity;
+use iglu_domain::download::{self, DownloadName};
 use iglu_domain::env::{BuiltImage, EnvSource, GuestPath, GuestUser, ImageFingerprint, Uid};
 use iglu_domain::guest as guest_tools;
 use iglu_domain::id::InstanceName;
@@ -159,6 +160,24 @@ fn fingerprint(source: &EnvSource) -> ImageFingerprint {
 /// Whether `program` is on `path`, the `PATH` workspaces get.
 fn on_path(path: Option<&OsString>, program: &str) -> bool {
     path.is_some_and(|path| std::env::split_paths(path).any(|dir| dir.join(program).is_file()))
+}
+
+/// A regular file at `path`, not reached through a link at its end. Local
+/// workspaces aren't kept apart from the host, so nothing more is checked.
+fn open_download(path: &Path) -> std::io::Result<Option<std::fs::File>> {
+    use rustix::fs::{Mode, OFlags};
+
+    let fd = match rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NOCTTY,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(rustix::io::Errno::NOENT | rustix::io::Errno::LOOP) => return Ok(None),
+        Err(errno) => return Err(errno.into()),
+    };
+    let file = std::fs::File::from(fd);
+    Ok(file.metadata()?.is_file().then_some(file))
 }
 
 fn read_guest_file(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
@@ -758,6 +777,23 @@ impl Runtime for LocalRuntime {
             .await
             .map_err(RuntimeError::failed)?
             .map_err(RuntimeError::failed)
+    }
+
+    async fn download(
+        &self,
+        guest: &Guest,
+        name: &DownloadName,
+    ) -> Result<Option<tokio::fs::File>, RuntimeError> {
+        let path = self
+            .layout
+            .home(guest.name)
+            .join(download::DIR)
+            .join(name.as_str());
+        let file = tokio::task::spawn_blocking(move || open_download(&path))
+            .await
+            .map_err(RuntimeError::failed)?
+            .map_err(RuntimeError::failed)?;
+        Ok(file.map(tokio::fs::File::from_std))
     }
 
     fn channel(&self, name: InstanceName) -> PathBuf {

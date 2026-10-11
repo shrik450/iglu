@@ -7,7 +7,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
@@ -22,6 +22,7 @@ use iglu_api::{
 use iglu_domain::agent::Prompt;
 use iglu_domain::auth::{Action, Grant, Permission};
 use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
+use iglu_domain::download::DownloadName;
 use iglu_domain::env::EnvName;
 use iglu_domain::git;
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
@@ -91,6 +92,7 @@ pub fn router() -> Router<Arc<App>> {
             get(attach_column),
         )
         .route("/v1/workspaces/{id}/browser", get(open_browser))
+        .route("/v1/workspaces/{id}/downloads/{name}", get(download))
         .route(
             "/v1/workspaces/{id}/columns/{session}/output",
             get(column_output),
@@ -1271,6 +1273,40 @@ async fn open_browser(
         upgrade
             .on_upgrade(move |socket| crate::browser::relay(app, caller, ws, host, size, socket)),
     )
+}
+
+/// A file the workspace's browser downloaded, for its owner to save: only
+/// from the workspace user's Downloads, by name.
+async fn download(
+    caller: Caller,
+    State(app): State<Arc<App>>,
+    Path((id, name)): Path<(WorkspaceId, DownloadName)>,
+) -> Result<Response, ApiError> {
+    let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
+    let response = host_for(&app, &ws)?
+        .download(id, &name)
+        .await
+        .map_err(host_error)?
+        .ok_or(ApiError::NotFound)?;
+    app.usage.used(id);
+    let size = response.content_length();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    // Saved under its name, never shown: the page that made it chose it.
+    let encoded = url::form_urlencoded::byte_serialize(name.as_str().as_bytes())
+        .collect::<String>()
+        .replace('+', "%20");
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{encoded}")) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    if let Some(size) = size {
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
+    }
+    let body = axum::body::Body::from_stream(response.bytes_stream());
+    Ok((headers, body).into_response())
 }
 
 /// What's going on inside a running workspace now: what's listening, each

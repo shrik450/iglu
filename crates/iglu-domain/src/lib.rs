@@ -11,6 +11,7 @@ pub mod attention;
 pub mod auth;
 pub mod capacity;
 pub mod column;
+pub mod download;
 pub mod env;
 pub mod git;
 pub mod guest;

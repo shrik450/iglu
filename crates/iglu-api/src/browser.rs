@@ -6,6 +6,7 @@
 //! iglud speaks Chrome's debugging protocol (CDP) to the browser, so the
 //! console needn't.
 
+use iglu_domain::download::DownloadName;
 use serde::{Deserialize, Serialize};
 
 /// The size the console asks the page to lay out at when it opens the
@@ -219,6 +220,13 @@ pub enum BrowserEvent {
     FilesClosed,
     /// Something the page asked for that the browser column can't do.
     Notice { text: String },
+    /// The browser finished downloading a file, to `path` in the workspace:
+    /// by `name`, from GET `/v1/workspaces/{id}/downloads/{name}`, when
+    /// it's in the user's Downloads, where it's saved from.
+    Downloaded {
+        name: Option<DownloadName>,
+        path: String,
+    },
 }
 
 /// One of a select's options, in the order the select has them.

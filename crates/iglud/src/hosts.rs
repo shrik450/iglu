@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use iglu_api::ColumnOutput;
+use iglu_domain::download::DownloadName;
 use iglu_domain::env::{EnvSource, GuestPath};
 use iglu_domain::git::GitState;
 use iglu_domain::id::WorkspaceId;
@@ -322,6 +323,38 @@ impl HostClient {
             )
             .await?;
         Ok(kept.path)
+    }
+
+    /// A file the workspace's browser downloaded, as the host streams it;
+    /// `None` when there's no such file.
+    pub async fn download(
+        &self,
+        workspace: WorkspaceId,
+        name: &DownloadName,
+    ) -> Result<Option<reqwest::Response>, HostError> {
+        let mut url = self.url(&format!("/v1/workspaces/{workspace}/downloads/"))?;
+        url.path_segments_mut()
+            .map_err(|()| HostError::Unreachable("the host's address can't have a path".into()))?
+            .pop_if_empty()
+            .push(name.as_str());
+        let response = self
+            .http
+            .get(url)
+            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
+            .send()
+            .await
+            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(Some(response));
+        }
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        match response.json::<CommandError>().await {
+            Ok(error) => Err(HostError::Command(error)),
+            Err(_) => Err(HostError::Unreachable(format!("host answered {status}"))),
+        }
     }
 
     /// Waits for the next connection a workspace on this host makes through

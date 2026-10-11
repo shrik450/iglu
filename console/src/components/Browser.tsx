@@ -41,12 +41,28 @@ export function Browser(props: { ws: WorkspaceView; name: string; title: string;
   const dialog = pane?.dialog.value ?? null;
   const menu = pane?.menu.value ?? null;
   const files = pane?.files.value ?? null;
+  const downloaded = pane?.downloaded.value ?? null;
   return (
     <div class="browser">
       <Bar pane={pane} onUse={() => markActive(ws, name)} />
       {pane && dialog ? <Asking pane={pane} dialog={dialog} /> : null}
       {pane && menu ? <Choosing pane={pane} menu={menu} /> : null}
       {pane && files ? <Uploading pane={pane} files={files} /> : null}
+      {pane && downloaded ? (
+        <div class="browser-dialog" role="status" aria-label="Downloaded">
+          <p translate={false}>{downloaded.name === null ? `Downloaded to ${downloaded.path}.` : `Downloaded ${downloaded.name}.`}</p>
+          <span class="browser-dialog-do">
+            <button type="button" class="btn" onClick={() => (pane.downloaded.value = null)}>
+              Dismiss
+            </button>
+            {downloaded.url ? (
+              <a class="btn primary" href={downloaded.url} download={downloaded.name ?? true} onClick={() => (pane.downloaded.value = null)}>
+                Save to this computer
+              </a>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
       <div class="browser-stage">
         <div class="browser-screen" ref={host} onMouseDown={() => focusColumn(ws, name)} />
         {waiting ? <p class="browser-wait">{waiting}</p> : null}

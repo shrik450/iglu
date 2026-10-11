@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use iglu_domain::capacity;
+use iglu_domain::download::DownloadName;
 use iglu_domain::env::{BuiltImage, EnvSource, GuestUser};
 use iglu_domain::guest::Interface;
 use iglu_domain::id::{InstanceName, PrincipalId};
@@ -111,6 +112,16 @@ pub trait Runtime: Send + Sync + 'static {
         guest: &Guest,
         file: GuestFile,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, RuntimeError>> + Send;
+
+    /// Opens a file the guest's browser downloaded, from the user's
+    /// Downloads, for the person to save. Only a regular file reached
+    /// through no link, so the guest can't point hostd at another file.
+    /// `None` when there's no such file.
+    fn download(
+        &self,
+        guest: &Guest,
+        name: &DownloadName,
+    ) -> impl Future<Output = Result<Option<tokio::fs::File>, RuntimeError>> + Send;
 
     /// Where hostd listens for what the instance sends through its channel
     /// to iglu. The runtime connects the instance's end, at the path it
