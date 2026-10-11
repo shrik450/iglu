@@ -725,10 +725,12 @@ async fn mark_seen(
     Path(id): Path<WorkspaceId>,
 ) -> Result<StatusCode, ApiError> {
     owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
-    app.db.call(move |tx| db::mark_seen(tx, id, now())).await?;
+    let marked = app.db.call(move |tx| db::mark_seen(tx, id)).await?;
     // Looking at a workspace is using it.
     app.usage.used(id);
-    app.changed();
+    if marked {
+        app.changed();
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1520,16 +1522,21 @@ async fn events(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut changes = app.changes.subscribe();
     let stream = async_stream(move |sender| async move {
+        // What this stream last sent: a snapshot that says the same again
+        // isn't sent, so a page only hears of changes.
+        let mut sent = String::new();
         loop {
             if !crate::terminal::lease_valid(&app, &caller, crate::terminal::Use::Idle).await {
                 break;
             }
             match snapshot(&app, caller.principal.id).await {
                 Ok(snapshot) => match serde_json::to_string(&snapshot) {
+                    Ok(data) if data == sent => {}
                     Ok(data) => {
-                        if sender.send(Event::default().data(data)).await.is_err() {
+                        if sender.send(Event::default().data(data.clone())).await.is_err() {
                             break;
                         }
+                        sent = data;
                     }
                     Err(error) => tracing::warn!(%error, "couldn't serialize the event snapshot"),
                 },

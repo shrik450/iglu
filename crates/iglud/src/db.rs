@@ -1373,12 +1373,15 @@ pub fn attention(tx: &Connection, id: WorkspaceId) -> Result<Vec<AttentionRecord
         .collect::<Result<_, _>>()?)
 }
 
-pub fn mark_seen(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<(), DbError> {
-    tx.execute(
-        "UPDATE attention SET seen_at = ?2 WHERE workspace_id = ?1",
-        params![id.to_string(), now.unix_millis()],
+/// Marks the workspace's threads seen as they are now: what each last
+/// reported, by the guest's own clock, so iglud's can't disagree with it.
+/// Whether any thread was unseen.
+pub fn mark_seen(tx: &Connection, id: WorkspaceId) -> Result<bool, DbError> {
+    let marked = tx.execute(
+        "UPDATE attention SET seen_at = updated_at WHERE workspace_id = ?1 AND seen_at < updated_at",
+        [id.to_string()],
     )?;
-    Ok(())
+    Ok(marked > 0)
 }
 
 // ---- columns ----
