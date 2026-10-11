@@ -16,6 +16,7 @@ let
   system = "x86_64-linux";
   packages = self.packages.${system};
   image = self.nixosConfigurations.example.config.system.build.igluImage;
+  nextImage = self.nixosConfigurations.example-next.config.system.build.igluImage;
 
   issuer = "https://auth.idp.test:9091";
   gitAddress = "11.0.0.10";
@@ -355,10 +356,11 @@ in
             1
             2
           ];
-          # The environment builds offline: its flake, nixpkgs and the image
-          # it evaluates to are already in the store.
+          # The environments build offline: their flake, nixpkgs and the
+          # images they evaluate to are already in the store.
           additionalPaths = [
             image
+            nextImage
             "${self}"
             "${nixpkgs}"
           ];
