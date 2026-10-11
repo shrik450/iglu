@@ -5,7 +5,7 @@ import { armed, mac } from "../keyboard.ts";
 import { keyboard } from "../preferences.ts";
 import { type Binding, BINDINGS, chordLabel, onKeyboard } from "../state/keys.ts";
 import { overlay } from "../state/store.ts";
-import { Modal } from "./Modal.tsx";
+import { DialogHead, Modal } from "./Modal.tsx";
 
 const GROUPS = ["Anywhere", "Workspaces", "Columns"] as const;
 
@@ -34,12 +34,7 @@ export function Keys() {
   return (
     <Modal labelledby="keys-h" onClose={close}>
       <div class="kbox">
-        <div class="khead">
-          <h2 id="keys-h">Keyboard shortcuts</h2>
-          <button type="button" class="btn icon" aria-label="Close" autofocus onClick={close}>
-            ×
-          </button>
-        </div>
+        <DialogHead id="keys-h" title="Keyboard shortcuts" onClose={close} autofocus />
         <p class="muted">
           {keyboard.value.alt_moves ? (
             <>

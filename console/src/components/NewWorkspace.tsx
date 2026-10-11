@@ -9,7 +9,7 @@ import { nameFrom, nameFromBranch } from "../state/naming.ts";
 import { opensWith } from "../state/project.ts";
 import { current, newIn, overlay, projects, route } from "../state/store.ts";
 import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
-import { Modal } from "./Modal.tsx";
+import { DialogHead, Modal } from "./Modal.tsx";
 
 export function NewWorkspace() {
   // The project asked for, else the one being looked at, else the first.
@@ -41,7 +41,7 @@ export function NewWorkspace() {
   return (
     <Modal labelledby="new-h" onClose={close}>
       <form class="nbox" aria-labelledby="new-h" onSubmit={start.onSubmit}>
-        <h2 id="new-h">New workspace</h2>
+        <DialogHead id="new-h" title="New workspace" onClose={close} />
         {projects.value.length === 0 ? <p class="field-err">Add an environment first, in <a href="/settings">Settings</a>.</p> : null}
         {projects.value.length > 1 ? (
           <label>

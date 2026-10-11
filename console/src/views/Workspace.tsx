@@ -947,13 +947,22 @@ function lossText(ws: WorkspaceView): string {
 }
 
 function Details({ ws }: { ws: WorkspaceView }) {
+  const project = projects.value.find((p) => p.id === ws.project);
   return (
     <aside class="info" aria-label="Details">
       <div>
         <h2>Workspace</h2>
         <dl>
           <dt>Project</dt>
-          <dd translate={false}>{projects.value.find((p) => p.id === ws.project)?.name ?? "—"}</dd>
+          <dd translate={false}>
+            {project ? (
+              <a href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
+                {project.name}
+              </a>
+            ) : (
+              "—"
+            )}
+          </dd>
           {ws.checkout ? (
             <>
               <dt>Repository</dt>

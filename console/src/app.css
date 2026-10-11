@@ -490,12 +490,13 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .overlay { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; color: inherit; background: var(--scrim); justify-items: center; align-items: start; padding: 10vh 16px 16px; overflow: auto; overscroll-behavior: contain; }
 .overlay[open] { display: grid; }
 .overlay::backdrop { background: transparent; }
+/* A dialog's title, and the button that closes it. */
+.dhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -4px -6px -4px 0; }
+.dhead h2 { margin: 0; font: 500 17px/1.2 var(--display); }
 .pbox, .nbox { width: min(560px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .pbox input { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 14px 16px; font-size: 16px; outline: none; }
 .pbox input:focus-visible { box-shadow: inset 0 -2px 0 var(--accent); }
 .kbox { width: min(720px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 16px 18px; display: grid; gap: 14px; }
-.kbox .khead { display: flex; align-items: center; justify-content: space-between; }
-.kbox h2 { margin: 0; font: 500 16px/1.2 var(--display); }
 .kbox h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .kgroups { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px 24px; }
 .kgroups dl { margin: 0; display: grid; gap: 6px; }
@@ -517,7 +518,6 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .pitem:hover, .pitem[aria-selected="true"] { background: var(--raised); }
 .pempty { padding: 14px; color: var(--muted); font-size: 14px; }
 .nbox { padding: 18px; display: grid; gap: 14px; }
-.nbox h2 { margin: 0; font: 500 17px/1.2 var(--display); }
 .nbox label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .nbox textarea { resize: vertical; min-height: 64px; font: 14px/1.45 var(--ui); }
 .nbox textarea:disabled { opacity: .6; }
