@@ -1,23 +1,28 @@
-// Creating a workspace, in a project.
+// Creating a workspace, in a project: a branch to work on, and what to call
+// it. Agents start from the workspace, or from the project's opening.
 
 import { useState } from "preact/hooks";
 
 import { create } from "../actions.ts";
 import type { CreateWorkspace } from "../generated/CreateWorkspace.ts";
-import { startingAgent } from "../state/project.ts";
-import { environments, newIn, overlay, projects } from "../state/store.ts";
+import { nameFrom, nameFromBranch } from "../state/naming.ts";
+import { opensWith } from "../state/project.ts";
+import { current, newIn, overlay, projects, route } from "../state/store.ts";
 import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
 import { Modal } from "./Modal.tsx";
 
 export function NewWorkspace() {
-  const [chosen, setChosen] = useState(newIn.value ?? projects.value[0]?.id ?? "");
+  // The project asked for, else the one being looked at, else the first.
+  const r = route.value;
+  const here = newIn.value ?? current.value?.project ?? (r.view === "project" ? projects.value.find((p) => p.name === r.name)?.id : undefined);
+  const [chosen, setChosen] = useState(here ?? projects.value[0]?.id ?? "");
   const project = projects.value.find((p) => p.id === chosen) ?? null;
-  const latest = environments.value.find((env) => env.name === project?.environment)?.latest;
-  const agents = latest?.status === "ready" ? latest.image.agents.map((a) => a.name) : [];
-  const preferred = project ? startingAgent(project, agents) : null;
-  // What the person picked, while it's still one this project's environment has.
-  const [picked, setPicked] = useState<string | null>(null);
-  const agent = picked && agents.includes(picked) ? picked : preferred;
+  const [label, setLabel] = useState("");
+  const [branch, setBranch] = useState("");
+  const repo = Boolean(project?.repo);
+  // The name iglu will make, shown until one is typed.
+  const made = nameFrom(label) ?? (repo ? nameFromBranch(branch) : null);
+  const opens = project ? opensWith(project) : [];
   const close = () => {
     overlay.value = null;
     newIn.value = null;
@@ -26,16 +31,11 @@ export function NewWorkspace() {
     if (!project) return;
     const text = textOf(data);
     const body: CreateWorkspace = { project: project.id };
-    const prompt = text("prompt");
-    if (prompt) body.prompt = prompt;
-    // Left out unless picked, so iglu chooses as the project says.
-    if (prompt && picked && agent) body.agent = agent;
-    const name = text("name");
-    const branch = text("branch");
-    const base = text("base");
+    const [label, name, branch, base] = [text("label"), text("name"), text("branch"), text("base")];
+    if (label) body.label = label;
     if (name) body.name = name;
-    if (branch) body.branch = branch;
-    if (base) body.base = base;
+    if (repo && branch) body.branch = branch;
+    if (repo && base) body.base = base;
     await create(body);
   });
   return (
@@ -43,36 +43,7 @@ export function NewWorkspace() {
       <form class="nbox" aria-labelledby="new-h" onSubmit={start.onSubmit}>
         <h2 id="new-h">New workspace</h2>
         {projects.value.length === 0 ? <p class="field-err">Add an environment first, in <a href="/settings">Settings</a>.</p> : null}
-        <label>
-          Prompt
-          <textarea
-            name="prompt"
-            rows={3}
-            placeholder={agent ? `What should ${agent} do? Optional…` : "No agents in this environment…"}
-            disabled={agents.length === 0}
-            autofocus
-            {...invalid(start, "prompt")}
-            onKeyDown={(e) => {
-              // ⌘↩ submits from the prompt, which takes plain returns.
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
-            }}
-          />
-          <FieldError form={start} input="prompt" />
-        </label>
-        {agents.length > 1 ? (
-          <label>
-            Agent
-            <select name="agent" value={agent ?? ""} onChange={(e) => setPicked(e.currentTarget.value)} {...invalid(start, "agent")}>
-              {agents.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-            <FieldError form={start} input="agent" />
-          </label>
-        ) : null}
-        <div class="two">
+        {projects.value.length > 1 ? (
           <label>
             Project
             <select name="project" value={chosen} onChange={(e) => setChosen(e.currentTarget.value)} {...invalid(start, "project")}>
@@ -84,29 +55,54 @@ export function NewWorkspace() {
             </select>
             <FieldError form={start} input="project" />
           </label>
+        ) : null}
+        {repo ? (
           <label>
-            Name
-            <input name="name" placeholder="Picked for you…" autocomplete="off" spellcheck={false} {...invalid(start, "name")} />
-            <FieldError form={start} input="name" />
+            Branch
+            <input
+              name="branch"
+              placeholder="A new branch, or one the remote has…"
+              autocomplete="off"
+              spellcheck={false}
+              autofocus
+              value={branch}
+              onInput={(e) => setBranch(e.currentTarget.value)}
+              {...invalid(start, "branch")}
+            />
+            <FieldError form={start} input="branch" />
           </label>
-        </div>
-        {project?.repo ? (
-          <details>
-            <summary>Branch</summary>
-            <div class="fine">
+        ) : null}
+        <label>
+          Call it
+          <input
+            name="label"
+            placeholder={repo ? "Anything; the branch names it otherwise…" : "Anything, such as Tidy my notes…"}
+            autocomplete="off"
+            autofocus={!repo}
+            value={label}
+            onInput={(e) => setLabel(e.currentTarget.value)}
+            {...invalid(start, "label")}
+          />
+          <FieldError form={start} input="label" />
+        </label>
+        <details>
+          <summary>More</summary>
+          <div class="fine">
+            <label>
+              Name, in URLs and the CLI
+              <input name="name" placeholder={made ? `${made}…` : "Picked for you…"} autocomplete="off" spellcheck={false} {...invalid(start, "name")} />
+              <FieldError form={start} input="name" />
+            </label>
+            {repo ? (
               <label>
-                Branch
-                <input name="branch" placeholder="Named after the workspace…" autocomplete="off" spellcheck={false} {...invalid(start, "branch")} />
-                <FieldError form={start} input="branch" />
-              </label>
-              <label>
-                Start from
+                A new branch starts from
                 <input name="base" placeholder="The default branch…" autocomplete="off" spellcheck={false} {...invalid(start, "base")} />
                 <FieldError form={start} input="base" />
               </label>
-            </div>
-          </details>
-        ) : null}
+            ) : null}
+          </div>
+        </details>
+        {opens.length ? <p class="fine-print">Opens with {opens.join(", ")}.</p> : null}
         <FormError form={start} />
         <div class="nbtns">
           {/* Once asked for, the workspace is made either way; closing only stops waiting for it. */}

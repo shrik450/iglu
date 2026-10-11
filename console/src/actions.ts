@@ -21,6 +21,7 @@ import {
   inside,
   listed,
   navigate,
+  newIn,
   overlay,
   previous,
   projects,
@@ -33,6 +34,7 @@ import {
   zoomed,
 } from "./state/store.ts";
 import { panes } from "./terminal.ts";
+import { called } from "./state/naming.ts";
 
 /** Runs a request, showing its error instead of throwing. */
 export async function attempt<T>(request: () => Promise<T>): Promise<T | undefined> {
@@ -95,8 +97,14 @@ export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
 
 /** Renames a workspace; throws what iglu refused, for the form to show. Its
  * new name shows at once, and the URL follows it, before the next snapshot. */
-export async function rename(ws: WorkspaceView, name: string): Promise<void> {
-  const renamed = await api.rename(ws.id, name);
+/** Changes what a workspace is called and its name, each only if it
+ * changed; throws what iglu refused, for the form to show. */
+export async function rename(ws: WorkspaceView, label: string, name: string): Promise<void> {
+  let renamed = ws;
+  if (name !== ws.name) renamed = await api.rename(ws.id, name);
+  // Its own name, or nothing, is no label of its own.
+  const named = label && label !== renamed.name ? label : null;
+  if (named !== renamed.label) renamed = await api.label(ws.id, named);
   workspaces.value = workspaces.value.map((w) => (w.id === renamed.id ? renamed : w));
   settle(ws, "rename");
 }
@@ -122,12 +130,15 @@ export function labelOrSay(ws: WorkspaceView, column: string): void {
 /** Creates a workspace; throws what iglu refused, for the form to show. */
 export async function create(body: CreateWorkspace): Promise<void> {
   const ws = await api.create(body);
+  // In the list before it's opened, so the page has it to show.
+  if (!workspaces.value.some((w) => w.id === ws.id)) workspaces.value = [...workspaces.value, ws];
+  newIn.value = null;
   // Opened only for someone still waiting on the form; one who closed it and
   // moved on hears about it instead of being taken away.
   if (overlay.peek() === "new") {
     overlay.value = null;
     open(ws);
-  } else say(`${ws.name} is being made; it's in the list.`);
+  } else say(`${called(ws)} is being made; it's in the list.`);
 }
 
 /** Publishes a port; throws what iglu refused, for a form to show. */

@@ -5,9 +5,9 @@
 use anyhow::{Context, anyhow, bail};
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
-    CreateProject, CreateWorkspace, EnvironmentView, ErrorBody, ErrorKind, Identity, LiveView,
-    ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace, RouteView, SecretView,
-    SendInput, SetDesiredState, WorkspaceView,
+    CreateProject, CreateWorkspace, EnvironmentView, ErrorBody, ErrorKind, Identity,
+    LabelWorkspace, LiveView, ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace,
+    RouteView, SecretView, SendInput, SetDesiredState, WorkspaceView,
 };
 use iglu_domain::column::ColumnSpec;
 use iglu_domain::env::EnvName;
@@ -193,6 +193,15 @@ impl Client {
         request: &RenameWorkspace,
     ) -> anyhow::Result<WorkspaceView> {
         let url = self.url(&format!("/v1/workspaces/{id}/name"))?;
+        self.json(self.http.put(url).json(request)).await
+    }
+
+    pub async fn label(
+        &self,
+        id: WorkspaceId,
+        request: &LabelWorkspace,
+    ) -> anyhow::Result<WorkspaceView> {
+        let url = self.url(&format!("/v1/workspaces/{id}/label"))?;
         self.json(self.http.put(url).json(request)).await
     }
 

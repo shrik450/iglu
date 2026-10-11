@@ -103,23 +103,29 @@ function Topbar() {
 function Toasts() {
   return (
     <div class="toasts" aria-live="polite">
-      {toasts.value.map((t) => (
-        <a
-          key={t.id}
-          class="toast"
-          href={`/w/${t.workspace}`}
-          onClick={(e) => {
-            toasts.value = toasts.value.filter((x) => x.id !== t.id);
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "workspace", name: t.workspace });
-          }}
-        >
-          <Igloo />
-          <b>{t.title}</b>
-          <span>{t.detail}</span>
-        </a>
-      ))}
+      {toasts.value.map((t) => {
+        // A workspace deleted since has nothing to show; one renamed is
+        // reached by its new name.
+        const ws = workspaces.value.find((w) => w.id === t.workspace);
+        if (!ws) return null;
+        return (
+          <a
+            key={t.id}
+            class="toast"
+            href={`/w/${ws.name}`}
+            onClick={(e) => {
+              toasts.value = toasts.value.filter((x) => x.id !== t.id);
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+              e.preventDefault();
+              navigate({ view: "workspace", name: ws.name });
+            }}
+          >
+            <Igloo />
+            <b>{t.title}</b>
+            <span>{t.detail}</span>
+          </a>
+        );
+      })}
     </div>
   );
 }

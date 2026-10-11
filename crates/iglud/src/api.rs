@@ -15,9 +15,9 @@ use futures_util::Stream;
 use iglu_api::browser::BrowserSize;
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
-    CreateWorkspace, EnvironmentView, Identity, KeptFile, LabelColumn, ListenerView, LiveView, Me,
-    PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace, RouteView, SecretView,
-    SendInput, SetDesiredState, Snapshot, WorkspaceView,
+    CreateWorkspace, EnvironmentView, Identity, KeptFile, LabelColumn, LabelWorkspace,
+    ListenerView, LiveView, Me, PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace,
+    RouteView, SecretView, SendInput, SetDesiredState, Snapshot, WorkspaceView,
 };
 use iglu_domain::agent::Prompt;
 use iglu_domain::auth::{Action, Grant, Permission};
@@ -25,9 +25,9 @@ use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
 use iglu_domain::env::EnvName;
 use iglu_domain::git;
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
-use iglu_domain::label::{HostId, RouteName, WorkspaceName};
+use iglu_domain::label::{DnsLabel, HostId, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Revision, allow_transition};
-use iglu_domain::names;
+use iglu_domain::names::{self, WorkspaceLabel};
 use iglu_domain::pasted::{self, FileName};
 use iglu_domain::port::GuestPort;
 use iglu_domain::preferences::Preferences;
@@ -66,6 +66,7 @@ pub fn router() -> Router<Arc<App>> {
         .route("/v1/workspaces/{id}", get(get_workspace))
         .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
         .route("/v1/workspaces/{id}/name", put(rename_workspace))
+        .route("/v1/workspaces/{id}/label", put(label_workspace))
         .route("/v1/workspaces/{id}/seen", post(mark_seen))
         .route("/v1/workspaces/{id}/activity", get(activity))
         .route(
@@ -134,6 +135,7 @@ pub fn guest_router() -> Router<Arc<App>> {
         .route("/v1/workspaces/{id}", get(get_workspace))
         .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
         .route("/v1/workspaces/{id}/name", put(rename_workspace))
+        .route("/v1/workspaces/{id}/label", put(label_workspace))
         .route("/v1/workspaces/{id}/activity", get(activity))
         .route(
             "/v1/workspaces/{id}/columns",
@@ -427,13 +429,8 @@ fn insert_requested(
         Ok(started) => started,
         Err(refused) => return Ok(Err(refused.to_string().into())),
     };
-    let name = match choose_name(
-        tx,
-        owner,
-        request.name,
-        request.prompt.as_ref(),
-        fresh.entropy,
-    )? {
+    let made = made_from(&request);
+    let name = match choose_name(tx, owner, request.name, &made, fresh.entropy)? {
         Ok(name) => name,
         Err(refused) => return Ok(Err(refused)),
     };
@@ -442,12 +439,17 @@ fn insert_requested(
             Ok(checkout) => checkout,
             Err(refused) => return Ok(Err(refused.to_string().into())),
         };
+    // A label that says no more than the name isn't kept.
+    let label = request
+        .label
+        .filter(|label| label.as_str() != name.as_str());
     let record = WorkspaceRecord {
         id: fresh.id,
         owner,
         host: fresh.host.clone(),
         env_revision: revision,
         name,
+        label,
         project: project.id,
         checkout,
         desired: DesiredState::Running,
@@ -544,13 +546,46 @@ fn publish_in(
     }
 }
 
-/// The name asked for if it's free; else one from the prompt; else the
-/// first unused generated name.
+/// What a new workspace's name can be made from, in the order tried: what
+/// the person calls it, its branch, and what it was started to do.
+fn made_from(request: &CreateWorkspace) -> Vec<Made> {
+    let mut made = Vec::new();
+    if let Some(label) = &request.label {
+        made.push(Made::Label(label.to_string()));
+    }
+    if let Some(branch) = &request.branch {
+        made.push(Made::Branch(branch.to_string()));
+    }
+    if let Some(prompt) = &request.prompt {
+        made.push(Made::Prompt(prompt.as_str().to_owned()));
+    }
+    made
+}
+
+/// Text a workspace's name is made from.
+enum Made {
+    Label(String),
+    Branch(String),
+    Prompt(String),
+}
+
+impl Made {
+    fn name(&self, attempt: u32) -> Option<DnsLabel> {
+        match self {
+            Self::Label(text) => names::from_label(text, attempt),
+            Self::Branch(text) => names::from_branch(text, attempt),
+            Self::Prompt(text) => names::from_prompt(text, attempt),
+        }
+    }
+}
+
+/// The name asked for if it's free; else the first free one made from the
+/// label, branch or prompt; else the first unused generated name.
 fn choose_name(
     tx: &rusqlite::Connection,
     owner: PrincipalId,
     asked: Option<WorkspaceName>,
-    prompt: Option<&Prompt>,
+    made: &[Made],
     entropy: u64,
 ) -> Result<Result<WorkspaceName, Problem>, db::DbError> {
     let free = |name: &WorkspaceName| -> Result<bool, db::DbError> {
@@ -563,9 +598,9 @@ fn choose_name(
             Err(Problem::at("name", "a workspace with that name exists"))
         });
     }
-    if let Some(prompt) = prompt {
+    for source in made {
         for attempt in 0..20 {
-            let Some(label) = names::from_prompt(prompt.as_str(), attempt) else {
+            let Some(label) = source.name(attempt) else {
                 break;
             };
             if let Ok(name) = WorkspaceName::try_from(label)
@@ -665,6 +700,45 @@ async fn rename_workspace(
         }
         (RenameOutcome::Missing | RenameOutcome::Done, _) => return Err(ApiError::NotFound),
     };
+    app.changed();
+    Ok(Json(actor.shown(view(&app, updated).await?)))
+}
+
+async fn label_workspace(
+    actor: Actor,
+    State(app): State<Arc<App>>,
+    Path(id): Path<WorkspaceId>,
+    Body(request): Body<LabelWorkspace>,
+) -> Result<Json<WorkspaceView>, ApiError> {
+    let ws = workspace_for(&app, &actor, id, Action::OperateWorkspace).await?;
+    let by = actor.by();
+    let updated = app
+        .db
+        .call(move |tx| {
+            // A label that says no more than the name isn't kept.
+            let label = request
+                .label
+                .filter(|label| label.as_str() != ws.name.as_str());
+            if !db::label_workspace(tx, id, label.as_ref())? {
+                return Ok(None);
+            }
+            if label != ws.label {
+                let to = label
+                    .as_ref()
+                    .map_or(ws.name.as_str(), WorkspaceLabel::as_str);
+                db::add_activity(
+                    tx,
+                    Some(id),
+                    Some(by),
+                    "renamed",
+                    &format!("to {to}"),
+                    now(),
+                )?;
+            }
+            db::workspace(tx, id)
+        })
+        .await?
+        .ok_or(ApiError::NotFound)?;
     app.changed();
     Ok(Json(actor.shown(view(&app, updated).await?)))
 }

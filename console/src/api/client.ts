@@ -32,6 +32,7 @@ import type { PutLayout } from "../generated/PutLayout.ts";
 import type { PutSecret } from "../generated/PutSecret.ts";
 import type { SecretName } from "../generated/SecretName.ts";
 import type { SecretView } from "../generated/SecretView.ts";
+import type { LabelWorkspace } from "../generated/LabelWorkspace.ts";
 import type { RenameWorkspace } from "../generated/RenameWorkspace.ts";
 import type { RouteId } from "../generated/RouteId.ts";
 import type { RouteView } from "../generated/RouteView.ts";
@@ -115,6 +116,7 @@ export const api = {
   setState: (ws: WorkspaceView, state: DesiredState) =>
     request<WorkspaceView>("PUT", `/v1/workspaces/${ws.id}/desired-state`, { state, expected_revision: ws.revision } satisfies SetDesiredState),
   rename: (id: WorkspaceId, name: WorkspaceName) => request<WorkspaceView>("PUT", `/v1/workspaces/${id}/name`, { name } satisfies RenameWorkspace),
+  label: (id: WorkspaceId, label: string | null) => request<WorkspaceView>("PUT", `/v1/workspaces/${id}/label`, { label } satisfies LabelWorkspace),
   seen: (id: WorkspaceId) => request<void>("POST", `/v1/workspaces/${id}/seen`),
   columns: (id: WorkspaceId) => request<ColumnStatus[]>("GET", `/v1/workspaces/${id}/columns`),
   addColumn: (id: WorkspaceId, body: AddColumn) => request<ColumnSpec>("POST", `/v1/workspaces/${id}/columns`, body),

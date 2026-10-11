@@ -19,6 +19,7 @@ use iglu_domain::idle::IdleRule;
 use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Phase, Revision};
 use iglu_domain::listener::Listener;
+use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
 use iglu_domain::preferences::Preferences;
 use iglu_domain::project::{Opening, Origin, PreviewPorts};
@@ -50,6 +51,8 @@ pub struct Me {
 pub struct WorkspaceView {
     pub id: WorkspaceId,
     pub name: WorkspaceName,
+    /// What the person calls it, shown in place of its name.
+    pub label: Option<WorkspaceLabel>,
     pub project: ProjectId,
     /// What it cloned, when its project has a repository.
     pub checkout: Option<Checkout>,
@@ -469,8 +472,12 @@ impl BootId {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct CreateWorkspace {
     pub project: ProjectId,
+    /// What to call it. Names it too when no name is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub label: Option<WorkspaceLabel>,
     /// What to work on: it starts an agent with it, and names the workspace
-    /// when no name is given.
+    /// when nothing else does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub prompt: Option<Prompt>,
@@ -479,8 +486,8 @@ pub struct CreateWorkspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub agent: Option<AgentName>,
-    /// The branch to work on. Defaults to the workspace name. Only for
-    /// projects with a repository.
+    /// The branch to work on. Defaults to the workspace name, and names it
+    /// when no name or label is given. Only for projects with a repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub branch: Option<BranchName>,
@@ -488,7 +495,8 @@ pub struct CreateWorkspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub base: Option<BranchName>,
-    /// Generated when absent.
+    /// Made from the label, the branch or the prompt when absent, or else
+    /// generated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub name: Option<WorkspaceName>,
@@ -509,6 +517,14 @@ pub struct SetDesiredState {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct RenameWorkspace {
     pub name: WorkspaceName,
+}
+
+/// What to call a workspace; `null` goes back to its name.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct LabelWorkspace {
+    pub label: Option<WorkspaceLabel>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

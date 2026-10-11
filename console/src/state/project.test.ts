@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { parsePorts, startingAgent } from "./project.ts";
+import { opensWith, parsePorts } from "./project.ts";
 
 test("ports parse from a loose list", () => {
   assert.deepEqual(parsePorts("5173, 3000 3000"), { ports: [3000, 5173] });
@@ -11,14 +11,13 @@ test("ports parse from a loose list", () => {
   assert.deepEqual(parsePorts("70000"), { ports: [70000] });
 });
 
-test("a new workspace starts the agent iglu would pick", () => {
-  const agents = ["claude", "haiku", "scripted"];
+test("a new workspace opens its project's columns and agent", () => {
   const shell = { kind: { kind: "shell" as const }, width: "half" as const };
+  const notes = { name: "notes", kind: { kind: "shell" as const }, width: "half" as const };
   const scripted = { kind: { kind: "agent" as const, agent: "scripted" }, width: "half" as const };
-  assert.equal(startingAgent({ agent: "haiku", opening: [scripted] }, agents), "haiku");
-  assert.equal(startingAgent({ agent: null, opening: [shell, scripted] }, agents), "scripted");
-  assert.equal(startingAgent({ agent: null, opening: [shell] }, agents), "claude");
-  // An agent the environment no longer has isn't offered.
-  assert.equal(startingAgent({ agent: "codex", opening: [] }, agents), "claude");
-  assert.equal(startingAgent({ agent: null, opening: [] }, []), null);
+  assert.deepEqual(opensWith({ agent: null, opening: [shell, notes] }), ["Shell", "notes"]);
+  assert.deepEqual(opensWith({ agent: "haiku", opening: [scripted] }), ["scripted", "haiku"]);
+  // An agent the opening already has isn't started twice.
+  assert.deepEqual(opensWith({ agent: "scripted", opening: [shell, scripted] }), ["Shell", "scripted"]);
+  assert.deepEqual(opensWith({ agent: null, opening: [] }), []);
 });

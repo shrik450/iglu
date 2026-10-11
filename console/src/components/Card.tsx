@@ -9,6 +9,7 @@ import { cursor } from "../state/store.ts";
 import { unreachable } from "../state/unsaved.ts";
 import { Previews } from "./Previews.tsx";
 import { attentionGlyph, attentionText, buildRows, Frost, Glyph, Igloo, lookOf, phaseText, WorkspaceLink, workspaceGlyph } from "./bits.tsx";
+import { called } from "../state/naming.ts";
 
 /** The top thread, and one more for a sense of what else is going on. */
 function Threads({ ws }: { ws: WorkspaceView }) {
@@ -87,7 +88,7 @@ export function Card({ ws }: { ws: WorkspaceView }) {
       <header class="c-head">
         <Glyph kind={workspaceGlyph(ws)} />
         <WorkspaceLink ws={ws} class="name">
-          <span translate={false}>{ws.name}</span>
+          <span translate={false}>{called(ws)}</span>
         </WorkspaceLink>
         {branch ? (
           <span class="branch" translate={false}>

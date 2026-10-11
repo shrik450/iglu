@@ -1,10 +1,112 @@
-//! Generated `adjective-verbing` names for workspaces and routes, and names
-//! taken from what a workspace was started to do.
+//! Generated `adjective-verbing` names for workspaces and routes, names
+//! taken from what a workspace was started to do, and what a person calls a
+//! workspace.
 //!
 //! The shell supplies entropy and checks uniqueness against storage; this
-//! module only turns entropy into a well-formed name.
+//! module only turns entropy and text into a well-formed name.
 
+use std::fmt;
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
+
+use crate::ParseError;
 use crate::label::DnsLabel;
+use crate::parse::{is_printable, text_type};
+
+/// What a person calls a workspace, shown in place of its name: 1–80
+/// characters of text a line can show, with no space at either end. A label
+/// only names; the workspace's name stays its identity, in URLs, the CLI and
+/// its branch.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "string"))]
+#[serde(try_from = "String", into = "String")]
+pub struct WorkspaceLabel(String);
+
+impl WorkspaceLabel {
+    pub const MAX_CHARS: usize = 80;
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for WorkspaceLabel {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() || s.trim() != s {
+            return Err(ParseError::new(
+                "workspace label",
+                "must have text and no space at either end",
+            ));
+        }
+        if s.chars().count() > Self::MAX_CHARS {
+            return Err(ParseError::new(
+                "workspace label",
+                "must be at most 80 characters",
+            ));
+        }
+        if !s.chars().all(is_printable) {
+            return Err(ParseError::new(
+                "workspace label",
+                "must be one line of plain text",
+            ));
+        }
+        Ok(Self(s.to_owned()))
+    }
+}
+
+impl fmt::Display for WorkspaceLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+text_type!(WorkspaceLabel);
+
+/// The longest name made from text, leaving room for a number after it.
+const MADE_MAX: usize = 40;
+
+/// A name made from what a person typed, such as `more-ui-tweaks` for "More
+/// UI tweaks": ASCII letters and digits, lowercased, with dashes for
+/// everything between them, starting at the first letter. Attempts after
+/// the first add `-2`, `-3` and so on. `None` when the text has no letter.
+#[must_use]
+pub fn from_label(text: &str, attempt: u32) -> Option<DnsLabel> {
+    let mut stem = String::new();
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() {
+            if stem.is_empty() && !c.is_ascii_alphabetic() {
+                continue;
+            }
+            stem.push(c.to_ascii_lowercase());
+        } else if !stem.is_empty() && !stem.ends_with('-') {
+            stem.push('-');
+        }
+    }
+    if stem.len() > MADE_MAX {
+        stem.truncate(MADE_MAX);
+    }
+    let stem = stem.trim_end_matches('-');
+    if stem.is_empty() {
+        return None;
+    }
+    let text = if attempt == 0 {
+        stem.to_owned()
+    } else {
+        format!("{stem}-{}", attempt + 1)
+    };
+    text.parse().ok()
+}
+
+/// A name made from a branch's last part, such as `login-fix` for
+/// `su/login-fix`.
+#[must_use]
+pub fn from_branch(branch: &str, attempt: u32) -> Option<DnsLabel> {
+    from_label(branch.rsplit('/').next().unwrap_or(branch), attempt)
+}
 
 /// Attempts before candidates get a numeric suffix, so the name space never runs out.
 const BARE_ATTEMPTS: u32 = 8;
@@ -274,6 +376,47 @@ mod tests {
         assert_eq!(named("do it", 0), None);
         let label = from_prompt("Fix the login bug", 0).expect("a name");
         assert!(WorkspaceName::try_from(label).is_ok());
+    }
+
+    #[test]
+    fn labels_name_by_their_letters_and_digits() {
+        let named = |text: &str, attempt| from_label(text, attempt).map(|l| l.as_str().to_owned());
+        assert_eq!(
+            named("More UI Tweaks", 0).as_deref(),
+            Some("more-ui-tweaks")
+        );
+        assert_eq!(
+            named("  fix: the login (again)! ", 0).as_deref(),
+            Some("fix-the-login-again")
+        );
+        assert_eq!(named("2024 review", 0).as_deref(), Some("review"));
+        assert_eq!(named("Café ☕ notes", 1).as_deref(), Some("caf-notes-2"));
+        assert_eq!(named("修正", 0), None);
+        let long = named(&"word ".repeat(20), 0).expect("a name");
+        assert!(long.len() <= MADE_MAX && !long.ends_with('-'), "{long}");
+        let label = from_label("More UI Tweaks", 3).expect("a name");
+        assert!(WorkspaceName::try_from(label).is_ok());
+    }
+
+    #[test]
+    fn branches_name_by_their_last_part() {
+        let named = |text: &str| from_branch(text, 0).map(|l| l.as_str().to_owned());
+        assert_eq!(named("su/login-fix").as_deref(), Some("login-fix"));
+        assert_eq!(named("main").as_deref(), Some("main"));
+        assert_eq!(
+            named("feature/JIRA-123_Thing").as_deref(),
+            Some("jira-123-thing")
+        );
+    }
+
+    #[test]
+    fn a_label_is_one_line_of_text() {
+        assert!("More UI tweaks".parse::<WorkspaceLabel>().is_ok());
+        assert!("x".repeat(80).parse::<WorkspaceLabel>().is_ok());
+        assert!("x".repeat(81).parse::<WorkspaceLabel>().is_err());
+        assert!(" padded".parse::<WorkspaceLabel>().is_err());
+        assert!("".parse::<WorkspaceLabel>().is_err());
+        assert!("two\nlines".parse::<WorkspaceLabel>().is_err());
     }
 
     #[test]

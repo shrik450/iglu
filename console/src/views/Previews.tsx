@@ -3,6 +3,7 @@
 import { lookOf, WorkspaceLink } from "../components/bits.tsx";
 import { CopyLink } from "../components/CopyLink.tsx";
 import { groups } from "../state/store.ts";
+import { called } from "../state/naming.ts";
 
 export function PreviewsView() {
   const shown = groups.value.map((group) => ({ group, workspaces: group.workspaces.filter((ws) => ws.routes.length > 0) })).filter((g) => g.workspaces.length > 0);
@@ -25,12 +26,12 @@ export function PreviewsView() {
                     {route.url.replace(/^https:\/\//, "")}
                   </a>
                   <span class="to">
-                    → <b translate={false}>{ws.name}</b> :{route.port}
+                    → <b translate={false}>{called(ws)}</b> :{route.port}
                     {state ? <span class="state"> {ws.phase}</span> : null}
                   </span>
                   <span class="pv-acts">
                     <CopyLink url={route.url} name={route.name} />
-                    <WorkspaceLink ws={ws} class="btn" label={`Open ${ws.name}`}>
+                    <WorkspaceLink ws={ws} class="btn" label={`Open ${called(ws)}`}>
                       Open workspace
                     </WorkspaceLink>
                   </span>

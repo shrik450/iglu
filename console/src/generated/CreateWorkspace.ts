@@ -3,12 +3,17 @@ import type { AgentName } from "./AgentName";
 import type { BranchName } from "./BranchName";
 import type { ProjectId } from "./ProjectId";
 import type { Prompt } from "./Prompt";
+import type { WorkspaceLabel } from "./WorkspaceLabel";
 import type { WorkspaceName } from "./WorkspaceName";
 
 export type CreateWorkspace = { project: ProjectId, 
 /**
+ * What to call it. Names it too when no name is given.
+ */
+label?: WorkspaceLabel, 
+/**
  * What to work on: it starts an agent with it, and names the workspace
- * when no name is given.
+ * when nothing else does.
  */
 prompt?: Prompt, 
 /**
@@ -17,8 +22,8 @@ prompt?: Prompt,
  */
 agent?: AgentName, 
 /**
- * The branch to work on. Defaults to the workspace name. Only for
- * projects with a repository.
+ * The branch to work on. Defaults to the workspace name, and names it
+ * when no name or label is given. Only for projects with a repository.
  */
 branch?: BranchName, 
 /**
@@ -26,6 +31,7 @@ branch?: BranchName,
  */
 base?: BranchName, 
 /**
- * Generated when absent.
+ * Made from the label, the branch or the prompt when absent, or else
+ * generated.
  */
 name?: WorkspaceName, };

@@ -17,8 +17,8 @@ use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use iglu_api::{
     AccessGrant, AddColumn, Condition, CreateEnvironment, CreateProject, CreateWorkspace, Identity,
-    ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace, RevisionStatus, RouteView,
-    SendInput, SetDesiredState, WorkspaceView,
+    LabelWorkspace, ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace,
+    RevisionStatus, RouteView, SendInput, SetDesiredState, WorkspaceView,
 };
 use iglu_domain::agent::Prompt;
 use iglu_domain::auth::Permission;
@@ -28,6 +28,7 @@ use iglu_domain::git::{Unpushed, Unsaved};
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::label::{AgentName, ProjectName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Phase};
+use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
 use iglu_domain::project::Origin;
 use iglu_domain::repo::{BranchName, GitHost, RepoUrl};
@@ -89,17 +90,23 @@ enum WorkspaceCommand {
     New {
         /// The project's name; `general` has no repository.
         project: String,
-        /// What to work on. Starts an agent with it and names the workspace.
+        /// What to call it, such as "Tidy the login flow". Names it too.
+        #[arg(long)]
+        label: Option<WorkspaceLabel>,
+        /// What to work on. Starts an agent with it, and names the workspace
+        /// when nothing else does.
         prompt: Option<Prompt>,
         /// The agent to start, if not the project's or the environment's first.
         #[arg(long)]
         agent: Option<AgentName>,
-        /// The branch to work on. Defaults to the workspace name.
+        /// The branch to work on. Defaults to the workspace name, and names
+        /// it when there's no name or label.
         #[arg(long)]
         branch: Option<BranchName>,
         /// Where a new branch starts. Defaults to the remote's default branch.
         #[arg(long)]
         base: Option<BranchName>,
+        /// Made from the label, branch or prompt when absent.
         #[arg(long)]
         name: Option<WorkspaceName>,
         /// Wait until the workspace is running.
@@ -118,6 +125,12 @@ enum WorkspaceCommand {
     Rename {
         workspace: String,
         name: WorkspaceName,
+    },
+    /// Call a workspace something other than its name. Without a label, it
+    /// goes back to its name.
+    Label {
+        workspace: String,
+        label: Option<WorkspaceLabel>,
     },
     /// Start or thaw a workspace.
     Start {
@@ -309,6 +322,9 @@ fn describe(ws: &WorkspaceView) -> String {
         .as_ref()
         .map_or_else(String::new, |checkout| checkout.branch.to_string());
     let mut lines = vec![format!("{:<24} {:<10} {branch}", ws.name, ws.phase)];
+    if let Some(label) = &ws.label {
+        lines.push(format!("  “{label}”"));
+    }
     if let Some(attention) = &ws.attention {
         lines.push(format!(
             "  {}: {} {}",
@@ -433,26 +449,30 @@ fn lines<T>(list: &[T], line: impl Fn(&T) -> String) -> String {
     list.iter().map(line).collect::<Vec<_>>().join("\n")
 }
 
+async fn list(client: &Client, json_mode: bool) -> anyhow::Result<()> {
+    let list = client.workspaces().await?;
+    // Projects are a person's; a workspace sees only workspaces.
+    let projects = if json_mode || client.inside() {
+        Vec::new()
+    } else {
+        client.projects().await?
+    };
+    print(json_mode, list.as_slice(), |list| {
+        by_project(list, &projects)
+    });
+    Ok(())
+}
+
 async fn workspace(
     client: &Client,
     json_mode: bool,
     command: WorkspaceCommand,
 ) -> anyhow::Result<()> {
     match command {
-        WorkspaceCommand::Ls => {
-            let list = client.workspaces().await?;
-            // Projects are a person's; a workspace sees only workspaces.
-            let projects = if json_mode || client.inside() {
-                Vec::new()
-            } else {
-                client.projects().await?
-            };
-            print(json_mode, list.as_slice(), |list| {
-                by_project(list, &projects)
-            });
-        }
+        WorkspaceCommand::Ls => list(client, json_mode).await?,
         WorkspaceCommand::New {
             project,
+            label,
             prompt,
             agent,
             branch,
@@ -463,6 +483,7 @@ async fn workspace(
             let project = client.resolve_project(&project).await?;
             let request = CreateWorkspace {
                 project: project.id,
+                label,
                 prompt,
                 agent,
                 branch,
@@ -490,6 +511,11 @@ async fn workspace(
         WorkspaceCommand::Rename { workspace, name } => {
             let ws = client.resolve(&workspace).await?;
             let ws = client.rename(ws.id, &RenameWorkspace { name }).await?;
+            print(json_mode, &ws, describe);
+        }
+        WorkspaceCommand::Label { workspace, label } => {
+            let ws = client.resolve(&workspace).await?;
+            let ws = client.label(ws.id, &LabelWorkspace { label }).await?;
             print(json_mode, &ws, describe);
         }
         WorkspaceCommand::Start { workspace, wait } => {

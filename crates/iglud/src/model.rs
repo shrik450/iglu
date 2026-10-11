@@ -11,6 +11,7 @@ use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, WorkspaceI
 use iglu_domain::idle::IdleRule;
 use iglu_domain::label::{AgentName, HostId, ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Instance, Phase, Revision, SecretsGeneration};
+use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
 use iglu_domain::project::{Opening, Origin, PreviewPorts};
 use iglu_domain::repo::{Checkout, RepoUrl};
@@ -43,6 +44,8 @@ pub struct WorkspaceRecord {
     pub host: HostId,
     pub env_revision: EnvRevisionId,
     pub name: WorkspaceName,
+    /// What the person calls it, when that isn't its name.
+    pub label: Option<WorkspaceLabel>,
     pub project: ProjectId,
     pub checkout: Option<Checkout>,
     pub desired: DesiredState,

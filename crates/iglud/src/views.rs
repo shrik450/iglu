@@ -79,6 +79,7 @@ pub fn workspace_view(
         id: ws.id,
         phase,
         name: ws.name,
+        label: ws.label,
         project: ws.project,
         checkout: ws.checkout,
         environment,

@@ -266,6 +266,8 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .w-title .g { align-self: center; }
 .rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1 1 auto; }
 .rename input { font: 500 17px/1.2 var(--display); background: var(--bg); border: 1px solid var(--accent); border-radius: 7px; padding: 3px 8px; width: min(320px, 100%); }
+.rename input.slug { font: 13px/1.6 var(--mono); width: min(22ch, 100%); }
+.w-title .slug { font: 12.5px/1.2 var(--mono); color: var(--muted); white-space: nowrap; }
 .field-err { font-size: 13px; color: var(--error); }
 [aria-invalid="true"] { border-color: var(--error) !important; }
 .w-ports, .w-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -517,6 +519,7 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .nbox .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
 .nbox details { font-size: 13.5px; }
 .nbox summary { cursor: pointer; color: var(--muted); }
+.nbox .fine-print { margin: 0; font-size: 13px; color: var(--muted); }
 .nbox .fine { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; margin-top: 10px; }
 .nbtns { display: flex; justify-content: flex-end; gap: 8px; }
 

@@ -15,12 +15,17 @@ import type { Revision } from "./Revision";
 import type { RouteView } from "./RouteView";
 import type { Timestamp } from "./Timestamp";
 import type { WorkspaceId } from "./WorkspaceId";
+import type { WorkspaceLabel } from "./WorkspaceLabel";
 import type { WorkspaceName } from "./WorkspaceName";
 
 /**
  * A workspace as the console and CLI see it.
  */
-export type WorkspaceView = { id: WorkspaceId, name: WorkspaceName, project: ProjectId, 
+export type WorkspaceView = { id: WorkspaceId, name: WorkspaceName, 
+/**
+ * What the person calls it, shown in place of its name.
+ */
+label: WorkspaceLabel | null, project: ProjectId, 
 /**
  * What it cloned, when its project has a repository.
  */

@@ -195,7 +195,8 @@ def create(page: Page, environment: str, repo: str, name: str) -> Any:
     # A project added for a repository is named after it.
     named = repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
     expect(form.get_by_label("Project").locator("option:checked")).to_have_text(named)
-    form.get_by_label("Name").fill(name)
+    # What it's called names it.
+    form.get_by_label("Call it").fill(name)
     form.get_by_role("button", name="Create").click()
     page.wait_for_url(f"{CONSOLE}/w/{name}")
     expect(page.get_by_role("heading", name=name)).to_be_visible()
@@ -242,7 +243,7 @@ def project_agent(page: Page, project: str, agent: str) -> Any:
     save()
     page.get_by_role("button", name="New workspace").first.click()
     form = page.get_by_role("form", name="New workspace")
-    expect(form.get_by_label("Prompt")).to_have_attribute("placeholder", f"What should {agent} do? Optional…")
+    expect(form.get_by_text(re.compile(rf"^Opens with .*\b{agent}\.$"))).to_be_visible()
     form.get_by_role("button", name="Cancel").click()
     return {"agent": starts.input_value()}
 
@@ -960,7 +961,7 @@ def focus_returns(page: Page, name: str) -> Any:
     cases: dict[str, Callable[[], None]] = {
         "palette": lambda: asks("Slash", page.get_by_role("combobox", name="Search")),
         "shortcuts": lambda: asks("Shift+Slash", page.get_by_role("dialog", name="Keyboard shortcuts").get_by_role("button", name="Close")),
-        "rename": lambda: asks("r", page.get_by_role("textbox", name="Workspace name")),
+        "rename": lambda: asks("r", page.get_by_role("textbox", name="What to call it")),
         "add a column": lambda: asks("c", page.get_by_role("group", name="Add a column").get_by_role("button", name="Shell")),
         "end the column": lambda: asks("x", page.get_by_role("button", name=f"End {first}", exact=True)),
         "width button": width.click,
@@ -1252,7 +1253,7 @@ def renames_follow(page: Page, name: str) -> Any:
 
     def rename(old: str, new: str) -> None:
         page.get_by_role("button", name=old, exact=True).click()
-        field = page.get_by_role("textbox", name="Workspace name")
+        field = page.get_by_role("textbox", name="Name, in URLs and the CLI")
         field.fill(new)
         field.press("Enter")
         page.wait_for_url(f"{CONSOLE}/w/{new}")
@@ -1266,6 +1267,37 @@ def renames_follow(page: Page, name: str) -> Any:
     other.wait_for_url(f"{CONSOLE}/w/{name}")
     other.close()
     return {"renamed": renamed}
+
+
+def labels(page: Page, name: str, project: str) -> Any:
+    """What a workspace is called shows in place of its name, which stays
+    its address; the new workspace form starts in the project being looked
+    at, and shows the name a branch or label will give."""
+    open_workspace(page, name)
+    called = "Demo ✓ tweaks"
+
+    def call(old: str, new: str) -> None:
+        page.get_by_role("button", name=old, exact=True).click()
+        field = page.get_by_role("textbox", name="What to call it")
+        field.fill(new)
+        field.press("Enter")
+        expect(page.get_by_role("heading", name=new or name, exact=True)).to_be_visible()
+        assert page.url == f"{CONSOLE}/w/{name}", page.url
+
+    call(name, called)
+    expect(page.locator(".t-ws", has_text=called)).to_be_visible()
+    call(called, "")
+    page.get_by_role("button", name="New workspace").first.click()
+    form = page.get_by_role("form", name="New workspace")
+    expect(form.get_by_label("Project").locator("option:checked")).to_have_text(project)
+    form.get_by_text("More", exact=True).click()
+    made = form.get_by_label("Name, in URLs and the CLI")
+    form.get_by_label("Branch", exact=True).fill("su/login-fix")
+    expect(made).to_have_attribute("placeholder", "login-fix…")
+    form.get_by_label("Call it").fill("More UI tweaks")
+    expect(made).to_have_attribute("placeholder", "more-ui-tweaks…")
+    form.get_by_role("button", name="Cancel").click()
+    return {"called": called}
 
 
 def drafts_survive(page: Page, project: str) -> Any:
@@ -1410,6 +1442,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "signed-out": signed_out,
     "approve-cli": approve_cli,
     "create": create,
+    "labels": labels,
     "refused-environment": refused_environment,
     "project-agent": project_agent,
     "terminal": terminal,

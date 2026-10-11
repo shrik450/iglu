@@ -27,6 +27,7 @@ import { setLook } from "../preferences.ts";
 import { ask, current, details, listed, navigate, overlay, previous, projects, say, workspaces } from "../state/store.ts";
 import { copyLink, ONLY_YOU } from "./CopyLink.tsx";
 import { Modal } from "./Modal.tsx";
+import { called } from "../state/naming.ts";
 
 interface Item {
   label: string;
@@ -83,21 +84,21 @@ function items(): Item[] {
   const before = workspaces.value.find((w) => w.id === previous.value && w.id !== ws?.id);
   if (before) list.push({ label: `Back to ${before.name}`, sub: "The workspace you were in before", hint: keysFor("last-workspace"), run: () => open(before) });
   if (ws) {
-    list.push({ label: `Rename ${ws.name}`, hint: keysFor("rename"), run: () => ask(ws, { kind: "rename" }) });
-    list.push({ label: `Details of ${ws.name}`, hint: keysFor("details"), run: () => (details.value = true) });
+    list.push({ label: `Rename ${called(ws)}`, hint: keysFor("rename"), run: () => ask(ws, { kind: "rename" }) });
+    list.push({ label: `Details of ${called(ws)}`, hint: keysFor("details"), run: () => (details.value = true) });
     list.push(...columnItems(ws));
     for (const r of ws.routes) list.push({ label: `Copy the link to ${r.name}`, sub: ONLY_YOU, run: () => copyLink(r.url) });
     if (ws.phase === "running") {
-      list.push({ label: `Shell in ${ws.name}`, run: () => void addColumn(ws, { kind: "shell" }) });
-      for (const agent of ws.agents) list.push({ label: `${agent} in ${ws.name}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
-      list.push({ label: `Server in ${ws.name}`, sub: "A command that keeps running, such as a dev server", run: () => ask(ws, { kind: "add-column", server: true }) });
-      list.push({ label: `Freeze ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
+      list.push({ label: `Shell in ${called(ws)}`, run: () => void addColumn(ws, { kind: "shell" }) });
+      for (const agent of ws.agents) list.push({ label: `${agent} in ${called(ws)}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
+      list.push({ label: `Server in ${called(ws)}`, sub: "A command that keeps running, such as a dev server", run: () => ask(ws, { kind: "add-column", server: true }) });
+      list.push({ label: `Freeze ${called(ws)}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
     }
-    if (ws.phase === "frozen") list.push({ label: `Thaw ${ws.name}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
+    if (ws.phase === "frozen") list.push({ label: `Thaw ${called(ws)}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
   }
-  for (const w of listed.value) list.push({ label: w.name, sub: w.attention?.summary || (w.checkout ? `⎇ ${w.checkout.branch}` : ""), run: () => open(w) });
+  for (const w of listed.value) list.push({ label: called(w), sub: w.attention?.summary || (w.checkout ? `⎇ ${w.checkout.branch}` : ""), run: () => open(w) });
   for (const p of projects.value) list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
-  for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${w.name} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });
+  for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${called(w)} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });
   list.push(
     { label: "Look: match the system", run: () => setLook("auto") },
     { label: "Look: Polar night", run: () => setLook("dark") },

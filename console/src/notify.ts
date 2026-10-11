@@ -5,9 +5,10 @@ import { effect } from "@preact/signals";
 
 import type { Need } from "./generated/Need.ts";
 import type { WorkspaceView } from "./generated/WorkspaceView.ts";
+import { called } from "./state/naming.ts";
 import { situation } from "./state/situation.ts";
 import { unreachable } from "./state/unsaved.ts";
-import { current, toast, waiting } from "./state/store.ts";
+import { current, toast, waiting, workspaces } from "./state/store.ts";
 
 let primed = false;
 
@@ -22,12 +23,12 @@ function mark(ws: WorkspaceView): string {
 function notice(ws: WorkspaceView, need: Need): { title: string; body: string } {
   switch (need) {
     case "waiting":
-      return { title: `${ws.name} needs you`, body: ws.attention?.summary ?? "" };
+      return { title: `${called(ws)} needs you`, body: ws.attention?.summary ?? "" };
     case "done":
-      return { title: `${ws.name} is done`, body: ws.attention?.summary ?? "" };
+      return { title: `${called(ws)} is done`, body: ws.attention?.summary ?? "" };
     case "trouble": {
       const now = situation(ws);
-      return { title: `${ws.name} is in trouble`, body: "detail" in now ? `${now.title}. ${now.detail}` : "" };
+      return { title: `${called(ws)} is in trouble`, body: "detail" in now ? `${now.title}. ${now.detail}` : "" };
     }
     default:
       return unreachable(need);
@@ -49,12 +50,14 @@ export function noticeChanges(before: readonly WorkspaceView[], after: readonly 
     const looking = current.value?.id === ws.id && document.visibilityState === "visible";
     if (looking) continue;
     const { title, body } = notice(ws, need);
-    toast(ws.name, title, body);
+    toast(ws.id, title, body);
     if (document.visibilityState === "hidden" && "Notification" in window && Notification.permission === "granted") {
       const note = new Notification(title, { body, tag: ws.id });
       note.onclick = () => {
         window.focus();
-        location.assign(`/w/${ws.name}`);
+        // Under the name it has by then.
+        const now = workspaces.value.find((w) => w.id === ws.id) ?? ws;
+        location.assign(`/w/${now.name}`);
       };
     }
   }

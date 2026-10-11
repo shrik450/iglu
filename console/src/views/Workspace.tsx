@@ -64,6 +64,7 @@ import { situation } from "../state/situation.ts";
 import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
 import { ctrlHeld, newCore, panes, TerminalPane, titles } from "../terminal.ts";
+import { called } from "../state/naming.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
   const r = route.value;
@@ -131,7 +132,7 @@ function Tree({ current }: { current: WorkspaceView | null }) {
                   >
                     <Glyph kind={workspaceGlyph(ws)} />
                     <span class="n" translate={false}>
-                      {ws.name}
+                      {called(ws)}
                     </span>
                   </a>
                 ))}
@@ -207,12 +208,8 @@ function KeyRow({ ws }: { ws: WorkspaceView }) {
 function Header({ ws }: { ws: WorkspaceView }) {
   const phase = phaseText(ws.phase);
   const naming = useForm(async (data) => {
-    const name = data.get("name");
-    if (typeof name !== "string" || name.trim() === ws.name) {
-      settle(ws, "rename");
-      return;
-    }
-    await rename(ws, name.trim());
+    const text = textOf(data);
+    await rename(ws, text("label") ?? "", text("name") ?? ws.name);
   });
   const publishing = useForm(async (data) => {
     const text = String(data.get("port") ?? "").trim();
@@ -226,12 +223,23 @@ function Header({ ws }: { ws: WorkspaceView }) {
         {isAsking("rename") ? (
           <form class="rename" onSubmit={naming.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
             <RenameInput ws={ws} form={naming} />
+            <input
+              name="name"
+              class="slug"
+              aria-label="Name, in URLs and the CLI"
+              title="Name, in URLs and the CLI"
+              defaultValue={ws.name}
+              autocomplete="off"
+              spellcheck={false}
+              {...invalid(naming, "name")}
+            />
             <button type="submit" class="btn">
               Rename
             </button>
             <button type="button" class="btn" onClick={() => settle(ws)}>
               Cancel
             </button>
+            <FieldError form={naming} input="label" />
             <FieldError form={naming} input="name" />
             <FormError form={naming} />
           </form>
@@ -239,8 +247,13 @@ function Header({ ws }: { ws: WorkspaceView }) {
           <div class="w-title">
             <Glyph kind={workspaceGlyph(ws)} />
             <button type="button" class="nm" title={`Rename (${keysFor("rename")})`} translate={false} onClick={() => ask(ws, { kind: "rename" })}>
-              <h1>{ws.name}</h1>
+              <h1>{called(ws)}</h1>
             </button>
+            {ws.label ? (
+              <span class="slug" translate={false} title="Name, in URLs and the CLI">
+                {ws.name}
+              </span>
+            ) : null}
             {ws.checkout ? <Branch ws={ws} /> : null}
             {phase ? <span class="state">{phase}</span> : null}
           </div>
@@ -497,7 +510,7 @@ function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
 
 function RenameInput({ ws, form }: { ws: WorkspaceView; form: Form }) {
   const ref = useGrab<HTMLInputElement>(true);
-  return <input ref={ref} name="name" aria-label="Workspace name" defaultValue={ws.name} autocomplete="off" spellcheck={false} {...invalid(form, "name")} />;
+  return <input ref={ref} name="label" aria-label="What to call it" defaultValue={ws.label ?? ""} placeholder={ws.name} autocomplete="off" {...invalid(form, "label")} />;
 }
 
 function PortInput({ form }: { form: Form }) {
@@ -1008,7 +1021,7 @@ function Details({ ws }: { ws: WorkspaceView }) {
         {isAsking("delete") ? (
           <div class="confirm">
             <span>
-              Delete {ws.name}? {lossText(ws)}
+              Delete {called(ws)}? {lossText(ws)}
             </span>
             <button type="button" class="btn danger" onClick={() => void remove(ws)}>
               Delete
@@ -1093,7 +1106,7 @@ function Access({ ws }: { ws: WorkspaceView }) {
           <option value="">Let it see another workspace…</option>
           {addable.map((w) => (
             <option key={w.id} value={w.id} translate={false}>
-              {w.name}
+              {called(w)}
             </option>
           ))}
         </select>

@@ -20,6 +20,7 @@ use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, 
 use iglu_domain::idle::IdleRule;
 use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Instance, Revision, SecretsGeneration};
+use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
 use iglu_domain::preferences::Preferences;
 use iglu_domain::project::{self, Opening, Origin, PreviewPorts};
@@ -56,6 +57,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0007_column_labels.sql")),
     Migration::Sql(include_str!("migrations/0008_preferences.sql")),
     Migration::Sql(include_str!("migrations/0009_access.sql")),
+    Migration::Sql(include_str!("migrations/0010_workspace_labels.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -622,7 +624,7 @@ pub fn environment_name_of_revision(
 // name either without qualifying.
 const WORKSPACE_COLUMNS: &str =
     "id, owner_id, host_id, env_revision_id, name, repo, branch, base, desired, revision,
-    observed, observed_at, memory, condition, created_at, project_id";
+    observed, observed_at, memory, condition, created_at, project_id, label";
 const WORKSPACE_FROM: &str =
     "workspace LEFT JOIN workspace_checkout ON workspace_checkout.workspace_id = workspace.id";
 
@@ -634,6 +636,7 @@ fn workspace_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceRecord> {
         host: text(row, 2)?,
         env_revision: text(row, 3)?,
         name: text(row, 4)?,
+        label: opt_text(row, 16)?,
         project: text(row, 15)?,
         checkout: match opt_text(row, 5)? {
             Some(repo) => Some(Checkout {
@@ -663,8 +666,8 @@ pub fn insert_workspace(
 ) -> Result<(), DbError> {
     tx.execute(
         "INSERT INTO workspace (id, owner_id, host_id, env_revision_id, name, project_id, desired, revision,
-                                create_key, create_hash, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                create_key, create_hash, created_at, label)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             ws.id.to_string(),
             ws.owner.to_string(),
@@ -677,6 +680,7 @@ pub fn insert_workspace(
             create_key,
             create_hash,
             ws.created_at.unix_millis(),
+            ws.label.as_ref().map(WorkspaceLabel::as_str),
         ],
     )?;
     if let Some(checkout) = &ws.checkout {
@@ -702,7 +706,7 @@ pub fn workspace_by_create_key(
         .query_row(
             &format!("SELECT {WORKSPACE_COLUMNS}, create_hash FROM {WORKSPACE_FROM} WHERE owner_id = ?1 AND create_key = ?2"),
             params![owner.to_string(), key],
-            |row| Ok((workspace_row(row)?, row.get::<_, Option<String>>(16)?.unwrap_or_default())),
+            |row| Ok((workspace_row(row)?, row.get::<_, Option<String>>(17)?.unwrap_or_default())),
         )
         .optional()?)
 }
@@ -758,6 +762,20 @@ pub fn rename_workspace(
     } else {
         RenameOutcome::Done
     })
+}
+
+/// Sets what a live workspace is called, or clears it back to its name.
+/// False when there's no such workspace.
+pub fn label_workspace(
+    tx: &Connection,
+    id: WorkspaceId,
+    label: Option<&WorkspaceLabel>,
+) -> Result<bool, DbError> {
+    let changed = tx.execute(
+        "UPDATE workspace SET label = ?2 WHERE id = ?1 AND deleted_at IS NULL",
+        params![id.to_string(), label.map(WorkspaceLabel::as_str)],
+    )?;
+    Ok(changed > 0)
 }
 
 pub fn workspace(tx: &Connection, id: WorkspaceId) -> Result<Option<WorkspaceRecord>, DbError> {
@@ -1793,6 +1811,7 @@ mod tests {
             host: "host-1".parse().expect("host"),
             env_revision: env,
             name: name.parse().expect("workspace name"),
+            label: None,
             project,
             checkout: Some(Checkout {
                 repo: "https://github.com/acme/app.git".parse().expect("repo"),

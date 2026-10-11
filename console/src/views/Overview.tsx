@@ -7,6 +7,7 @@ import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { situation } from "../state/situation.ts";
 import { repoLabel } from "../state/groups.ts";
 import { collapsed, groups, navigate, newIn, overlay, projects, waiting, workspaces } from "../state/store.ts";
+import { called } from "../state/naming.ts";
 
 function toggle(key: string): void {
   const next = new Set(collapsed.value);
@@ -59,7 +60,7 @@ export function Overview() {
               <WorkspaceLink ws={ws} class="nchip">
                 <Glyph kind={ws.condition ? "trouble" : attentionGlyph(ws.attention)} />
                 <span class="w" translate={false}>
-                  {ws.name}
+                  {called(ws)}
                 </span>
                 <span class="t">{ws.condition ? troubleText(ws) : (ws.attention?.summary ?? "")}</span>
               </WorkspaceLink>

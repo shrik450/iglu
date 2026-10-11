@@ -13,7 +13,7 @@ import type { IdleRule } from "../generated/IdleRule.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
 import { repoLabel } from "../state/groups.ts";
 import { LABEL } from "../state/layout.ts";
-import { parsePorts } from "../state/project.ts";
+import { kindText, parsePorts } from "../state/project.ts";
 import { environments, navigate, newIn, overlay, projects, route, say, workspaces } from "../state/store.ts";
 import { oneOf, unreachable } from "../state/unsaved.ts";
 
@@ -69,21 +69,6 @@ function Project({ project }: { project: ProjectView }) {
       {project.origin === "added" ? <Remove project={project} live={inside.length} /> : null}
     </div>
   );
-}
-
-function kindText(kind: ColumnKind): string {
-  switch (kind.kind) {
-    case "shell":
-      return "Shell";
-    case "agent":
-      return kind.agent;
-    case "server":
-      return kind.command.join(" ");
-    case "browser":
-      return "Browser";
-    default:
-      return unreachable(kind);
-  }
 }
 
 function idleChoice(rule: IdleRule): IdleRule["kind"] {

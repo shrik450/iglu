@@ -158,7 +158,8 @@ export function say(message: string, undo?: () => void): void {
 
 export interface Toast {
   id: number;
-  workspace: string;
+  /** By ID, so a toast still leads to a workspace renamed since. */
+  workspace: WorkspaceId;
   title: string;
   detail: string;
 }
@@ -166,7 +167,7 @@ export interface Toast {
 export const toasts = signal<Toast[]>([]);
 let toastId = 0;
 
-export function toast(workspace: string, title: string, detail: string): void {
+export function toast(workspace: WorkspaceId, title: string, detail: string): void {
   const id = ++toastId;
   toasts.value = [{ id, workspace, title, detail }, ...toasts.value].slice(0, 3);
   window.setTimeout(() => (toasts.value = toasts.value.filter((t) => t.id !== id)), 6000);
