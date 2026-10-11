@@ -2,7 +2,7 @@
 //! iglu never sees passwords; the provider hosts login and MFA.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use iglu_domain::auth::{Issuer, VerifiedIdentity};
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
@@ -274,7 +274,10 @@ pub struct WorkerTokens {
     client_id: String,
     client_secret: String,
     resource: Option<Url>,
-    cached: tokio::sync::Mutex<Option<(String, Instant)>>,
+    /// The token, and until when to use it by the wall clock, which the
+    /// token's own expiry is: a monotonic clock stops while the machine
+    /// sleeps, and would keep a token the host has stopped taking.
+    cached: tokio::sync::Mutex<Option<(String, SystemTime)>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -309,7 +312,7 @@ impl WorkerTokens {
     pub async fn token(&self) -> Result<String, OidcError> {
         let mut cached = self.cached.lock().await;
         if let Some((token, valid_until)) = cached.as_ref()
-            && Instant::now() < *valid_until
+            && SystemTime::now() < *valid_until
         {
             return Ok(token.clone());
         }
@@ -338,7 +341,7 @@ impl WorkerTokens {
             .await
             .map_err(|e| OidcError::Exchange(e.to_string()))?;
         let lifetime = reply.expires_in.unwrap_or(300).saturating_sub(60).max(30);
-        let valid_until = Instant::now() + Duration::from_secs(lifetime);
+        let valid_until = SystemTime::now() + Duration::from_secs(lifetime);
         *cached = Some((reply.access_token.clone(), valid_until));
         Ok(reply.access_token)
     }
