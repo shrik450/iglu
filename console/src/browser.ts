@@ -10,8 +10,9 @@ import type { BrowserEvent } from "./generated/BrowserEvent.ts";
 import type { BrowserInput } from "./generated/BrowserInput.ts";
 import type { BrowserTab } from "./generated/BrowserTab.ts";
 import type { DialogKind } from "./generated/DialogKind.ts";
+import type { MenuOption } from "./generated/MenuOption.ts";
 import type { MouseAction } from "./generated/MouseAction.ts";
-import { buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, type Press, tabName, wheelPixels } from "./state/browser.ts";
+import { buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, type Press, screenRect, tabName, wheelPixels } from "./state/browser.ts";
 import { say } from "./state/store.ts";
 import { panes, setTitle } from "./terminal.ts";
 
@@ -21,11 +22,23 @@ export interface Dialog {
   default: string;
 }
 
+/** A select the page opened, whose own menu the screencast doesn't show. */
+export interface Menu {
+  /** Where the select is on the page, in CSS pixels. */
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  selected: number | null;
+  options: MenuOption[];
+}
+
 export class BrowserPane {
   readonly tabs = signal<BrowserTab[]>([]);
   readonly shown = signal<string | null>(null);
   readonly loading = signal(false);
   readonly dialog = signal<Dialog | null>(null);
+  readonly menu = signal<Menu | null>(null);
   /** Why there's nothing to see yet, while there isn't. */
   readonly waiting = signal<string | null>("Opening the browser…");
 
@@ -144,6 +157,22 @@ export class BrowserPane {
     this.focus();
   }
 
+  /** Chooses an option of the select's menu, or closes it with null. */
+  choose(index: number | null): void {
+    if (!this.menu.value) return;
+    this.menu.value = null;
+    this.send({ type: "choose", index });
+    this.focus();
+  }
+
+  /** Where in the window the select the menu is for is shown. */
+  menuPlace(menu: Menu): { left: number; top: number; width: number; height: number } | null {
+    const box = this.canvas.getBoundingClientRect();
+    const image = { width: this.canvas.width, height: this.canvas.height };
+    const shown = screenRect(box, image, this.page, menu);
+    return shown && { ...shown, left: box.left + shown.left, top: box.top + shown.top };
+  }
+
   dispose(): void {
     this.closed = true;
     clearTimeout(this.retryTimer);
@@ -183,6 +212,7 @@ export class BrowserPane {
     socket.onclose = (event) => {
       if (this.socket !== socket || this.closed) return;
       this.socket = null;
+      this.menu.value = null;
       const delay = Math.min(10_000, 500 * 2 ** this.retries);
       this.retries += 1;
       this.waiting.value = event.reason ? `${capitalized(event.reason)}. Trying again…` : "Reconnecting…";
@@ -212,6 +242,12 @@ export class BrowserPane {
         break;
       case "dialog_closed":
         this.dialog.value = null;
+        break;
+      case "menu":
+        this.menu.value = { left: event.left, top: event.top, width: event.width, height: event.height, selected: event.selected, options: event.options };
+        break;
+      case "menu_closed":
+        this.menu.value = null;
         break;
       case "copied":
         void navigator.clipboard?.writeText(event.text).catch(() => say("The browser's selection couldn't be copied here."));

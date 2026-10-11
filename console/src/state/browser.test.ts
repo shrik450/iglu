@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { addressOf, buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, tabName, wheelPixels } from "./browser.ts";
+import { addressOf, buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, screenRect, stepOption, tabName, typedOption, wheelPixels } from "./browser.ts";
 
 test("a point on the screen is the point on the page under it", () => {
   // A 1600×1200 image of an 800×600 page, shown in a 400×400 box: 400×300 from the top left.
@@ -72,4 +72,29 @@ test("tabs are named by title, then by where they are", () => {
   assert.equal(tabName({ id: "1", title: "about:blank", url: "about:blank" }), "New tab");
   assert.equal(addressOf({ id: "1", title: "", url: "about:blank" }), "");
   assert.equal(addressOf(undefined), "");
+});
+
+test("a rectangle on the page is shown where pagePoint would find it", () => {
+  const box = { width: 400, height: 400 };
+  const image = { width: 1600, height: 1200 };
+  const page = { width: 800, height: 600 };
+  assert.deepEqual(screenRect(box, image, page, { left: 400, top: 300, width: 80, height: 20 }), { left: 200, top: 150, width: 40, height: 10 });
+  assert.deepEqual(pagePoint(box, image, page, 200, 150), { x: 400, y: 300 });
+  assert.equal(screenRect(box, { width: 0, height: 0 }, page, { left: 0, top: 0, width: 1, height: 1 }), null);
+});
+
+test("arrows and typing go to options that can be chosen", () => {
+  const options = [
+    { label: "Apple", group: null, disabled: false },
+    { label: "Banana", group: null, disabled: true },
+    { label: "blueberry", group: null, disabled: false },
+    { label: "Cherry", group: null, disabled: false },
+  ];
+  assert.equal(stepOption(options, 0, 1), 2);
+  assert.equal(stepOption(options, 2, -1), 0);
+  assert.equal(stepOption(options, 3, 1), 3);
+  assert.equal(stepOption(options, -1, 1), 0);
+  assert.equal(typedOption(options, 0, "b"), 2);
+  assert.equal(typedOption(options, 3, "a"), 0);
+  assert.equal(typedOption(options, 0, "z"), null);
 });

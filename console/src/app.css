@@ -381,6 +381,13 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .browser-tab button[role="tab"] { flex: 1; min-width: 0; display: block; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/1.2 var(--ui); padding: 4px 6px; }
 .browser-tab.on button[role="tab"] { color: var(--term-ink); }
 .browser-tab .browser-tab-x { flex: none; padding: 4px; }
+.browser-menu { position: fixed; z-index: 40; margin: 0; padding: 4px; list-style: none; overflow-y: auto; max-width: min(480px, 90vw); background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); font-size: 13.5px; outline: none; }
+.browser-menu li { padding: 5px 10px 5px 24px; border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; position: relative; }
+.browser-menu li.in { padding-left: 36px; }
+.browser-menu li.group { padding-left: 12px; color: var(--muted); font-weight: 600; font-size: 12px; }
+.browser-menu li.now::before { content: ""; position: absolute; left: 9px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: currentColor; }
+.browser-menu li[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.browser-menu li[aria-disabled="true"] { color: var(--muted); opacity: .6; }
 .browser-dialog { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--term-line); background: color-mix(in srgb, var(--accent) 10%, var(--term-bg)); color: var(--term-ink); font-size: 13px; }
 .browser-dialog form { display: contents; }
 .browser-dialog p { margin: 0; flex: 1 1 200px; overflow-wrap: anywhere; white-space: pre-wrap; }

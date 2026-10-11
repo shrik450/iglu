@@ -62,6 +62,11 @@ pub enum BrowserInput {
         #[cfg_attr(feature = "ts", ts(optional))]
         text: Option<String>,
     },
+    /// Chooses an option of the select the page opened, by its place among
+    /// the select's options, or closes its menu without choosing.
+    Choose {
+        index: Option<u32>,
+    },
 }
 
 /// A mouse button pressed, released, moved or wheeled over the page, at a
@@ -187,6 +192,30 @@ pub enum BrowserEvent {
     DialogClosed,
     /// What was selected in the page, for the clipboard.
     Copied { text: String },
+    /// The page opened a select, whose own menu a screencast doesn't show:
+    /// its options, for the console to show over it, where it is on the
+    /// page, in CSS pixels. Answered with [`BrowserInput::Choose`].
+    Menu {
+        left: i32,
+        top: i32,
+        width: u32,
+        height: u32,
+        /// The option chosen now, if any.
+        selected: Option<u32>,
+        options: Vec<MenuOption>,
+    },
+    /// The select's menu went with the page or tab it was on.
+    MenuClosed,
+}
+
+/// One of a select's options, in the order the select has them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+pub struct MenuOption {
+    pub label: String,
+    /// The label of the group it's in.
+    pub group: Option<String>,
+    pub disabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

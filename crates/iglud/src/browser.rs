@@ -24,7 +24,7 @@ use http_body_util::{BodyExt, Empty, Limited};
 use hyper_util::rt::TokioIo;
 use iglu_api::browser::{
     BrowserEvent, BrowserInput, BrowserSize, BrowserTab, DialogKind, KeyAction, KeyInput,
-    Modifiers, MouseAction, MouseButton, MouseInput,
+    MenuOption, Modifiers, MouseAction, MouseButton, MouseInput,
 };
 use iglu_domain::column::BROWSER_DEBUG_PORT;
 use iglu_domain::id::WorkspaceId;
@@ -77,11 +77,75 @@ const SELECTION: &str = "(() => { const e = document.activeElement; \
      return e.value.slice(e.selectionStart, e.selectionEnd); \
      return String(getSelection()); })()";
 
-/// Keeps Chrome from opening its own context menu, which a screencast never
-/// shows and which, invisible, holds the browser until it's closed. The
-/// page still gets the right click, so a page's own menu works.
-const NO_NATIVE_MENU: &str =
-    "addEventListener('contextmenu', (e) => { if (!e.defaultPrevented) e.preventDefault(); })";
+/// The isolated world iglu's script runs in on a shown page: the page can't
+/// see its globals or call its binding, so can't fake what it reports.
+const WORLD: &str = "iglu";
+
+/// What iglu's script calls to report a select it opened, with a number
+/// for each session: a page keeps the binding of a session that's gone, and
+/// reports through it go nowhere.
+const MENU_BINDING: &str = "igluChoose";
+
+/// Keeps Chrome from opening its own menus, which a screencast never shows.
+/// Its context menu, invisible, holds the browser until it's closed; the
+/// page still gets the right click, so a page's own menu works. A select's
+/// menu is reported instead, for the console to show, when it's opened by
+/// the mouse or the keys that open it; arrow keys still change it in place.
+/// `igluPick` chooses what the person picked, as the select would: by its
+/// place, since values may repeat, telling the page if it changed. Run
+/// again on a page, by a later session, it only changes the binding it
+/// reports through. It's called with that binding's name.
+const PAGE_SCRIPT: &str = r"((binding) => {
+  if (globalThis.igluPage) { globalThis.igluPage.binding = binding; return; }
+  const page = (globalThis.igluPage = { binding });
+  addEventListener('contextmenu', (e) => { if (!e.defaultPrevented) e.preventDefault(); });
+  let open = null;
+  const single = (t) => t instanceof HTMLSelectElement && !t.multiple && t.size <= 1 && !t.disabled;
+  const where = (t) => {
+    const r = t.getBoundingClientRect();
+    let left = r.left, top = r.top;
+    for (let w = window; w.frameElement; w = w.parent) {
+      const f = w.frameElement.getBoundingClientRect();
+      left += f.left + w.frameElement.clientLeft;
+      top += f.top + w.frameElement.clientTop;
+    }
+    return { left, top, width: r.width, height: r.height };
+  };
+  const report = (t) => {
+    const send = globalThis[page.binding];
+    if (typeof send !== 'function') return false;
+    open = t;
+    const options = Array.from(t.options, (o) => {
+      const g = o.parentElement instanceof HTMLOptGroupElement ? o.parentElement : null;
+      return { label: o.label, group: g ? g.label : null, disabled: o.disabled || Boolean(g && g.disabled) };
+    });
+    send(JSON.stringify({ ...where(t), selected: t.selectedIndex < 0 ? null : t.selectedIndex, options }));
+    return true;
+  };
+  addEventListener('mousedown', (e) => {
+    const t = e.composedPath()[0];
+    if (e.button === 0 && single(t) && report(t)) { e.preventDefault(); t.focus(); }
+  }, true);
+  addEventListener('keydown', (e) => {
+    const t = e.composedPath()[0];
+    const opens = e.key === ' ' || e.key === 'Enter' || e.key === 'F4' || (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp'));
+    if (opens && single(t) && report(t)) e.preventDefault();
+  }, true);
+  globalThis.igluPick = (i) => {
+    const t = open;
+    open = null;
+    if (!t || !t.isConnected) return;
+    t.focus();
+    if (i === null || i >= t.options.length || t.options[i].disabled || t.selectedIndex === i) return;
+    t.selectedIndex = i;
+    t.dispatchEvent(new Event('input', { bubbles: true }));
+    t.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+})";
+
+/// The most of a select's options shown, and of each label.
+const MAX_OPTIONS: usize = 1000;
+const MAX_LABEL: usize = 200;
 
 /// Something to send: a CDP message to the browser, or an event or an
 /// image of the screen to the console.
@@ -154,6 +218,11 @@ pub struct Screen {
     /// dialog once, to the session attached when it opens, so one opened
     /// before a switch is shown again on coming back.
     dialogs: HashMap<String, BrowserEvent>,
+    /// The script context of the select whose menu the console shows.
+    menu: Option<i64>,
+    /// The binding the shown tab's session gave iglu's script.
+    binding: String,
+    attaches: u64,
 }
 
 impl Screen {
@@ -168,6 +237,9 @@ impl Screen {
             told: None,
             discovered: false,
             dialogs: HashMap::new(),
+            menu: None,
+            binding: String::new(),
+            attaches: 0,
         };
         let first = screen.call(
             "Target.setDiscoverTargets",
@@ -229,6 +301,14 @@ impl Screen {
                     out.extend(self.on_page("Page.handleJavaScriptDialog", params, Some(answered)));
                 }
             }
+            BrowserInput::Choose { index } => {
+                if let Some(context) = self.menu.take() {
+                    let index = index.map_or_else(|| "null".to_owned(), |i| i.to_string());
+                    let params =
+                        json!({ "expression": format!("igluPick({index})"), "contextId": context });
+                    out.extend(self.on_page("Runtime.evaluate", params, None));
+                }
+            }
         }
         out
     }
@@ -251,7 +331,12 @@ impl Screen {
                     tracing::debug!(?pending, error = ?message.error, "the browser refused a command");
                     self.refused(pending)
                 }
-                None => Vec::new(),
+                None => {
+                    if let Some(error) = &message.error {
+                        tracing::debug!(id, ?error, "the browser refused a command");
+                    }
+                    Vec::new()
+                }
             };
         }
         let Some(method) = message.method else {
@@ -380,10 +465,29 @@ impl Screen {
                 }
                 let loading = method == "Page.frameStartedLoading";
                 let mut out = vec![Out::Event(BrowserEvent::Loading { loading })];
-                if !loading {
+                if loading {
+                    out.extend(self.close_menu());
+                } else {
                     out.push(self.info(&tab));
                 }
                 out
+            }
+            "Runtime.bindingCalled" if params["name"] == self.binding.as_str() => {
+                let (Some(context), Some(menu)) = (
+                    params["executionContextId"].as_i64(),
+                    params["payload"].as_str().and_then(menu_event),
+                ) else {
+                    return Vec::new();
+                };
+                self.menu = Some(context);
+                vec![Out::Event(menu)]
+            }
+            // A frame's page went, and a menu of a select on it with it.
+            "Runtime.executionContextDestroyed"
+                if params["executionContextId"].as_i64().is_some()
+                    && params["executionContextId"].as_i64() == self.menu =>
+            {
+                self.close_menu().into_iter().collect()
             }
             // A page that changes its address itself, as an app does.
             "Page.navigatedWithinDocument" => vec![self.info(&tab)],
@@ -425,18 +529,27 @@ impl Screen {
                     Some(shown) if shown.tab == tab && shown.session.is_none() => {
                         shown.session = Some(session.clone());
                         // The script goes with this session: pages aren't
-                        // changed for agents when no one's watching.
-                        let menu = json!({ "source": NO_NATIVE_MENU });
-                        let now = json!({ "expression": NO_NATIVE_MENU });
+                        // changed for agents when no one's watching. It's
+                        // added before its binding, which otherwise misses
+                        // the page shown now, and Runtime is enabled for
+                        // the binding to work on pages after it.
+                        self.attaches += 1;
+                        self.binding = format!("{MENU_BINDING}{}", self.attaches);
+                        let source = format!("{PAGE_SCRIPT}({:?})", self.binding);
+                        let script =
+                            json!({ "source": source, "worldName": WORLD, "runImmediately": true });
+                        let binding =
+                            json!({ "name": self.binding, "executionContextName": WORLD });
                         let mut out = vec![
                             self.call("Page.enable", json!({}), Some(&session), None),
                             self.call(
                                 "Page.addScriptToEvaluateOnNewDocument",
-                                menu,
+                                script,
                                 Some(&session),
                                 None,
                             ),
-                            self.call("Runtime.evaluate", now, Some(&session), None),
+                            self.call("Runtime.addBinding", binding, Some(&session), None),
+                            self.call("Runtime.enable", json!({}), Some(&session), None),
                         ];
                         out.extend(self.cast(&session));
                         out
@@ -527,7 +640,7 @@ impl Screen {
         if self.shown.as_ref().is_some_and(|s| s.tab == tab) {
             return Vec::new();
         }
-        let mut out = Vec::new();
+        let mut out: Vec<Out> = self.close_menu().into_iter().collect();
         if let Some(session) = self.shown.take().and_then(|s| s.session) {
             out.push(self.call(
                 "Target.detachFromTarget",
@@ -632,6 +745,13 @@ impl Screen {
     fn on_page(&mut self, method: &str, params: Value, pending: Option<Pending>) -> Option<Out> {
         let session = self.session()?;
         Some(self.call(method, params, Some(&session), pending))
+    }
+
+    /// Tells the console the select's menu went, if one was open.
+    fn close_menu(&mut self) -> Option<Out> {
+        self.menu
+            .take()
+            .map(|_| Out::Event(BrowserEvent::MenuClosed))
     }
 
     fn session(&self) -> Option<String> {
@@ -756,6 +876,51 @@ fn fitted(size: BrowserSize) -> BrowserSize {
 )]
 fn pixels(value: f64) -> u32 {
     value.round().clamp(0.0, 65_535.0) as u32
+}
+
+/// A place on the page in whole CSS pixels, which may be above or left of
+/// what's shown, within any page's reach.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "clamped to what fits first"
+)]
+fn place(value: f64) -> i32 {
+    value.round().clamp(-1_000_000.0, 1_000_000.0) as i32
+}
+
+/// What iglu's script reported of a select it opened, as the console is
+/// told it, with the options and their labels cut to size: the page chose
+/// them. `None` for anything else.
+fn menu_event(payload: &str) -> Option<BrowserEvent> {
+    #[derive(Deserialize)]
+    struct Report {
+        left: f64,
+        top: f64,
+        width: f64,
+        height: f64,
+        selected: Option<u32>,
+        options: Vec<MenuOption>,
+    }
+    let cut = |text: String| text.chars().take(MAX_LABEL).collect::<String>();
+    let report: Report = serde_json::from_str(payload).ok()?;
+    let options = report
+        .options
+        .into_iter()
+        .take(MAX_OPTIONS)
+        .map(|option| MenuOption {
+            label: cut(option.label),
+            group: option.group.map(cut),
+            disabled: option.disabled,
+        })
+        .collect();
+    Some(BrowserEvent::Menu {
+        left: place(report.left),
+        top: place(report.top),
+        width: pixels(report.width),
+        height: pixels(report.height),
+        selected: report.selected,
+        options,
+    })
 }
 
 /// Where an address typed into the console goes: as typed when it has a
@@ -1174,14 +1339,118 @@ mod tests {
             [
                 "Page.enable",
                 "Page.addScriptToEvaluateOnNewDocument",
-                "Runtime.evaluate",
+                "Runtime.addBinding",
+                "Runtime.enable",
                 "Emulation.setDeviceMetricsOverride",
                 "Page.startScreencast"
             ]
         );
         assert!(cast.iter().all(|m| m["sessionId"] == "s1"));
-        assert_eq!(cast[3]["params"]["width"], 800);
-        assert_eq!(cast[4]["params"]["maxWidth"], 1600);
+        assert_eq!(cast[1]["params"]["worldName"], WORLD);
+        assert_eq!(cast[2]["params"]["executionContextName"], WORLD);
+        // The script reports through this session's binding.
+        assert_eq!(cast[2]["params"]["name"], "igluChoose1");
+        let source = cast[1]["params"]["source"].as_str().expect("a script");
+        assert!(source.ends_with(r#"("igluChoose1")"#), "{source}");
+        assert_eq!(cast[4]["params"]["width"], 800);
+        assert_eq!(cast[5]["params"]["maxWidth"], 1600);
+    }
+
+    fn opened_menu(screen: &mut Screen, context: i64) -> Vec<Out> {
+        let payload = json!({
+            "left": 8.4, "top": -3.0, "width": 83.0, "height": 19.0, "selected": 0,
+            "options": [
+                { "label": "Apple", "group": null, "disabled": false },
+                { "label": "Banana", "group": "Stone", "disabled": true },
+            ],
+        });
+        screen.devtools(incoming(json!({
+            "method": "Runtime.bindingCalled",
+            "sessionId": "s1",
+            "params": { "name": format!("{MENU_BINDING}1"), "payload": payload.to_string(), "executionContextId": context },
+        })))
+    }
+
+    #[test]
+    fn a_select_the_page_opens_is_shown_and_chosen_in_its_own_world() {
+        let mut screen = showing();
+        let out = opened_menu(&mut screen, 7);
+        let Some(Out::Event(BrowserEvent::Menu {
+            left,
+            top,
+            selected,
+            options,
+            ..
+        })) = out.first()
+        else {
+            panic!("no menu: {out:?}");
+        };
+        assert_eq!((*left, *top, *selected), (8, -3, Some(0)));
+        assert_eq!(options[1].group.as_deref(), Some("Stone"));
+        assert!(options[1].disabled);
+        let out = screen.input(BrowserInput::Choose { index: Some(1) });
+        let pick = sent(&out);
+        assert_eq!(pick[0]["method"], "Runtime.evaluate");
+        assert_eq!(pick[0]["params"]["expression"], "igluPick(1)");
+        assert_eq!(pick[0]["params"]["contextId"], 7);
+        // Chosen once: a second choice has no menu to go to.
+        assert!(
+            screen
+                .input(BrowserInput::Choose { index: Some(0) })
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_menu_goes_with_its_page_and_the_page_cant_report_one() {
+        let mut screen = showing();
+        opened_menu(&mut screen, 7);
+        let out = screen.devtools(incoming(json!({
+            "method": "Page.frameStartedLoading", "sessionId": "s1", "params": { "frameId": "t1" },
+        })));
+        assert!(
+            out.iter()
+                .any(|o| *o == Out::Event(BrowserEvent::MenuClosed))
+        );
+        opened_menu(&mut screen, 9);
+        let out = screen.devtools(incoming(json!({
+            "method": "Runtime.executionContextDestroyed", "sessionId": "s1", "params": { "executionContextId": 9 },
+        })));
+        assert_eq!(out, [Out::Event(BrowserEvent::MenuClosed)]);
+        // Another binding, or another session's, isn't the script's.
+        for (name, session) in [
+            ("pageOwned", "s1"),
+            (MENU_BINDING, "s1"),
+            ("igluChoose1", "s2"),
+        ] {
+            let out = screen.devtools(incoming(json!({
+                "method": "Runtime.bindingCalled", "sessionId": session,
+                "params": { "name": name, "payload": "{}", "executionContextId": 3 },
+            })));
+            assert!(out.is_empty(), "{name} {session}");
+        }
+    }
+
+    #[test]
+    fn menus_are_cut_to_size() {
+        let options: Vec<Value> = (0..1500)
+            .map(|i| json!({ "label": "x".repeat(300 + i % 2), "group": null, "disabled": false }))
+            .collect();
+        let payload = json!({ "left": 1e12, "top": 0, "width": -5, "height": f64::MAX, "selected": null, "options": options });
+        let Some(BrowserEvent::Menu {
+            left,
+            width,
+            height,
+            options,
+            ..
+        }) = menu_event(&payload.to_string())
+        else {
+            panic!("no menu");
+        };
+        assert_eq!((left, width, height), (1_000_000, 0, 65_535));
+        assert_eq!(options.len(), MAX_OPTIONS);
+        assert_eq!(options[0].label.chars().count(), MAX_LABEL);
+        assert!(menu_event("not json").is_none());
     }
 
     #[test]

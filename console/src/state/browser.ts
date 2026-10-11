@@ -3,6 +3,7 @@
 
 import type { BrowserTab } from "../generated/BrowserTab.ts";
 import type { KeyInput } from "../generated/KeyInput.ts";
+import type { MenuOption } from "../generated/MenuOption.ts";
 import type { Modifiers } from "../generated/Modifiers.ts";
 import type { MouseButton } from "../generated/MouseButton.ts";
 
@@ -21,6 +22,43 @@ export function pagePoint(box: Size, image: Size, page: Size, x: number, y: numb
   const height = image.height * shown;
   if (x < 0 || y < 0 || x > width || y > height) return null;
   return { x: (x / width) * page.width, y: (y / height) * page.height };
+}
+
+/** Where in the screen's box a rectangle on the page is shown, as
+ * `pagePoint` shows the page: the inverse of it. Null before there's an
+ * image. */
+export function screenRect(
+  box: Size,
+  image: Size,
+  page: Size,
+  rect: { left: number; top: number; width: number; height: number },
+): { left: number; top: number; width: number; height: number } | null {
+  if (!image.width || !image.height || !page.width || !page.height) return null;
+  const shown = Math.min(box.width / image.width, box.height / image.height);
+  const x = (image.width * shown) / page.width;
+  const y = (image.height * shown) / page.height;
+  return { left: rect.left * x, top: rect.top * y, width: rect.width * x, height: rect.height * y };
+}
+
+/** The option an arrow key goes to from `from`, `step` at a time, past the
+ * ones that can't be chosen; `from` itself when there's none that way. */
+export function stepOption(options: readonly MenuOption[], from: number, step: 1 | -1): number {
+  for (let i = from + step; i >= 0 && i < options.length; i += step) {
+    if (!options[i]?.disabled) return i;
+  }
+  return from;
+}
+
+/** The first option after `from` whose label starts with what's typed, as
+ * a select finds one, going round; null when none does. */
+export function typedOption(options: readonly MenuOption[], from: number, typed: string): number | null {
+  const wanted = typed.toLowerCase();
+  for (let n = 1; n <= options.length; n++) {
+    const i = (from + n) % options.length;
+    const option = options[i];
+    if (option && !option.disabled && option.label.toLowerCase().startsWith(wanted)) return i;
+  }
+  return null;
 }
 
 /** The modifiers held, as the browser should take them. It runs on Linux,

@@ -1,13 +1,13 @@
 // A browser column: the workspace's browser, with its address bar and tabs.
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 
 import { focusColumn, markActive } from "../actions.ts";
-import { BrowserPane, type Dialog } from "../browser.ts";
+import { BrowserPane, type Dialog, type Menu } from "../browser.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { mac, terminalKey } from "../keyboard.ts";
 import { keyboard } from "../preferences.ts";
-import { addressOf, tabName } from "../state/browser.ts";
+import { addressOf, stepOption, tabName, typedOption } from "../state/browser.ts";
 import { chordLabel } from "../state/keys.ts";
 import { Icon } from "./bits.tsx";
 
@@ -39,10 +39,12 @@ export function Browser(props: { ws: WorkspaceView; name: string; title: string;
   }, [ws.id, name]);
   const waiting = pane ? pane.waiting.value : "Opening the browser…";
   const dialog = pane?.dialog.value ?? null;
+  const menu = pane?.menu.value ?? null;
   return (
     <div class="browser">
       <Bar pane={pane} onUse={() => markActive(ws, name)} />
       {pane && dialog ? <Asking pane={pane} dialog={dialog} /> : null}
+      {pane && menu ? <Choosing pane={pane} menu={menu} /> : null}
       <div class="browser-stage">
         <div class="browser-screen" ref={host} onMouseDown={() => focusColumn(ws, name)} />
         {waiting ? <p class="browser-wait">{waiting}</p> : null}
@@ -166,5 +168,90 @@ function Asking({ pane, dialog }: { pane: BrowserPane; dialog: Dialog }) {
       </span>
       </form>
     </div>
+  );
+}
+
+/** How long typed letters add up to one search, as in a select. */
+const TYPING_MS = 700;
+
+/** A select the page opened, as options to choose from over where it is:
+ * the browser's own menu never shows in its images. */
+function Choosing({ pane, menu }: { pane: BrowserPane; menu: Menu }) {
+  const id = useId();
+  const list = useRef<HTMLUListElement>(null);
+  const [active, setActive] = useState(menu.selected ?? stepOption(menu.options, -1, 1));
+  const typed = useRef({ text: "", at: 0 });
+  // Each select the page opens starts at its own choice.
+  useEffect(() => {
+    setActive(menu.selected ?? stepOption(menu.options, -1, 1));
+    list.current?.focus({ preventScroll: true });
+  }, [menu]);
+  useEffect(() => list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" }), [active]);
+  const place = pane.menuPlace(menu);
+  if (!place) return null;
+  // Below the select, unless there's more room above it.
+  const below = window.innerHeight - (place.top + place.height);
+  const style =
+    below >= 200 || below >= place.top
+      ? { left: place.left, minWidth: place.width, top: place.top + place.height, maxHeight: below - 8 }
+      : { left: place.left, minWidth: place.width, bottom: window.innerHeight - place.top, maxHeight: place.top - 8 };
+  const choose = (i: number) => {
+    if (menu.options[i] && !menu.options[i].disabled) pane.choose(i);
+  };
+  const rows = menu.options.flatMap((option, i) => {
+    const heading = option.group !== null && option.group !== menu.options[i - 1]?.group;
+    const row = (
+      <li
+        key={i}
+        id={`${id}-${i}`}
+        data-index={i}
+        role="option"
+        aria-selected={i === active}
+        aria-disabled={option.disabled || undefined}
+        class={`${i === menu.selected ? "now" : ""}${option.group !== null ? " in" : ""}`}
+        onMouseMove={() => !option.disabled && setActive(i)}
+        onClick={() => choose(i)}
+      >
+        {option.label}
+      </li>
+    );
+    return heading ? [<li key={`g${i}`} role="presentation" class="group">{option.group}</li>, row] : [row];
+  });
+  return (
+    <ul
+      ref={list}
+      class="browser-menu"
+      role="listbox"
+      aria-label="Options"
+      tabIndex={0}
+      aria-activedescendant={`${id}-${active}`}
+      style={style}
+      onBlur={() => pane.choose(null)}
+      onKeyDown={(e) => {
+        const go = (i: number) => (e.preventDefault(), e.stopPropagation(), setActive(i));
+        if (e.key === "ArrowDown") go(stepOption(menu.options, active, 1));
+        else if (e.key === "ArrowUp") go(stepOption(menu.options, active, -1));
+        else if (e.key === "Home") go(stepOption(menu.options, -1, 1));
+        else if (e.key === "End") go(stepOption(menu.options, menu.options.length, -1));
+        else if (e.key === "Enter" || (e.key === " " && !typed.current.text)) {
+          e.preventDefault();
+          e.stopPropagation();
+          choose(active);
+        } else if (e.key === "Escape" || e.key === "Tab") {
+          e.preventDefault();
+          e.stopPropagation();
+          pane.choose(null);
+        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          const now = Date.now();
+          const text = now - typed.current.at < TYPING_MS ? typed.current.text + e.key : e.key;
+          typed.current = { text, at: now };
+          const found = typedOption(menu.options, text.length > 1 ? active - 1 : active, text);
+          if (found !== null) go(found);
+          else e.preventDefault();
+        }
+      }}
+    >
+      {rows}
+    </ul>
   );
 }

@@ -590,6 +590,9 @@ PAGE = (
     "<button style='position:fixed;left:0;top:100px;width:300px;height:60px' "
     "onclick=\"document.title=confirm('Sure?')?'confirmed':'refused'\">Ask</button>"
     "<a href='about:blank' target='_blank' style='position:fixed;left:0;top:200px;width:300px;height:60px'>Open</a>"
+    "<select style='position:fixed;left:0;top:300px;width:300px;height:40px' "
+    "onchange=\"document.title='chose '+this.value\"><option value=a>Apple"
+    "<optgroup label=Stone><option value=b disabled>Banana<option value=c>Cherry</optgroup></select>"
 )
 
 
@@ -624,6 +627,22 @@ def browses(page: Page, name: str) -> Any:
     expect(title).to_have_text("New tab")
     browser.get_by_role("button", name="Close New tab").click()
     expect(title).to_have_text("confirmed", timeout=10_000)
+    # A select's own menu never shows in the screen's images, so the console
+    # shows its options, and what's chosen there is chosen on the page.
+    # Clicked again until it opens: closing the tab above shows this one
+    # again, and a click before its page is attached to goes nowhere.
+    menu = browser.get_by_role("listbox", name="Options")
+    deadline = time.monotonic() + 15
+    while not menu.count():
+        assert time.monotonic() < deadline, "no menu for the select"
+        screen.click(position={"x": 20, "y": 320})
+        time.sleep(1)
+    expect(menu).to_be_focused()
+    expect(menu.get_by_role("option")).to_have_count(3)
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    expect(title).to_have_text("chose c", timeout=10_000)
+    expect(menu).to_have_count(0)
     # A right click reaches the page without a menu the screen can't show,
     # which would hold the browser; copying and pasting go through this
     # clipboard, not the browser's own.
