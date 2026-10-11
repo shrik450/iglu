@@ -1,0 +1,16 @@
+Symbols Nerd Font Mono, vendored so terminals show nerd-font icons on devices
+without a nerd font, as Ghostty does with its own built-in copy. The page asks
+for it only once an icon appears.
+
+repository  https://github.com/ryanoasis/nerd-fonts
+release     v3.5.0, NerdFontsSymbolsOnly.tar.xz
+            sha256 b7ef2283462b435f1fe91d729dc412d5dbe34269dd2c7f4e1d803e4105c8d883,
+            the same as nixpkgs' nerd-fonts.symbols-only
+font        SymbolsNerdFontMono-Regular.ttf
+            sha256 2dc316f2505a0cbfbcf6060a1b4ba85b0a2974189e30c0037cdedc436a25a4ff,
+            converted unchanged to WOFF2 with woff2_compress, not subset
+licence     MIT for Nerd Fonts, in LICENSE; each icon set keeps its own licence,
+            listed in README.md, which is the release's own
+
+To take a new release: convert its Mono font the same way and replace these
+files.

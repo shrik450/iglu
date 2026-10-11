@@ -336,6 +336,56 @@ def draws_blocks(page: Page, name: str) -> Any:
     return found
 
 
+# Font Awesome's house, a nerd-font icon, in red, followed by green text:
+# first after a blank cell, then right against it.
+ICONS = (
+    "clear; printf '\\e[38;2;255;0;0m\\357\\200\\225 \\e[38;2;0;255;0mab\\n"
+    "\\e[38;2;255;0;0m\\357\\200\\225\\e[38;2;0;255;0mab\\e[0m\\nicons-%s\\n' {mark}"
+)
+
+# How wide a character is at 100px in the icon font, falling back to
+# `monospace`, and in `monospace` alone.
+ICON_FONT_WIDTH = """(text) => {
+    const context = document.createElement("canvas").getContext("2d");
+    const width = (font) => { context.font = `100px ${font}`; return context.measureText(text).width; };
+    return [width("'Symbols Nerd Font Mono', monospace"), width("monospace")];
+}"""
+
+
+def draws_icons(page: Page, name: str) -> Any:
+    """Nerd-font icons show without a nerd font installed, from the one the
+    console serves, as Ghostty shows them from its own. Each fits its cell,
+    or two when a blank follows, so it neither covers the text after it nor
+    moves it: at its own width, an em, it spilled over most of the next cell.
+    The font has a few characters that aren't icons, such as a prompt's ❯,
+    which it drew an em wide over the text after it: they're left to the
+    device's fonts, as before."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, ICONS.format(mark=mark), f"icons-{mark}")
+    page.wait_for_function("[...document.fonts].some((f) => f.family.replaceAll('\"', '') === 'Symbols Nerd Font Mono' && f.status === 'loaded')")
+    cell = float(column(page, first).locator(".wterm").evaluate("(w) => parseFloat(getComputedStyle(w).getPropertyValue('--term-cell-width'))"))
+    rows = column(page, first).locator(".term-row:not(.term-scrollback-row)")
+    found = {}
+    for row, label, cells in ((0, "spaced", 2), (1, "against", 1)):
+        image = Image.open(io.BytesIO(rows.nth(row).screenshot())).convert("RGB")
+        inked = [(x, image.getpixel((x, y))) for x in range(image.width) for y in range(image.height)]
+        icon = [x for x, (r, g, b) in inked if r - max(g, b) > 24]
+        text = [x for x, (r, g, b) in inked if g - max(r, b) > 24]
+        assert icon and text, {label: {"icon": len(icon), "text": len(text)}}
+        found[label] = {"cell": cell, "icon": [min(icon), max(icon)], "text": min(text)}
+        assert max(icon) < cells * cell, found
+        assert min(text) >= cells * cell, found
+    # The house is wider than a cell: given two, it takes them.
+    assert found["spaced"]["icon"][1] >= cell, found
+    house, prompt = page.evaluate(ICON_FONT_WIDTH, "\uf015"), page.evaluate(ICON_FONT_WIDTH, "\u276f")
+    found["widths"] = {"house": house, "prompt": prompt}
+    assert house[0] == 100, found
+    assert prompt[0] == prompt[1], found
+    return found
+
+
 # A program on the alternate screen that doesn't track the mouse, like a
 # pager: it shows a mark, then prints what the next six bytes it reads were.
 PAGER = (
@@ -1491,6 +1541,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "new-column": new_column,
     "answers-queries": answers_queries,
     "draws-blocks": draws_blocks,
+    "draws-icons": draws_icons,
     "wheels-pager": wheels_pager,
     "copies-out": copies_out,
     "finds-output": finds_output,

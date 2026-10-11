@@ -3,6 +3,11 @@
 @font-face { font-family: "Unbounded"; src: url("@fontsource-variable/unbounded/files/unbounded-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; font-display: swap; }
 @font-face { font-family: "Geist"; src: url("@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 @font-face { font-family: "JetBrains Mono"; src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+/* Nerd-font icons for anyone without a nerd font, as Ghostty builds them in. Only for the Private Use
+   Areas, which the terminal fits to their cells; the font's few other characters, such as ❯ and ♥, are
+   left to the device's fonts. The page fetches it only when an icon is drawn. See vendor/symbols-nerd-font. */
+@font-face { font-family: "Symbols Nerd Font Mono"; src: url("../vendor/symbols-nerd-font/SymbolsNerdFontMono-Regular.woff2") format("woff2"); font-display: block;
+  unicode-range: U+E000-F8FF, U+F0000-10FFFD; }
 @property --f { syntax: '<number>'; inherits: false; initial-value: 0; }
 
 :root {
@@ -17,7 +22,7 @@
   --radius: 10px; --pill: 999px;
   --display: 'Unbounded', 'Arial Rounded MT Bold', system-ui, sans-serif;
   --ui: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -352,6 +357,11 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
   --term-search-match: rgba(255,196,107,.28); --term-search-active: rgba(255,196,107,.6); --term-search-border: #ffc46b;
   scrollbar-width: thin; scrollbar-color: var(--term-line) transparent;
 }
+/* A terminal's icons are always iglu's, whose advance is an em, so a size of the cells an icon may cover
+   fits it to them; a nerd font chosen in Settings has its own advance. Positioned, an icon is drawn over the
+   blank cell's background. */
+.term-host > .wterm .term-icon { position: relative; font-family: 'Symbols Nerd Font Mono', var(--term-font-family);
+  font-size: min(1em, calc(var(--term-icon-cols, 1) * var(--term-cell-width, 1ch))); }
 .term-host > .wterm ::selection { background: var(--term-pick, rgba(143,216,255,.25)); }
 :root[data-term-pick-ink] .term-host > .wterm ::selection { color: var(--term-pick-ink); }
 /* Only the terminal with the keyboard shows a block; the others keep a still underline,

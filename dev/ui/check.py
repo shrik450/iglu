@@ -71,6 +71,7 @@ def main() -> None:
             step("terminal", browser.terminal, page, NAME, "printf 'one-%s\\n' 42", "one-42")
             step("answers-queries", browser.answers_queries, page, NAME)
             step("draws-blocks", browser.draws_blocks, page, NAME)
+            step("draws-icons", browser.draws_icons, page, NAME)
             step("wheels-pager", browser.wheels_pager, page, NAME)
             step("copies-out", browser.copies_out, page, NAME)
             step("finds-output", browser.finds_output, page, NAME)

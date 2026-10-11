@@ -269,6 +269,7 @@ try:
         browser("terminal", "demo", "echo token=$TEST_TOKEN", "token=hunter2")
         browser("answers-queries", "demo")
         browser("draws-blocks", "demo")
+        browser("draws-icons", "demo")
         browser("wheels-pager", "demo")
         browser("copies-out", "demo")
         browser("finds-output", "demo")

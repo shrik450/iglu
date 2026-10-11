@@ -8,6 +8,8 @@
 // - Double-line box glyphs are painted, as the single and heavy ones are.
 // - getSelectionText() takes the core, to read selected rows not mounted;
 //   liveRow() finds a painted row where the core has it now.
+// - Private Use Area icons, nerd fonts' among them, are marked with how many
+//   cells they may cover: two when a blank follows, as Ghostty fits them.
 
 import type {
   CellData,
@@ -141,6 +143,14 @@ function cursorCellStyle(style: string): string {
   return style
     .replace(/(^|;)color:/g, "$1--term-cell-fg:")
     .replace(/(^|;)background:/g, "$1--term-cell-bg:");
+}
+
+// Icons in the Private Use Areas, nerd fonts' among them, are as wide as
+// their font draws them, often wider than a cell. Each is marked term-icon,
+// with --term-icon-cols of 2 when a blank cell follows it, for the page's
+// stylesheet, which knows the icon font, to fit it to them as Ghostty does.
+function isPrivateUse(cp: number): boolean {
+  return (cp >= 0xe000 && cp <= 0xf8ff) || (cp >= 0xf0000 && cp <= 0x10fffd);
 }
 
 function columnStyle(columns: number): string {
@@ -810,13 +820,27 @@ export class Renderer {
           flushRun(col);
           const cursor = col === cursorCol;
           const box = BOX_STYLES[cp];
-          const boxStyle = box && ch === String.fromCodePoint(cp) ? box : null;
-          let className = boxStyle?.className ?? "";
+          const single = ch === String.fromCodePoint(cp);
+          const boxStyle = box && single ? box : null;
+          const icon = single && isPrivateUse(cp);
+          let className = boxStyle?.className ?? (icon ? "term-icon" : "");
           if (boxStyle && cell.flags & FLAG_BOLD) className += " term-box-bold";
           if (cursor) className += className ? " term-cursor" : "term-cursor";
+          let iconStyle = "";
+          if (icon && col + 1 < this.cols) {
+            const next = col + 1 < lineLen ? getCell(col + 1) : null;
+            const blank =
+              !next ||
+              ((next.char === 0 || next.char === 32) &&
+                (next.width ?? 1) === 1 &&
+                !next.chars);
+            if (blank) iconStyle = "--term-icon-cols:2;";
+          }
           appendStyledSpan(
             className,
-            (cursor ? cursorCellStyle(style) : style) + (boxStyle?.style ?? ""),
+            (cursor ? cursorCellStyle(style) : style) +
+              (boxStyle?.style ?? "") +
+              iconStyle,
             ch,
             cellLinkKey,
             cellLinkUri,
