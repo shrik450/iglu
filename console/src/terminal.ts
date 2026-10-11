@@ -16,7 +16,7 @@ import { MAX_FILE_BYTES, pastedPath } from "./state/paste.ts";
 import { programTitle } from "./state/program.ts";
 import { scan } from "./state/replies.ts";
 import { say } from "./state/store.ts";
-import { type Colors, XTERM } from "./state/themes.ts";
+import { type Colors, XTERM, hexOf } from "./state/themes.ts";
 import { styleApplied } from "./termstyle.ts";
 
 /** Each terminal's history, in bytes: ghostty keeps it in pages, so the rows
@@ -40,19 +40,26 @@ interface Theme {
 }
 
 /** A terminal's colours, read from the page where it sits: the look's, so it
- * matches its column in either, or the theme's chosen in Settings. */
+ * matches its column in either, or the theme's chosen in Settings. Each is
+ * read as the page resolves it, whichever look picks it and however it's
+ * written, from an element that's never shown. */
 function themeOf(where: Element): Theme {
-  const css = getComputedStyle(where);
+  const probe = document.createElement("span");
+  probe.style.display = "none";
+  where.append(probe);
   const color = (name: string, otherwise: string) => {
-    const value = css.getPropertyValue(name).trim();
-    return /^#[0-9a-f]{6}$/i.test(value) ? value : otherwise;
+    probe.style.color = otherwise;
+    probe.style.color = `var(${name}, ${otherwise})`;
+    return hexOf(getComputedStyle(probe).color) ?? otherwise;
   };
-  return {
+  const theme = {
     background: color("--term-bg", "#070c18"),
     foreground: color("--term-ink", "#d4e0f4"),
     cursor: color("--term-caret", color("--accent", "#8fd8ff")),
     palette: XTERM.map((otherwise, index) => color(`--term-ansi-${index}`, otherwise)),
   };
+  probe.remove();
+  return theme;
 }
 
 function colorsOf(theme: Theme): TerminalThemeColors {

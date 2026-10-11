@@ -11,44 +11,32 @@
 @property --f { syntax: '<number>'; inherits: false; initial-value: 0; }
 
 :root {
-  --bg: #0a1020; --surface: #0f1830; --raised: #152140; --ink: #e6eefb; --muted: #8b9bbb; --line: #22315a;
-  --accent: #8fd8ff; --accent-ink: #07142a; --accent-soft: rgba(143,216,255,.12); --accent-hover: #b4e6ff;
-  --line-strong: #34497d; --sunk: #0b1328; --lift: 0 1px 0 rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05); --error-soft: rgba(255,143,143,.1);
-  --working: #8fd8ff; --waiting: #ffc46b; --waiting-glow: rgba(255,196,107,.38); --done: #7eedbd; --error: #ff8f8f;
-  --term-bg: #070c18; --term-ink: #d4e0f4; --term-dim: #6d80a6; --term-line: #18233f;
-  --frost-core: rgba(214,236,255,.62); --frost-edge: rgba(170,208,245,.42); --frost-ink: #0b1a33;
-  --ice-1: #eaf5ff; --ice-2: #bcd9f4; --ice-line: #8fb6dd; --door: #0b1530;
-  --scrim: rgba(4,8,18,.6); --shadow: 0 24px 60px -24px rgba(0,0,0,.7);
+  /* Each colour once, as light-dark(light, dark): the page's colour scheme picks, following the
+     system unless the look is set. */
+  color-scheme: light dark;
+  --bg: light-dark(#edf2f8, #0a1020); --surface: light-dark(#ffffff, #0f1830); --raised: light-dark(#f6f9fc, #152140);
+  --sunk: light-dark(#e6edf6, #0b1328); --ink: light-dark(#13213d, #e6eefb); --muted: light-dark(#5a6a87, #8b9bbb);
+  --line: light-dark(#d4deeb, #22315a); --line-strong: light-dark(#b5c4d9, #34497d);
+  --accent: light-dark(#2462d1, #8fd8ff); --accent-ink: light-dark(#ffffff, #07142a);
+  --accent-soft: light-dark(rgba(42,107,224,.08), rgba(143,216,255,.12)); --accent-hover: light-dark(#1b51b4, #b4e6ff);
+  --working: light-dark(#2462d1, #8fd8ff); --waiting: light-dark(#9a5c00, #ffc46b);
+  --waiting-glow: light-dark(rgba(214,140,20,.30), rgba(255,196,107,.38)); --done: light-dark(#0b7a59, #7eedbd);
+  --error: light-dark(#b23a32, #ff8f8f); --error-soft: light-dark(rgba(178,58,50,.07), rgba(255,143,143,.1));
+  --term-bg: light-dark(#0e1830, #070c18); --term-ink: light-dark(#dbe6f7, #d4e0f4);
+  --term-dim: light-dark(#7488ad, #6d80a6); --term-line: light-dark(#1b2846, #18233f);
+  --frost-core: light-dark(rgba(255,255,255,.8), rgba(214,236,255,.62)); --frost-edge: light-dark(rgba(206,226,248,.72), rgba(170,208,245,.42));
+  --frost-ink: light-dark(#13213d, #0b1a33); --ice-1: light-dark(#ffffff, #eaf5ff); --ice-2: light-dark(#d6e6f6, #bcd9f4);
+  --ice-line: light-dark(#9ab8d9, #8fb6dd); --door: light-dark(#2b3d62, #0b1530);
+  --scrim: light-dark(rgba(19,33,61,.35), rgba(4,8,18,.6));
+  --lift: 0 1px 1px light-dark(rgba(19,33,61,.08), rgba(0,0,0,.4)), inset 0 1px 0 light-dark(rgba(255,255,255,.9), rgba(255,255,255,.05));
+  --shadow: 0 24px 60px -26px light-dark(rgba(19,33,61,.4), rgba(0,0,0,.7));
   --radius: 10px; --pill: 999px;
   --display: 'Unbounded', 'Arial Rounded MT Bold', system-ui, sans-serif;
   --ui: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  color-scheme: dark;
 }
-@media (prefers-color-scheme: light) {
-  :root:not([data-look="dark"]) {
-    --bg: #edf2f8; --surface: #ffffff; --raised: #f6f9fc; --ink: #13213d; --muted: #5a6a87; --line: #d4deeb;
-    --accent: #2462d1; --accent-ink: #ffffff; --accent-soft: rgba(42,107,224,.08); --accent-hover: #1b51b4;
-    --line-strong: #b5c4d9; --sunk: #e6edf6; --lift: 0 1px 1px rgba(19,33,61,.08), inset 0 1px 0 rgba(255,255,255,.9); --error-soft: rgba(178,58,50,.07);
-    --working: #2462d1; --waiting: #9a5c00; --waiting-glow: rgba(214,140,20,.30); --done: #0b7a59; --error: #b23a32;
-    --term-bg: #0e1830; --term-ink: #dbe6f7; --term-dim: #7488ad; --term-line: #1b2846;
-    --frost-core: rgba(255,255,255,.8); --frost-edge: rgba(206,226,248,.72); --frost-ink: #13213d;
-    --ice-1: #ffffff; --ice-2: #d6e6f6; --ice-line: #9ab8d9; --door: #2b3d62;
-    --scrim: rgba(19,33,61,.35); --shadow: 0 24px 60px -28px rgba(19,33,61,.4);
-    color-scheme: light;
-  }
-}
-:root[data-look="light"] {
-  --bg: #edf2f8; --surface: #ffffff; --raised: #f6f9fc; --ink: #13213d; --muted: #5a6a87; --line: #d4deeb;
-  --accent: #2462d1; --accent-ink: #ffffff; --accent-soft: rgba(42,107,224,.08); --accent-hover: #1b51b4;
-    --line-strong: #b5c4d9; --sunk: #e6edf6; --lift: 0 1px 1px rgba(19,33,61,.08), inset 0 1px 0 rgba(255,255,255,.9); --error-soft: rgba(178,58,50,.07);
-  --working: #2462d1; --waiting: #9a5c00; --waiting-glow: rgba(214,140,20,.30); --done: #0b7a59; --error: #b23a32;
-  --term-bg: #0e1830; --term-ink: #dbe6f7; --term-dim: #7488ad; --term-line: #1b2846;
-  --frost-core: rgba(255,255,255,.8); --frost-edge: rgba(206,226,248,.72); --frost-ink: #13213d;
-  --ice-1: #ffffff; --ice-2: #d6e6f6; --ice-line: #9ab8d9; --door: #2b3d62;
-  --scrim: rgba(19,33,61,.35); --shadow: 0 24px 60px -28px rgba(19,33,61,.4);
-  color-scheme: light;
-}
+:root[data-look="dark"] { color-scheme: dark; }
+:root[data-look="light"] { color-scheme: light; }
 
 [hidden] { display: none !important; }
 * { box-sizing: border-box; }

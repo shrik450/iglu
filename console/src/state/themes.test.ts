@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, isLight, parseTheme } from "./themes.ts";
+import { THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, hexOf, isLight, parseTheme } from "./themes.ts";
 
 test("a Ghostty theme file reads as its colours", () => {
   const text = "# Dracula\npalette = 0=#21222c\npalette = 15=ffffff\nbackground = #282a36\nforeground = #F8F8F2\ncursor-color = #f8f8f2\ncursor-text = #282a36\nselection-background = #44475a\n";
@@ -78,4 +78,11 @@ test("text is sized so every cell is whole pixels", () => {
     [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   );
   assert.ok(sizes.every((s) => Number.isInteger(s.row) && Number.isInteger(s.width)));
+});
+
+test("a colour as the page computes it reads as hex, and anything else doesn't", () => {
+  assert.equal(hexOf("rgb(14, 24, 48)"), "#0e1830");
+  assert.equal(hexOf("rgba(255, 255, 255, 0.8)"), "#ffffff");
+  assert.equal(hexOf("color(srgb 1 0 0)"), null);
+  assert.equal(hexOf(""), null);
 });

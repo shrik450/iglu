@@ -217,3 +217,13 @@ export function cellSizes(advance: number, least = 9, most = 28): CellSize[] {
   for (let width = Math.max(1, Math.ceil(least * advance)); width / advance <= most; width++) sizes.push(cellSize(advance, width / advance));
   return sizes;
 }
+
+/** A computed colour, `rgb(r, g, b)`, as #rrggbb; null for any other form. */
+export function hexOf(computed: string): string | null {
+  const parts = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(computed);
+  if (!parts) return null;
+  return `#${parts
+    .slice(1, 4)
+    .map((part) => Number(part).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
