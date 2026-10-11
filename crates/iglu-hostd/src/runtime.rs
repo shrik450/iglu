@@ -15,13 +15,14 @@ use std::time::Duration;
 use bytes::Bytes;
 use iglu_domain::capacity;
 use iglu_domain::download::DownloadName;
-use iglu_domain::env::{BuiltImage, EnvSource, GuestUser};
+use iglu_domain::env::{BuiltImage, EnvSource, GuestUser, ImageFingerprint};
 use iglu_domain::guest::Interface;
 use iglu_domain::id::{InstanceName, PrincipalId};
 use iglu_domain::lifecycle::Provisioning;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::time::Timestamp;
 use iglu_proto::CreateSpec;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
@@ -138,6 +139,24 @@ pub trait Runtime: Send + Sync + 'static {
         guest: &Guest,
         port: GuestPort,
     ) -> impl Future<Output = Result<Self::Stream, RuntimeError>> + Send;
+
+    /// The images this runtime built, and when, where it knows.
+    fn images(&self) -> impl Future<Output = Result<Vec<StoredImage>, RuntimeError>> + Send;
+
+    /// Removes an image this runtime built. Instances made from it carry on;
+    /// one gone already is no error.
+    fn delete_image(
+        &self,
+        image: &ImageFingerprint,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
+}
+
+/// An image a runtime built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredImage {
+    pub fingerprint: ImageFingerprint,
+    /// When it was built; unknown for images from before this was recorded.
+    pub built: Option<Timestamp>,
 }
 
 /// A runtime that keeps workspaces apart from the host and from each other:

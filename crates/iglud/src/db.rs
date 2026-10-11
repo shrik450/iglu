@@ -15,7 +15,7 @@ use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::{Grant, VerifiedIdentity};
 use iglu_domain::capacity::Bytes;
 use iglu_domain::column::{ColumnLabel, ColumnSpec};
-use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
+use iglu_domain::env::{BuiltImage, EnvName, EnvSource, ImageFingerprint};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
 use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
@@ -603,6 +603,31 @@ pub fn revision_image(tx: &Connection, id: EnvRevisionId) -> Result<Option<Built
         .flatten()
         .map(|json| serde_json::from_str(&json).map_err(DbError::from))
         .transpose()
+}
+
+/// The images still needed: each environment's newest ready one, which new
+/// workspaces are made from, and each one a workspace not deleted was made
+/// from, which its instance is made from again should it be lost.
+pub fn kept_images(tx: &Connection) -> Result<Vec<ImageFingerprint>, DbError> {
+    let mut statement = tx.prepare(
+        "SELECT r.built FROM env_revision r
+         WHERE r.status = 'ready' AND (
+             r.id IN (SELECT env_revision_id FROM workspace WHERE deleted_at IS NULL)
+             OR r.id = (SELECT n.id FROM env_revision n
+                        WHERE n.environment_id = r.environment_id AND n.status = 'ready'
+                        ORDER BY n.created_at DESC, n.rowid DESC LIMIT 1))",
+    )?;
+    let images = statement
+        .query_map([], |row| opt_json::<BuiltImage>(row, 0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut kept: Vec<ImageFingerprint> = images
+        .into_iter()
+        .flatten()
+        .map(|image| image.fingerprint)
+        .collect();
+    kept.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    kept.dedup();
+    Ok(kept)
 }
 
 pub fn environment_name_of_revision(
@@ -2363,6 +2388,45 @@ mod tests {
             .expect("an old image reads")
             .expect("ready");
         assert!(image.agents.is_empty());
+    }
+
+    #[test]
+    fn images_are_kept_while_newest_or_in_use() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let env: String = conn
+            .query_row(
+                "SELECT environment_id FROM env_revision WHERE id = ?1",
+                [ws.env_revision.to_string()],
+                |row| row.get(0),
+            )
+            .expect("its environment");
+        let env = Uuid::parse_str(&env).expect("a UUID");
+        let image = |n: u8| -> BuiltImage {
+            serde_json::from_str(&format!(
+                r#"{{"fingerprint":"{n:064x}","arch":"x86_64","user":{{"name":"dev","uid":1000,"gid":100,"home":"/home/dev"}},"agents":[],"browser":false,"store_path":"/nix/store/x"}}"#
+            ))
+            .expect("an image")
+        };
+        let ready = |id: EnvRevisionId, created: i64, n: u8| {
+            if id != ws.env_revision {
+                insert_revision(&conn, id, env, at(created)).expect("revision");
+            }
+            finish_revision(&conn, id, Ok(&image(n)), at(created)).expect("ready");
+        };
+        ready(EnvRevisionId::from_uuid(Uuid::new_v4()), 0, 1);
+        ready(ws.env_revision, 1, 2);
+        ready(EnvRevisionId::from_uuid(Uuid::new_v4()), 2, 3);
+        let kept =
+            |conn: &Connection| -> Vec<ImageFingerprint> { kept_images(conn).expect("kept") };
+        assert_eq!(kept(&conn), [image(2).fingerprint, image(3).fingerprint]);
+        conn.execute(
+            "UPDATE workspace SET deleted_at = 9 WHERE id = ?1",
+            [ws.id.to_string()],
+        )
+        .expect("deleted");
+        assert_eq!(kept(&conn), [image(3).fingerprint]);
     }
 
     #[test]

@@ -19,9 +19,10 @@ use iglu_domain::port::GuestPort;
 use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretBundle};
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput};
+use iglu_domain::time::Millis;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Paths, so client and server can't drift.
 pub mod path {
@@ -30,6 +31,7 @@ pub mod path {
     pub const HOST: &str = "/v1/host";
     pub const INVENTORY: &str = "/v1/inventory";
     pub const BUILDS: &str = "/v1/builds";
+    pub const IMAGE_PRUNE: &str = "/v1/images/prune";
 
     #[must_use]
     pub fn commands(workspace: WorkspaceId) -> String {
@@ -250,6 +252,20 @@ pub struct TerminalTyping {
 pub struct AttachParams {
     pub cols: u16,
     pub rows: u16,
+}
+
+/// The images iglud still needs: the host removes the others it built, but
+/// for any built in the last `older_than`, which iglud may not have heard of
+/// yet.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruneImages {
+    pub keep: Vec<ImageFingerprint>,
+    pub older_than: Millis,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrunedImages {
+    pub removed: Vec<ImageFingerprint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

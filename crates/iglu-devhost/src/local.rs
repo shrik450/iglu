@@ -28,11 +28,12 @@ use iglu_domain::lifecycle::Provisioning;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::time::Timestamp;
 use iglu_hostd::config::Timeouts;
 use iglu_hostd::guest::{self, GuestCommand};
 use iglu_hostd::runtime::{
     BuildFailure, Claim, Guest, GuestFile, MAX_GUEST_FILE, Observed, Output, Ownership, Runtime,
-    RuntimeError, Terminal, TerminalInput,
+    RuntimeError, StoredImage, Terminal, TerminalInput,
 };
 use iglu_proto::CreateSpec;
 use rustix::process::Signal;
@@ -830,6 +831,44 @@ impl Runtime for LocalRuntime {
         TcpStream::connect(("127.0.0.1", port.get()))
             .await
             .map_err(RuntimeError::failed)
+    }
+
+    /// Recorded environments; the last recording is when one was built.
+    async fn images(&self) -> Result<Vec<StoredImage>, RuntimeError> {
+        let mut images = Vec::new();
+        let mut entries = match tokio::fs::read_dir(self.layout.images()).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(images),
+            Err(error) => return Err(RuntimeError::failed(error)),
+        };
+        while let Some(entry) = entries.next_entry().await.map_err(RuntimeError::failed)? {
+            let path = entry.path();
+            let Some(fingerprint) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.parse().ok())
+            else {
+                continue;
+            };
+            let built = entry
+                .metadata()
+                .await
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|since| i64::try_from(since.as_millis()).ok())
+                .map(Timestamp::from_unix_millis);
+            images.push(StoredImage { fingerprint, built });
+        }
+        Ok(images)
+    }
+
+    async fn delete_image(&self, image: &ImageFingerprint) -> Result<(), RuntimeError> {
+        match tokio::fs::remove_file(self.layout.image(image)).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(RuntimeError::failed(error)),
+        }
     }
 }
 

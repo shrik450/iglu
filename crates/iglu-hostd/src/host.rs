@@ -18,7 +18,7 @@ use iglu_domain::secret::{FetchTokens, SecretBundle};
 use iglu_domain::terminal::{self, OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{
     BuildOutcome, Command, CommandError, CommandOutcome, ErrorCode, InstanceReport, ProvisionSpec,
-    SessionSpec, TerminalInfo, TerminalOutput,
+    PruneImages, PrunedImages, SessionSpec, TerminalInfo, TerminalOutput,
 };
 
 use crate::channel::Channels;
@@ -528,6 +528,24 @@ impl<R: Runtime> Host<R> {
         Ok(self.runtime.connect(&guest, port).await?)
     }
 
+    /// Removes the images iglud no longer needs. One that won't go is left
+    /// for next time.
+    ///
+    /// # Errors
+    ///
+    /// When the runtime can't list its images.
+    pub async fn prune_images(&self, request: &PruneImages) -> Result<PrunedImages, CommandError> {
+        let images = self.runtime.images().await?;
+        let mut removed = Vec::new();
+        for fingerprint in rules::unkept(&images, &request.keep, request.older_than, now()) {
+            match self.runtime.delete_image(&fingerprint).await {
+                Ok(()) => removed.push(fingerprint),
+                Err(error) => tracing::warn!(%fingerprint, %error, "removing an image failed"),
+            }
+        }
+        Ok(PrunedImages { removed })
+    }
+
     /// Builds an environment for this host, reporting a failure for its owner.
     pub async fn build(&self, source: &EnvSource, tokens: &FetchTokens) -> BuildOutcome {
         match self.runtime.build(source, tokens).await {
@@ -616,6 +634,16 @@ fn guest_message(stderr: &str) -> &str {
         .strip_prefix("iglu-guest: ")
         .or_else(|| stderr.strip_prefix("iglu-status: "))
         .unwrap_or(stderr)
+}
+
+/// The clock, as the domain's time.
+fn now() -> iglu_domain::time::Timestamp {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        });
+    iglu_domain::time::Timestamp::from_unix_millis(millis)
 }
 
 #[cfg(test)]

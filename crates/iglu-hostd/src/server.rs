@@ -28,7 +28,8 @@ use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
     AttachParams, BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode,
     FileParams, GUEST_WORKSPACE, HostReport, Inventory, KeptFile, OutputParams, PROTOCOL_VERSION,
-    SessionSpec, TUNNEL_UPGRADE, TerminalInfo, TerminalOutput, TerminalTyping, path,
+    PruneImages, PrunedImages, SessionSpec, TUNNEL_UPGRADE, TerminalInfo, TerminalOutput,
+    TerminalTyping, path,
 };
 
 use crate::auth::Verifier;
@@ -109,6 +110,7 @@ fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
         .route(path::HOST, get(host::<R>))
         .route(path::INVENTORY, get(inventory::<R>))
         .route(path::BUILDS, post(build::<R>))
+        .route(path::IMAGE_PRUNE, post(prune_images::<R>))
         .route("/v1/workspaces/{workspace}/commands", post(command::<R>))
         .route("/v1/workspaces/{workspace}/listeners", get(listeners::<R>))
         .route("/v1/workspaces/{workspace}/git", get(git_state::<R>))
@@ -425,6 +427,17 @@ async fn build<R: Runtime>(
     Json(request): Json<BuildRequest>,
 ) -> Json<BuildOutcome> {
     Json(app.host.build(&request.source, &request.tokens).await)
+}
+
+async fn prune_images<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Json(request): Json<PruneImages>,
+) -> Result<Json<PrunedImages>, Failure> {
+    app.host
+        .prune_images(&request)
+        .await
+        .map(Json)
+        .map_err(Failure)
 }
 
 #[cfg(test)]

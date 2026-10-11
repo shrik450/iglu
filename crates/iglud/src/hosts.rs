@@ -17,8 +17,8 @@ use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{
     BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode, GUEST_WORKSPACE,
-    Inventory, KeptFile, PROTOCOL_VERSION, SessionSpec, TUNNEL_UPGRADE, TerminalInfo,
-    TerminalOutput, TerminalTyping, path,
+    Inventory, KeptFile, PROTOCOL_VERSION, PruneImages, PrunedImages, SessionSpec, TUNNEL_UPGRADE,
+    TerminalInfo, TerminalOutput, TerminalTyping, path,
 };
 use serde::de::DeserializeOwned;
 use tokio::net::TcpStream;
@@ -222,6 +222,16 @@ impl HostClient {
                 Err(e) => HostError::Unreachable(e.to_string()),
             })
         }
+    }
+
+    pub async fn prune_images(&self, request: &PruneImages) -> Result<PrunedImages, HostError> {
+        self.json(
+            self.http
+                .post(self.url(path::IMAGE_PRUNE)?)
+                .json(request)
+                .timeout(Duration::from_secs(600)),
+        )
+        .await
     }
 
     pub async fn build(

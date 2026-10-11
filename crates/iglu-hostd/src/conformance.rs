@@ -13,7 +13,7 @@ use bytes::Bytes;
 use iglu_domain::attention::AttentionState;
 use iglu_domain::capacity;
 use iglu_domain::column::{Arg, Argv};
-use iglu_domain::env::{BuiltImage, EnvSource};
+use iglu_domain::env::{BuiltImage, EnvSource, ImageFingerprint};
 use iglu_domain::guest as guest_tools;
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::{
@@ -24,9 +24,10 @@ use iglu_domain::port::GuestPort;
 use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretTarget, SecretValue, bundle};
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalSize};
+use iglu_domain::time::Millis;
 use iglu_proto::{
     BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Limits,
-    ProvisionSpec, SessionSpec,
+    ProvisionSpec, PruneImages, SessionSpec,
 };
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -165,6 +166,15 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
             .check(
                 "a failed clone leaves provisioning pending",
                 Suite::failed_clone,
+            )
+            .await,
+    );
+    // Last: it removes the image the other checks use.
+    outcomes.push(
+        suite
+            .check(
+                "an image goes once nothing keeps it and it isn't new",
+                Suite::prunes_images,
             )
             .await,
     );
@@ -577,6 +587,38 @@ impl<'a, R: Runtime> Suite<'a, R> {
         self.perform(workspace, Command::Create(self.spec()))
             .await?;
         self.boot(workspace).await.map(|_| ())
+    }
+
+    async fn prunes_images(&self, workspace: WorkspaceId) -> Checked {
+        let image = self.image.fingerprint.clone();
+        let prune = |keep: Vec<ImageFingerprint>, older_than: Millis| {
+            let request = PruneImages { keep, older_than };
+            async move {
+                self.host
+                    .prune_images(&request)
+                    .await
+                    .map(|pruned| pruned.removed)
+                    .map_err(|e| e.to_string())
+            }
+        };
+        let removed = prune(Vec::new(), Millis::from_secs(3600)).await?;
+        ensure(!removed.contains(&image), || {
+            format!("a new image was removed: {removed:?}")
+        })?;
+        let removed = prune(vec![image.clone()], Millis::from_secs(0)).await?;
+        ensure(!removed.contains(&image), || {
+            format!("a kept image was removed: {removed:?}")
+        })?;
+        let removed = prune(Vec::new(), Millis::from_secs(0)).await?;
+        ensure(removed.contains(&image), || {
+            format!("the image wasn't removed: {removed:?}")
+        })?;
+        self.refused(
+            workspace,
+            Command::Create(self.spec()),
+            ErrorCode::ImageMissing,
+        )
+        .await
     }
 
     /// What one of a person's workspaces keeps, their others see, live;

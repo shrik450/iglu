@@ -14,6 +14,7 @@ use iglu_domain::agent::{AgentSpec, MAX_AGENTS};
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
 use iglu_domain::guest::{self, INTERFACE, Incompatible, Interface};
 use iglu_domain::secret::FetchTokens;
+use iglu_domain::time::Timestamp;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
@@ -263,8 +264,22 @@ async fn warm(
 }
 
 /// The image property recording which guest-tools interface an image's
-/// tools speak, so creating from an image can check it.
+/// tools speak, so creating from an image can check it. Every image hostd
+/// built has it.
 pub const INTERFACE_PROPERTY: &str = "iglu.guest-interface";
+
+/// The image property recording when hostd built the image, in milliseconds
+/// since the Unix epoch.
+pub const BUILT_PROPERTY: &str = "iglu.built-at";
+
+/// When an imported image was built, if it records it.
+pub fn recorded_build(image: &serde_json::Value) -> Option<Timestamp> {
+    image["properties"][BUILT_PROPERTY]
+        .as_str()?
+        .parse()
+        .ok()
+        .map(Timestamp::from_unix_millis)
+}
 
 /// The interface an imported image records, if it records one.
 pub fn recorded_interface(image: &serde_json::Value) -> Option<Interface> {
@@ -288,6 +303,10 @@ async fn record_interface(
         .await
         .map_err(|e| BuildError::Import(e.to_string()))?;
     image["properties"][INTERFACE_PROPERTY] = serde_json::json!(INTERFACE.to_string());
+    let built = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    image["properties"][BUILT_PROPERTY] = serde_json::json!(built.to_string());
     let put = serde_json::json!({
         "auto_update": image["auto_update"],
         "expires_at": image["expires_at"],

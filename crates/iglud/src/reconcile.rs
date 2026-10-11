@@ -14,10 +14,10 @@ use iglu_domain::lifecycle::{
 };
 use iglu_domain::secret::bundle;
 use iglu_domain::terminal::SessionName;
-use iglu_domain::time::Timestamp;
+use iglu_domain::time::{Millis, Timestamp};
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
-    Limits, ProvisionSpec, SessionSpec,
+    Limits, ProvisionSpec, PruneImages, SessionSpec,
 };
 
 use crate::app::{App, now, open_secrets};
@@ -26,6 +26,13 @@ use crate::hosts::HostClient;
 use crate::model::{Condition, PrincipalRecord, WorkspaceRecord};
 
 const INTERVAL: Duration = Duration::from_secs(2);
+
+/// How often hosts are asked to remove images nothing needs any more.
+const PRUNE_EVERY: Duration = Duration::from_secs(3600);
+
+/// An image built this recently is never removed: its build may not be
+/// recorded yet.
+const NEWLY_BUILT: Millis = Millis::from_secs(3600);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
 
 #[derive(Default)]
@@ -91,6 +98,7 @@ impl Reconciler {
 pub async fn run(app: Arc<App>) {
     let reconciler = app.reconciler.clone();
     let mut last_cleanup = Instant::now();
+    let mut last_prune: Option<Instant> = None;
     loop {
         for host in &app.hosts {
             // Observations are dated from when they were asked for.
@@ -113,6 +121,10 @@ pub async fn run(app: Arc<App>) {
                 }
             }
         }
+        if last_prune.is_none_or(|at| at.elapsed() > PRUNE_EVERY) {
+            prune_images(&app).await;
+            last_prune = Some(Instant::now());
+        }
         if last_cleanup.elapsed() > Duration::from_secs(300) {
             let _ = app.db.call(|tx| db::expire_sessions(tx, now())).await;
             last_cleanup = Instant::now();
@@ -120,6 +132,30 @@ pub async fn run(app: Arc<App>) {
         tokio::select! {
             () = tokio::time::sleep(INTERVAL) => {}
             () = reconciler.kick.notified() => {}
+        }
+    }
+}
+
+/// Asks every host to remove the images no environment or workspace needs.
+async fn prune_images(app: &App) {
+    let keep = match app.db.call(|tx| db::kept_images(tx)).await {
+        Ok(keep) => keep,
+        Err(error) => {
+            tracing::error!(%error, "listing the images still needed failed");
+            return;
+        }
+    };
+    let request = PruneImages {
+        keep,
+        older_than: NEWLY_BUILT,
+    };
+    for host in &app.hosts {
+        match host.prune_images(&request).await {
+            Ok(pruned) if pruned.removed.is_empty() => {}
+            Ok(pruned) => {
+                tracing::info!(host = %host.id, removed = ?pruned.removed, "removed unused images");
+            }
+            Err(error) => tracing::warn!(host = %host.id, %error, "removing unused images failed"),
         }
     }
 }

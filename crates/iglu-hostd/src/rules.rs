@@ -10,7 +10,9 @@ use iglu_domain::lifecycle::{
 };
 use iglu_proto::{CommandError, CreateSpec, ErrorCode};
 
-use crate::runtime::{Claim, Guest, Observed, Ownership, State};
+use crate::runtime::{Claim, Guest, Observed, Ownership, State, StoredImage};
+use iglu_domain::env::ImageFingerprint;
+use iglu_domain::time::{Millis, Timestamp};
 
 /// A lifecycle step: what a protocol command asks for, and what a runtime
 /// does. A command takes one or more steps.
@@ -214,10 +216,53 @@ const fn readiness(ready: bool, has_address: bool) -> Readiness {
     }
 }
 
+/// The images to remove: those not kept, but for any built within
+/// `older_than` of `now`. One built at an unknown time is old.
+#[must_use]
+pub fn unkept(
+    images: &[StoredImage],
+    keep: &[ImageFingerprint],
+    older_than: Millis,
+    now: Timestamp,
+) -> Vec<ImageFingerprint> {
+    images
+        .iter()
+        .filter(|image| !keep.contains(&image.fingerprint))
+        .filter(|image| {
+            image
+                .built
+                .is_none_or(|built| now.since(built) >= older_than)
+        })
+        .map(|image| image.fingerprint.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::BootId;
+
+    fn image(n: u8, built: Option<i64>) -> StoredImage {
+        StoredImage {
+            fingerprint: format!("{n:064x}").parse().expect("valid fingerprint"),
+            built: built.map(Timestamp::from_unix_millis),
+        }
+    }
+
+    #[test]
+    fn images_kept_or_new_stay() {
+        let hour = Millis::from_secs(3600);
+        let now = Timestamp::from_unix_millis(10_000_000);
+        let kept = image(1, Some(0));
+        let new = image(2, Some(now.unix_millis() - 60_000));
+        let old = image(3, Some(now.unix_millis() - 3_600_000));
+        let unknown = image(4, None);
+        let images = [kept.clone(), new, old.clone(), unknown.clone()];
+        assert_eq!(
+            unkept(&images, &[kept.fingerprint], hour, now),
+            [old.fingerprint, unknown.fingerprint]
+        );
+    }
     use iglu_domain::env::GuestUser;
     use iglu_domain::lifecycle::Provisioning;
 

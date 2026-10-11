@@ -25,7 +25,7 @@ use futures_util::{SinkExt, StreamExt};
 use hyper::Method;
 use iglu_domain::capacity;
 use iglu_domain::download::DownloadName;
-use iglu_domain::env::{BuiltImage, EnvSource, GuestUser};
+use iglu_domain::env::{BuiltImage, EnvSource, GuestUser, ImageFingerprint};
 use iglu_domain::guest as guest_tools;
 use iglu_domain::id::{InstanceName, PrincipalId};
 use iglu_domain::port::GuestPort;
@@ -58,7 +58,7 @@ use crate::config::{self, Timeouts};
 use crate::guest::{self, GuestCommand};
 use crate::runtime::{
     BuildFailure, Claim, Guest, GuestFile, Isolating, Observed, Output, Runtime, RuntimeError,
-    State, Terminal, TerminalInput,
+    State, StoredImage, Terminal, TerminalInput,
 };
 
 pub use self::client::IncusError as Error;
@@ -417,6 +417,41 @@ impl Runtime for IncusRuntime {
             self.timeouts.operation(),
         )
         .await
+    }
+
+    async fn images(&self) -> Result<Vec<StoredImage>, RuntimeError> {
+        let images: Vec<Value> = self
+            .incus
+            .get("/1.0/images?recursion=1")
+            .await
+            .map_err(failed)?;
+        Ok(images
+            .iter()
+            .filter(|image| build::recorded_interface(image).is_some())
+            .filter_map(|image| {
+                Some(StoredImage {
+                    fingerprint: image["fingerprint"].as_str()?.parse().ok()?,
+                    built: build::recorded_build(image),
+                })
+            })
+            .collect())
+    }
+
+    async fn delete_image(&self, image: &ImageFingerprint) -> Result<(), RuntimeError> {
+        match self
+            .incus
+            .run(
+                Method::DELETE,
+                &format!("/1.0/images/{image}"),
+                None,
+                self.timeouts.operation(),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) if error.is_not_found() => Ok(()),
+            Err(error) => Err(failed(error)),
+        }
     }
 }
 
