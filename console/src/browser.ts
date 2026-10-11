@@ -14,6 +14,7 @@ import type { MenuOption } from "./generated/MenuOption.ts";
 import type { MouseAction } from "./generated/MouseAction.ts";
 import { buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, type Press, screenRect, tabName, wheelPixels } from "./state/browser.ts";
 import { api, failure } from "./api/client.ts";
+import { keyboardFree } from "./focus.ts";
 import { MAX_FILE_BYTES } from "./state/paste.ts";
 import { say } from "./state/store.ts";
 import { panes, setTitle } from "./terminal.ts";
@@ -121,8 +122,7 @@ export class BrowserPane {
     });
     this.sizes.observe(container);
     panes.set(this.key, this);
-    const active = document.activeElement;
-    if (options.wantsFocus() && (!active || active === document.body)) this.focus();
+    if (options.wantsFocus() && keyboardFree()) this.focus();
     this.connect();
   }
 

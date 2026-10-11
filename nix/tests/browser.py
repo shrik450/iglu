@@ -1361,6 +1361,17 @@ def renames_follow(page: Page, name: str) -> Any:
     return {"renamed": renamed}
 
 
+def opening_gives_keyboard(page: Page, name: str) -> Any:
+    """Opening a workspace from a link, a card's or the sidebar's, gives its
+    column the keyboard once it opens: the link kept it, and typing went
+    nowhere until a column was clicked."""
+    page.goto(CONSOLE)
+    page.locator(f'article[data-name="{name}"]').get_by_role("link", name=name, exact=True).click()
+    page.wait_for_url(f"{CONSOLE}/w/{name}")
+    expect(page.locator(".term-host textarea").first).to_be_focused(timeout=15_000)
+    return {"opened": name}
+
+
 def labels(page: Page, name: str, project: str) -> Any:
     """What a workspace is called shows in place of its name, which stays
     its address; the new workspace form starts in the project being looked
@@ -1535,6 +1546,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "approve-cli": approve_cli,
     "create": create,
     "labels": labels,
+    "opening-gives-keyboard": opening_gives_keyboard,
     "refused-environment": refused_environment,
     "project-agent": project_agent,
     "terminal": terminal,

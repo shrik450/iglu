@@ -301,6 +301,7 @@ try:
         browser("goes-back", "demo")
         browser("renames-follow", "demo")
         browser("labels", "demo", "app")
+        browser("opening-gives-keyboard", "demo")
         browser("drafts-survive", "app")
         browser("adds-at-once", "demo")
         browser("questions-end", "demo")

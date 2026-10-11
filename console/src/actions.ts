@@ -4,6 +4,7 @@
 import { effect, untracked } from "@preact/signals";
 
 import { api, failure } from "./api/client.ts";
+import { keyboardFree } from "./focus.ts";
 import type { ColumnKind } from "./generated/ColumnKind.ts";
 import type { ColumnSpec } from "./generated/ColumnSpec.ts";
 import type { CreateWorkspace } from "./generated/CreateWorkspace.ts";
@@ -223,9 +224,7 @@ effect(() => {
   if (!closed) return;
   window.setTimeout(() => {
     const ws = current.peek();
-    const focus = document.activeElement;
-    const free = !focus || focus === document.body || (Boolean(focus.closest(".main")) && !focus.closest("input, textarea, select, .info"));
-    if (ws && free) {
+    if (ws && keyboardFree()) {
       const name = activeOf(ws);
       if (name) panes.get(`${ws.id}/${name}`)?.focus();
     }

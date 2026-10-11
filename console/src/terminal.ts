@@ -10,6 +10,7 @@ import { GhosttyCore } from "@wterm/ghostty";
 import WASM from "@wterm/ghostty/ghostty-vt.wasm";
 
 import { api, failure } from "./api/client.ts";
+import { keyboardFree } from "./focus.ts";
 import { withCtrl } from "./state/keys.ts";
 import { MAX_FILE_BYTES, pastedPath } from "./state/paste.ts";
 import { programTitle } from "./state/program.ts";
@@ -201,11 +202,9 @@ export class TerminalPane implements Pane {
     void this.term.init().then(() => {
       if (this.closed) return;
       this.opened = true;
-      // Opening takes a moment: the keyboard is only taken if nothing else
-      // has it since, such as a column's name being edited.
-      const active = document.activeElement;
-      const free = !active || active === document.body || container.contains(active);
-      if (options.wantsFocus() && free) this.focus();
+      // Opening takes a moment: the keyboard is only taken if nothing has
+      // it since, such as a column's name being edited.
+      if (options.wantsFocus() && keyboardFree()) this.focus();
       this.connect();
     });
   }
