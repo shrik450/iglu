@@ -67,6 +67,11 @@ pub enum BrowserInput {
     Choose {
         index: Option<u32>,
     },
+    /// The files for the file input the page asked for, kept in the
+    /// workspace already, by their paths there; none to choose none.
+    Files {
+        paths: Vec<String>,
+    },
 }
 
 /// A mouse button pressed, released, moved or wheeled over the page, at a
@@ -206,6 +211,14 @@ pub enum BrowserEvent {
     },
     /// The select's menu went with the page or tab it was on.
     MenuClosed,
+    /// The page asks for files for a file input, whose own picker a
+    /// screencast doesn't show: one or several, of the types `accept` names
+    /// as the input does. Answered with [`BrowserInput::Files`].
+    Files { multiple: bool, accept: String },
+    /// The page's file input went with the page or tab it was on.
+    FilesClosed,
+    /// Something the page asked for that the browser column can't do.
+    Notice { text: String },
 }
 
 /// One of a select's options, in the order the select has them.

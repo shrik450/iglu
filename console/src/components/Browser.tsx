@@ -40,11 +40,13 @@ export function Browser(props: { ws: WorkspaceView; name: string; title: string;
   const waiting = pane ? pane.waiting.value : "Opening the browser…";
   const dialog = pane?.dialog.value ?? null;
   const menu = pane?.menu.value ?? null;
+  const files = pane?.files.value ?? null;
   return (
     <div class="browser">
       <Bar pane={pane} onUse={() => markActive(ws, name)} />
       {pane && dialog ? <Asking pane={pane} dialog={dialog} /> : null}
       {pane && menu ? <Choosing pane={pane} menu={menu} /> : null}
+      {pane && files ? <Uploading pane={pane} files={files} /> : null}
       <div class="browser-stage">
         <div class="browser-screen" ref={host} onMouseDown={() => focusColumn(ws, name)} />
         {waiting ? <p class="browser-wait">{waiting}</p> : null}
@@ -253,5 +255,44 @@ function Choosing({ pane, menu }: { pane: BrowserPane; menu: Menu }) {
     >
       {rows}
     </ul>
+  );
+}
+
+/** The page's file input, asking for files, whose own picker never shows
+ * in the browser's images: chosen here, and sent to the workspace for it. */
+function Uploading({ pane, files }: { pane: BrowserPane; files: { multiple: boolean; accept: string; sending: boolean } }) {
+  const picker = useRef<HTMLInputElement>(null);
+  const choose = useRef<HTMLButtonElement>(null);
+  useEffect(() => choose.current?.focus(), []);
+  return (
+    <div
+      class="browser-dialog"
+      role="alertdialog"
+      aria-label="The page asks for files"
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || files.sending) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void pane.giveFiles([]);
+      }}
+    >
+      <p>{files.sending ? "Sending…" : files.multiple ? "The page asks for files." : "The page asks for a file."}</p>
+      <input
+        ref={picker}
+        type="file"
+        hidden
+        multiple={files.multiple}
+        accept={files.accept || undefined}
+        onChange={(e) => void pane.giveFiles(Array.from(e.currentTarget.files ?? []))}
+      />
+      <span class="browser-dialog-do">
+        <button type="button" class="btn" disabled={files.sending} onClick={() => void pane.giveFiles([])}>
+          Cancel
+        </button>
+        <button type="button" class="btn primary" ref={choose} disabled={files.sending} onClick={() => picker.current?.click()}>
+          {files.multiple ? "Choose files…" : "Choose a file…"}
+        </button>
+      </span>
+    </div>
   );
 }

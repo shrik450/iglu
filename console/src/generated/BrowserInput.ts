@@ -6,4 +6,4 @@ import type { MouseInput } from "./MouseInput";
 /**
  * What the person does to the browser.
  */
-export type BrowserInput = { "type": "resize" } & BrowserSize | { "type": "mouse" } & MouseInput | { "type": "key" } & KeyInput | { "type": "text", text: string, } | { "type": "copy" } | { "type": "navigate", address: string, } | { "type": "back" } | { "type": "forward" } | { "type": "reload" } | { "type": "show", tab: string, } | { "type": "open" } | { "type": "close", tab: string, } | { "type": "answer", accept: boolean, text?: string, } | { "type": "choose", index: number | null, };
+export type BrowserInput = { "type": "resize" } & BrowserSize | { "type": "mouse" } & MouseInput | { "type": "key" } & KeyInput | { "type": "text", text: string, } | { "type": "copy" } | { "type": "navigate", address: string, } | { "type": "back" } | { "type": "forward" } | { "type": "reload" } | { "type": "show", tab: string, } | { "type": "open" } | { "type": "close", tab: string, } | { "type": "answer", accept: boolean, text?: string, } | { "type": "choose", index: number | null, } | { "type": "files", paths: Array<string>, };

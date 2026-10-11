@@ -14,4 +14,4 @@ default: string, } | { "type": "dialog_closed" } | { "type": "copied", text: str
 /**
  * The option chosen now, if any.
  */
-selected: number | null, options: Array<MenuOption>, } | { "type": "menu_closed" };
+selected: number | null, options: Array<MenuOption>, } | { "type": "menu_closed" } | { "type": "files", multiple: boolean, accept: string, } | { "type": "files_closed" } | { "type": "notice", text: string, };

@@ -593,6 +593,8 @@ PAGE = (
     "<select style='position:fixed;left:0;top:300px;width:300px;height:40px' "
     "onchange=\"document.title='chose '+this.value\"><option value=a>Apple"
     "<optgroup label=Stone><option value=b disabled>Banana<option value=c>Cherry</optgroup></select>"
+    "<input type=file accept='.txt' style='position:fixed;left:0;top:360px;width:300px;height:40px' "
+    "onchange=\"this.files[0].text().then((t)=>document.title='file '+this.files[0].name+' '+t)\">"
 )
 
 
@@ -643,6 +645,16 @@ def browses(page: Page, name: str) -> Any:
     page.keyboard.press("Enter")
     expect(title).to_have_text("chose c", timeout=10_000)
     expect(menu).to_have_count(0)
+    # So does a file input's picker: the file is chosen here, sent to the
+    # workspace, and given to the page from there.
+    screen.click(position={"x": 20, "y": 380})
+    asking = browser.get_by_role("alertdialog", name="The page asks for files")
+    with page.expect_file_chooser() as chooser:
+        asking.get_by_role("button", name="Choose a file…").click()
+    assert chooser.value.element.get_attribute("accept") == ".txt"
+    chooser.value.set_files({"name": "note.txt", "mimeType": "text/plain", "buffer": b"from here"})
+    expect(title).to_have_text("file note.txt from here", timeout=10_000)
+    expect(asking).to_have_count(0)
     # A right click reaches the page without a menu the screen can't show,
     # which would hold the browser; copying and pasting go through this
     # clipboard, not the browser's own.

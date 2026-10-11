@@ -143,6 +143,10 @@ const PAGE_SCRIPT: &str = r"((binding) => {
   };
 })";
 
+/// The most files given a file input, and the longest path of one.
+const MAX_FILES: usize = 100;
+const MAX_PATH: usize = 4096;
+
 /// The most of a select's options shown, and of each label.
 const MAX_OPTIONS: usize = 1000;
 const MAX_LABEL: usize = 200;
@@ -194,6 +198,11 @@ enum Pending {
     Answered {
         tab: String,
     },
+    /// Reading the file input the page asked for files for.
+    Chooser {
+        node: i64,
+        multiple: bool,
+    },
 }
 
 /// The tab shown, and its session once attached.
@@ -220,6 +229,8 @@ pub struct Screen {
     dialogs: HashMap<String, BrowserEvent>,
     /// The script context of the select whose menu the console shows.
     menu: Option<i64>,
+    /// The file input the console asks the person files for.
+    chooser: Option<i64>,
     /// The binding the shown tab's session gave iglu's script.
     binding: String,
     attaches: u64,
@@ -238,6 +249,7 @@ impl Screen {
             discovered: false,
             dialogs: HashMap::new(),
             menu: None,
+            chooser: None,
             binding: String::new(),
             attaches: 0,
         };
@@ -299,6 +311,19 @@ impl Screen {
                 if let Some(tab) = self.shown.as_ref().map(|s| s.tab.clone()) {
                     let answered = Pending::Answered { tab };
                     out.extend(self.on_page("Page.handleJavaScriptDialog", params, Some(answered)));
+                }
+            }
+            BrowserInput::Files { paths } => {
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .filter(|path| path.starts_with('/') && path.len() <= MAX_PATH)
+                    .take(MAX_FILES)
+                    .collect();
+                if let Some(node) = self.chooser.take()
+                    && !paths.is_empty()
+                {
+                    let params = json!({ "files": paths, "backendNodeId": node });
+                    out.extend(self.on_page("DOM.setFileInputFiles", params, None));
                 }
             }
             BrowserInput::Choose { index } => {
@@ -466,7 +491,7 @@ impl Screen {
                 let loading = method == "Page.frameStartedLoading";
                 let mut out = vec![Out::Event(BrowserEvent::Loading { loading })];
                 if loading {
-                    out.extend(self.close_menu());
+                    out.extend(self.put_away());
                 } else {
                     out.push(self.info(&tab));
                 }
@@ -487,8 +512,26 @@ impl Screen {
                 if params["executionContextId"].as_i64().is_some()
                     && params["executionContextId"].as_i64() == self.menu =>
             {
-                self.close_menu().into_iter().collect()
+                self.menu = None;
+                vec![Out::Event(BrowserEvent::MenuClosed)]
             }
+            // Only a file input can be given files: a page asking through
+            // showOpenFilePicker gets an error from Chromium.
+            "Page.fileChooserOpened" => match params["backendNodeId"].as_i64() {
+                Some(node) => {
+                    let multiple = params["mode"] == "selectMultiple";
+                    let read = json!({ "backendNodeId": node });
+                    let chooser = Pending::Chooser { node, multiple };
+                    self.on_page("DOM.describeNode", read, Some(chooser))
+                        .into_iter()
+                        .collect()
+                }
+                None => vec![Out::Event(BrowserEvent::Notice {
+                    text: "The page asked for files in a way the browser column can't answer; \
+                           a file input on the page works."
+                        .into(),
+                })],
+            },
             // A page that changes its address itself, as an app does.
             "Page.navigatedWithinDocument" => vec![self.info(&tab)],
             "Page.javascriptDialogOpening" => {
@@ -542,6 +585,13 @@ impl Screen {
                             json!({ "name": self.binding, "executionContextName": WORLD });
                         let mut out = vec![
                             self.call("Page.enable", json!({}), Some(&session), None),
+                            // The page's file inputs ask the console.
+                            self.call(
+                                "Page.setInterceptFileChooserDialog",
+                                json!({ "enabled": true }),
+                                Some(&session),
+                                None,
+                            ),
                             self.call(
                                 "Page.addScriptToEvaluateOnNewDocument",
                                 script,
@@ -602,6 +652,10 @@ impl Screen {
             }
             // The page reports the dialog closing.
             Pending::Answered { .. } => Vec::new(),
+            Pending::Chooser { node, multiple } => {
+                let accept = accept_of(&result["node"]["attributes"]);
+                self.ask_files(node, multiple, accept)
+            }
             Pending::Copied => match result["result"]["value"].as_str() {
                 Some(text) if !text.is_empty() => vec![Out::Event(BrowserEvent::Copied {
                     text: text.to_owned(),
@@ -627,6 +681,8 @@ impl Screen {
                 self.dialogs.remove(&tab);
                 vec![Out::Event(BrowserEvent::DialogClosed)]
             }
+            // Asked for all the same, of any type.
+            Pending::Chooser { node, multiple } => self.ask_files(node, multiple, String::new()),
             Pending::Discovered
             | Pending::History { .. }
             | Pending::Opened
@@ -635,12 +691,18 @@ impl Screen {
         }
     }
 
+    /// Asks the console for files for the page's file input.
+    fn ask_files(&mut self, node: i64, multiple: bool, accept: String) -> Vec<Out> {
+        self.chooser = Some(node);
+        vec![Out::Event(BrowserEvent::Files { multiple, accept })]
+    }
+
     /// Shows `tab`: attaches to it, and leaves the one shown before.
     fn show(&mut self, tab: String) -> Vec<Out> {
         if self.shown.as_ref().is_some_and(|s| s.tab == tab) {
             return Vec::new();
         }
-        let mut out: Vec<Out> = self.close_menu().into_iter().collect();
+        let mut out = self.put_away();
         if let Some(session) = self.shown.take().and_then(|s| s.session) {
             out.push(self.call(
                 "Target.detachFromTarget",
@@ -747,11 +809,12 @@ impl Screen {
         Some(self.call(method, params, Some(&session), pending))
     }
 
-    /// Tells the console the select's menu went, if one was open.
-    fn close_menu(&mut self) -> Option<Out> {
-        self.menu
-            .take()
-            .map(|_| Out::Event(BrowserEvent::MenuClosed))
+    /// Tells the console what the page was asking went with it: a select's
+    /// menu, or files for a file input.
+    fn put_away(&mut self) -> Vec<Out> {
+        let menu = self.menu.take().map(|_| BrowserEvent::MenuClosed);
+        let files = self.chooser.take().map(|_| BrowserEvent::FilesClosed);
+        menu.into_iter().chain(files).map(Out::Event).collect()
     }
 
     fn session(&self) -> Option<String> {
@@ -876,6 +939,21 @@ fn fitted(size: BrowserSize) -> BrowserSize {
 )]
 fn pixels(value: f64) -> u32 {
     value.round().clamp(0.0, 65_535.0) as u32
+}
+
+/// What a file input's `accept` attribute says, from the attributes the
+/// browser reports as names and values in turn; nothing when it has none.
+fn accept_of(attributes: &Value) -> String {
+    let (pairs, _) = attributes
+        .as_array()
+        .map_or(&[][..], Vec::as_slice)
+        .as_chunks::<2>();
+    pairs
+        .iter()
+        .find(|[name, _]| name == "accept")
+        .and_then(|[_, value]| value.as_str())
+        .map(|accept| accept.chars().take(MAX_LABEL).collect())
+        .unwrap_or_default()
 }
 
 /// A place on the page in whole CSS pixels, which may be above or left of
@@ -1338,6 +1416,7 @@ mod tests {
             methods(&out),
             [
                 "Page.enable",
+                "Page.setInterceptFileChooserDialog",
                 "Page.addScriptToEvaluateOnNewDocument",
                 "Runtime.addBinding",
                 "Runtime.enable",
@@ -1346,14 +1425,14 @@ mod tests {
             ]
         );
         assert!(cast.iter().all(|m| m["sessionId"] == "s1"));
-        assert_eq!(cast[1]["params"]["worldName"], WORLD);
-        assert_eq!(cast[2]["params"]["executionContextName"], WORLD);
+        assert_eq!(cast[2]["params"]["worldName"], WORLD);
+        assert_eq!(cast[3]["params"]["executionContextName"], WORLD);
         // The script reports through this session's binding.
-        assert_eq!(cast[2]["params"]["name"], "igluChoose1");
-        let source = cast[1]["params"]["source"].as_str().expect("a script");
+        assert_eq!(cast[3]["params"]["name"], "igluChoose1");
+        let source = cast[2]["params"]["source"].as_str().expect("a script");
         assert!(source.ends_with(r#"("igluChoose1")"#), "{source}");
-        assert_eq!(cast[4]["params"]["width"], 800);
-        assert_eq!(cast[5]["params"]["maxWidth"], 1600);
+        assert_eq!(cast[5]["params"]["width"], 800);
+        assert_eq!(cast[6]["params"]["maxWidth"], 1600);
     }
 
     fn opened_menu(screen: &mut Screen, context: i64) -> Vec<Out> {
@@ -1429,6 +1508,84 @@ mod tests {
             })));
             assert!(out.is_empty(), "{name} {session}");
         }
+    }
+
+    #[test]
+    fn a_file_input_asks_the_console_for_files_it_gets_by_path() {
+        let mut screen = showing();
+        let out = screen.devtools(incoming(json!({
+            "method": "Page.fileChooserOpened", "sessionId": "s1",
+            "params": { "frameId": "t1", "mode": "selectMultiple", "backendNodeId": 42 },
+        })));
+        let read = sent(&out).remove(0);
+        assert_eq!(read["method"], "DOM.describeNode");
+        let out = screen.devtools(incoming(json!({
+            "id": read["id"],
+            "result": { "node": { "attributes": ["type", "file", "accept", "image/*,.pdf"] } },
+        })));
+        assert_eq!(
+            out,
+            [Out::Event(BrowserEvent::Files {
+                multiple: true,
+                accept: "image/*,.pdf".into()
+            })]
+        );
+        let out = screen.input(BrowserInput::Files {
+            paths: vec![
+                "relative".into(),
+                "/home/dev/.cache/iglu/pasted/a.png".into(),
+            ],
+        });
+        let given = sent(&out);
+        assert_eq!(given[0]["method"], "DOM.setFileInputFiles");
+        assert_eq!(given[0]["params"]["backendNodeId"], 42);
+        assert_eq!(
+            given[0]["params"]["files"],
+            json!(["/home/dev/.cache/iglu/pasted/a.png"])
+        );
+        // Given once.
+        let again = BrowserInput::Files {
+            paths: vec!["/a".into()],
+        };
+        assert!(screen.input(again).is_empty());
+    }
+
+    #[test]
+    fn a_file_request_goes_with_its_page_and_a_picker_without_an_input_is_refused() {
+        let mut screen = showing();
+        let out = screen.devtools(incoming(json!({
+            "method": "Page.fileChooserOpened", "sessionId": "s1",
+            "params": { "frameId": "t1", "mode": "selectSingle", "backendNodeId": 7 },
+        })));
+        let read = sent(&out).remove(0);
+        // Asked for all the same when the input can't be read.
+        let out = screen.devtools(incoming(
+            json!({ "id": read["id"], "error": { "code": -32000 } }),
+        ));
+        assert_eq!(
+            out,
+            [Out::Event(BrowserEvent::Files {
+                multiple: false,
+                accept: String::new()
+            })]
+        );
+        let out = screen.devtools(incoming(json!({
+            "method": "Page.frameStartedLoading", "sessionId": "s1", "params": { "frameId": "t1" },
+        })));
+        assert!(out.contains(&Out::Event(BrowserEvent::FilesClosed)));
+        let out = screen.devtools(incoming(json!({
+            "method": "Page.fileChooserOpened", "sessionId": "s1",
+            "params": { "frameId": "t1", "mode": "selectSingle" },
+        })));
+        assert!(matches!(
+            out.as_slice(),
+            [Out::Event(BrowserEvent::Notice { .. })]
+        ));
+        // Nothing to give files to.
+        let none = BrowserInput::Files {
+            paths: vec!["/a".into()],
+        };
+        assert!(screen.input(none).is_empty());
     }
 
     #[test]

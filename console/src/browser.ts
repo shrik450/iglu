@@ -13,6 +13,8 @@ import type { DialogKind } from "./generated/DialogKind.ts";
 import type { MenuOption } from "./generated/MenuOption.ts";
 import type { MouseAction } from "./generated/MouseAction.ts";
 import { buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, type Press, screenRect, tabName, wheelPixels } from "./state/browser.ts";
+import { api, failure } from "./api/client.ts";
+import { MAX_FILE_BYTES } from "./state/paste.ts";
 import { say } from "./state/store.ts";
 import { panes, setTitle } from "./terminal.ts";
 
@@ -39,6 +41,8 @@ export class BrowserPane {
   readonly loading = signal(false);
   readonly dialog = signal<Dialog | null>(null);
   readonly menu = signal<Menu | null>(null);
+  /** The file input the page asks files for, while it waits for them. */
+  readonly files = signal<{ multiple: boolean; accept: string; sending: boolean } | null>(null);
   /** Why there's nothing to see yet, while there isn't. */
   readonly waiting = signal<string | null>("Opening the browser…");
 
@@ -157,6 +161,31 @@ export class BrowserPane {
     this.focus();
   }
 
+  /** Keeps the files chosen for the page's file input in the workspace,
+   * as a paste does, and gives the input them by their paths there; with
+   * none, gives it none. */
+  async giveFiles(files: File[]): Promise<void> {
+    const asked = this.files.value;
+    if (!asked) return;
+    const large = files.find((file) => file.size > MAX_FILE_BYTES);
+    if (large) {
+      say(`${large.name || "That file"} is larger than 16 MB, so it can't be given to the page.`);
+      return;
+    }
+    this.files.value = { ...asked, sending: files.length > 0 };
+    try {
+      const paths: string[] = [];
+      for (const file of files) paths.push((await api.keepFile(this.workspace, file)).path);
+      // Unless the page went meanwhile.
+      if (this.files.value) this.send({ type: "files", paths });
+    } catch (error) {
+      say(`That couldn't be sent: ${failure(error)}`);
+      this.send({ type: "files", paths: [] });
+    }
+    this.files.value = null;
+    this.focus();
+  }
+
   /** Chooses an option of the select's menu, or closes it with null. */
   choose(index: number | null): void {
     if (!this.menu.value) return;
@@ -213,6 +242,7 @@ export class BrowserPane {
       if (this.socket !== socket || this.closed) return;
       this.socket = null;
       this.menu.value = null;
+      this.files.value = null;
       const delay = Math.min(10_000, 500 * 2 ** this.retries);
       this.retries += 1;
       this.waiting.value = event.reason ? `${capitalized(event.reason)}. Trying again…` : "Reconnecting…";
@@ -248,6 +278,15 @@ export class BrowserPane {
         break;
       case "menu_closed":
         this.menu.value = null;
+        break;
+      case "files":
+        this.files.value = { multiple: event.multiple, accept: event.accept, sending: false };
+        break;
+      case "files_closed":
+        this.files.value = null;
+        break;
+      case "notice":
+        say(event.text);
         break;
       case "copied":
         void navigator.clipboard?.writeText(event.text).catch(() => say("The browser's selection couldn't be copied here."));
