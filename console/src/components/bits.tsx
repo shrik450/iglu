@@ -135,6 +135,11 @@ export function phaseText(phase: Phase): string | null {
   return phase === "running" ? null : phase;
 }
 
+/** What a count of workspaces that need you says after the number. */
+export function needYou(count: number): string {
+  return count === 1 ? "needs you" : "need you";
+}
+
 export function attentionText(attention: AttentionView): { tone: string; text: string } {
   switch (attention.state) {
     case "waiting":

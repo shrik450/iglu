@@ -1,7 +1,7 @@
 // The console's frame: the top bar, the current view, and overlays.
 
 import { nextWaiting } from "./actions.ts";
-import { Glyph, Icon, Igloo } from "./components/bits.tsx";
+import { Glyph, Icon, Igloo, needYou } from "./components/bits.tsx";
 import { Keys, PrefixHint } from "./components/Keys.tsx";
 import { keysFor, mac } from "./keyboard.ts";
 import { onKeyboard } from "./state/keys.ts";
@@ -37,11 +37,11 @@ function Topbar() {
           iglu
         </a>
         {count ? (
-          <button type="button" class="needs-badge" title={`Next workspace that needs you (${keysFor("next-waiting")})`} aria-label={`${count} waiting; go to the next`} onClick={nextWaiting}>
+          <button type="button" class="needs-badge" title={`Next workspace that needs you (${keysFor("next-waiting")})`} aria-label={`${count} ${needYou(count)}; go to the next`} onClick={nextWaiting}>
             <span aria-hidden="true">●</span>
             <span>
               {count}
-              <span class="wide"> waiting</span>
+              <span class="wide"> {needYou(count)}</span>
             </span>
           </button>
         ) : null}

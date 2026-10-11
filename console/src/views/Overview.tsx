@@ -2,7 +2,7 @@
 
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { Card } from "../components/Card.tsx";
-import { Glyph, Icon, Igloo, WorkspaceLink, attentionGlyph } from "../components/bits.tsx";
+import { attentionGlyph, Glyph, Icon, Igloo, needYou, WorkspaceLink } from "../components/bits.tsx";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { situation } from "../state/situation.ts";
 import { repoLabel } from "../state/groups.ts";
@@ -123,7 +123,9 @@ export function Overview() {
                     {need ? (
                       <>
                         {" · "}
-                        <b>{need} waiting</b>
+                        <b>
+                          {need} {needYou(need)}
+                        </b>
                       </>
                     ) : null}
                   </span>
