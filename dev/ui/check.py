@@ -73,6 +73,7 @@ def main() -> None:
             step("draws-blocks", browser.draws_blocks, page, NAME)
             step("draws-icons", browser.draws_icons, page, NAME)
             step("wheels-pager", browser.wheels_pager, page, NAME)
+            step("wheels-rows", browser.wheels_rows, page, NAME)
             step("copies-out", browser.copies_out, page, NAME)
             step("finds-output", browser.finds_output, page, NAME)
             step("inserts-text", browser.inserts_text, page, NAME)

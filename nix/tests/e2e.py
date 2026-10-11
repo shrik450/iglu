@@ -271,6 +271,7 @@ try:
         browser("draws-blocks", "demo")
         browser("draws-icons", "demo")
         browser("wheels-pager", "demo")
+        browser("wheels-rows", "demo")
         browser("copies-out", "demo")
         browser("finds-output", "demo")
         browser("inserts-text", "demo")

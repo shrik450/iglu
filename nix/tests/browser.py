@@ -394,6 +394,31 @@ PAGER = (
 )
 
 
+# Tracks the mouse for three seconds, then says how many wheel reports came:
+# each SGR report ends in the one M.
+MOUSE = (
+    "bash -c 'printf \"\\e[?1049h\\e[?1000h\\e[?1006hready-%s\" {mark}; IFS= read -rs -d \"\" -t 3 k; "
+    "printf \"\\e[?1006l\\e[?1000l\\e[?1049l\"; n=${{k//[^M]/}}; printf \"reports-%s-%s\\n\" {mark} ${{#n}}'"
+)
+
+
+def wheels_rows(page: Page, name: str) -> Any:
+    """A program tracking the mouse gets a wheel report for each row a swipe
+    travels: a trackpad's many small deltas were a report each, and
+    scrolled it many times too far."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, MOUSE.format(mark=mark), f"ready-{mark}")
+    box = column(page, first).locator(".term-host").bounding_box()
+    assert box
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    row = float(column(page, first).locator(".wterm").evaluate("(w) => parseFloat(getComputedStyle(w).getPropertyValue('--term-row-height'))"))
+    for _ in range(13):
+        page.mouse.wheel(0, row / 4)
+    return {"screen": shows(page, f"reports-{mark}-3")}
+
+
 def wheels_pager(page: Page, name: str) -> Any:
     """On the alternate screen, the wheel sends arrow keys unless the
     program tracks the mouse, so pagers and editors scroll with it; it did
@@ -1555,6 +1580,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "draws-blocks": draws_blocks,
     "draws-icons": draws_icons,
     "wheels-pager": wheels_pager,
+    "wheels-rows": wheels_rows,
     "copies-out": copies_out,
     "finds-output": finds_output,
     "inserts-text": inserts_text,

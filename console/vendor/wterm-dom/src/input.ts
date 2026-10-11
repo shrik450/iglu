@@ -1,6 +1,8 @@
 // Changed by iglu, not upstream (see ../UPSTREAM):
 // - The wheel sends arrow keys on the alternate screen when the program
 //   isn't tracking the mouse, as xterm's alternate scroll mode does.
+// - The wheel moves programs a row at a time (wheel.ts): one report or arrow
+//   key for each row a swipe travels, not one for each event.
 // - Escape then Tab leaving the terminal can be turned off (`tabExit`).
 // - Copy and paste take only the platform's chord, Cmd on Apple devices and
 //   Ctrl elsewhere, so Ctrl+C and Ctrl+V reach programs on a Mac.
@@ -16,6 +18,7 @@
 import type { TerminalCore } from "@wterm/core";
 import { InputAccessibility } from "./input-accessibility.js";
 import { isLinkActivationModifier } from "./hyperlink.js";
+import { wheelTravel } from "./wheel.js";
 import {
   encodeKittyKey,
   KITTY_REPORT_ALL,
@@ -151,8 +154,9 @@ export class InputHandler {
   /** Cmd on Apple devices and Ctrl elsewhere: the modifier copy and paste take. */
   private readonly clipboardChord: (e: KeyboardEvent) => boolean;
   private readonly apple: boolean;
-  /** Wheel travel on the alternate screen not yet sent, in rows. */
+  /** Wheel travel not yet sent to the program, in rows and in columns. */
   private wheelRows = 0;
+  private wheelCols = 0;
 
   private _onKeyDown: (e: KeyboardEvent) => void;
   private _onKeyUp: (e: KeyboardEvent) => void;
@@ -824,15 +828,8 @@ export class InputHandler {
     )
       return false;
     event.preventDefault();
-    this.wheelRows +=
-      event.deltaMode === 1
-        ? event.deltaY
-        : event.deltaMode === 2
-          ? event.deltaY * bridge.getRows()
-          : event.deltaY / (this.getCellSize()?.rowHeight ?? 16);
-    const rows = Math.trunc(this.wheelRows);
+    const rows = this.wheelSteps(event).steps;
     if (rows === 0) return true;
-    this.wheelRows -= rows;
     const keys = bridge.cursorKeysApp() ? APP_KEYS : NORMAL_KEYS;
     this.onData(
       (rows < 0 ? keys.ArrowUp : keys.ArrowDown).repeat(Math.abs(rows)),
@@ -1002,15 +999,15 @@ export class InputHandler {
       (event.ctrlKey ? 16 : 0);
     let code: number;
     let final = "M";
+    let repeat = 1;
     if (kind === "wheel") {
       const wheel = event as WheelEvent;
-      if (Math.abs(wheel.deltaX) > Math.abs(wheel.deltaY)) {
-        if (wheel.deltaX === 0) return;
-        code = (wheel.deltaX < 0 ? 66 : 67) | modifiers;
-      } else {
-        if (wheel.deltaY === 0) return;
-        code = (wheel.deltaY < 0 ? 64 : 65) | modifiers;
-      }
+      const { steps, sideways } = this.wheelSteps(wheel);
+      event.preventDefault();
+      if (steps === 0) return;
+      repeat = Math.abs(steps);
+      code =
+        (sideways ? (steps < 0 ? 66 : 67) : steps < 0 ? 64 : 65) | modifiers;
     } else {
       const button =
         kind === "release" && encoding !== "sgr" && !pixels
@@ -1074,15 +1071,50 @@ export class InputHandler {
     }
     event.preventDefault();
     if (legacy) {
-      if (this.onBinary) this.onBinary(legacy);
-      else this.onData(String.fromCharCode(...legacy));
+      const reports = new Uint8Array(legacy.length * repeat);
+      for (let i = 0; i < repeat; i++) reports.set(legacy, i * legacy.length);
+      if (this.onBinary) this.onBinary(reports);
+      else this.onData(String.fromCharCode(...reports));
     } else if (encoding === "utf8") {
-      this.onData(`\x1b[M${String.fromCodePoint(code + 32, x + 32, y + 32)}`);
+      this.onData(
+        `\x1b[M${String.fromCodePoint(code + 32, x + 32, y + 32)}`.repeat(
+          repeat,
+        ),
+      );
     } else if (encoding === "urxvt") {
-      this.onData(`\x1b[${code + 32};${x};${y}M`);
+      this.onData(`\x1b[${code + 32};${x};${y}M`.repeat(repeat));
     } else {
-      this.onData(`\x1b[<${code};${x};${y}${final}`);
+      this.onData(`\x1b[<${code};${x};${y}${final}`.repeat(repeat));
     }
+  }
+
+  /**
+   * The rows, or columns for a sideways swipe, a wheel event moves the
+   * program, carrying the rest of a row to the next event.
+   */
+  private wheelSteps(event: WheelEvent): { steps: number; sideways: boolean } {
+    const bridge = this.getBridge();
+    const cell = this.getCellSize();
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      const travel = wheelTravel(
+        this.wheelCols,
+        event.deltaX,
+        event.deltaMode,
+        cell?.charWidth ?? 8,
+        bridge?.getCols() ?? 80,
+      );
+      this.wheelCols = travel.carried;
+      return { steps: travel.steps, sideways: true };
+    }
+    const travel = wheelTravel(
+      this.wheelRows,
+      event.deltaY,
+      event.deltaMode,
+      cell?.rowHeight ?? 16,
+      bridge?.getRows() ?? 24,
+    );
+    this.wheelRows = travel.carried;
+    return { steps: travel.steps, sideways: false };
   }
 
   private stopMouseCapture(): void {

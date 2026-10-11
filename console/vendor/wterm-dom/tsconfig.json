@@ -10,6 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "composite": true,
     "emitDeclarationOnly": true,
+    "allowImportingTsExtensions": true,
     "rootDir": "src",
     "outDir": "types"
   },
