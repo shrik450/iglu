@@ -79,7 +79,7 @@ def click(role: str, name: str) -> Callable[[Page], None]:
 
 
 def delete_confirmation(page: Page) -> None:
-    page.get_by_role("button", name="Details").click()
+    page.get_by_role("button", name="Details", exact=True).click()
     page.get_by_role("button", name="Delete", exact=True).first.click()
 
 

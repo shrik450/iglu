@@ -965,7 +965,12 @@ function Details({ ws }: { ws: WorkspaceView }) {
   return (
     <aside class="info" aria-label="Details">
       <div>
-        <h2>Workspace</h2>
+        <div class="info-head">
+          <h2>Workspace</h2>
+          <button type="button" class="btn icon" aria-label="Close details" onClick={() => (details.value = false)}>
+            <Icon name="close" />
+          </button>
+        </div>
         <dl>
           <dt>Project</dt>
           <dd translate={false}>

@@ -788,7 +788,7 @@ def grants_access(page: Page, name: str) -> Any:
     with working on its own columns; a toggle there changes it, as iglud
     keeps it."""
     open_workspace(page, name)
-    page.get_by_role("button", name="Details").click()
+    page.get_by_role("button", name="Details", exact=True).click()
     own = page.get_by_role("group", name="What it may do to This workspace")
     for label, pressed in (("See", "true"), ("Type", "true"), ("Start/stop", "false")):
         expect(own.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-pressed", pressed)
@@ -804,7 +804,7 @@ def grants_access(page: Page, name: str) -> Any:
     own.get_by_role("button", name="Start/stop", exact=True).click()
     expect(own.get_by_role("button", name="Start/stop", exact=True)).to_have_attribute("aria-pressed", "false")
     assert "operate" not in access()
-    page.get_by_role("button", name="Details").click()
+    page.get_by_role("button", name="Details", exact=True).click()
     return {"granted": granted}
 
 
