@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { formatRoute, parseRoute } from "./route.ts";
 
 test("every route round-trips", () => {
-  for (const path of ["/", "/w/palette", "/p/iglu", "/previews", "/settings"]) assert.equal(formatRoute(parseRoute(path)), path);
+  for (const path of ["/", "/w/palette", "/p/iglu", "/p/iglu/settings", "/previews", "/settings"]) assert.equal(formatRoute(parseRoute(path)), path);
 });
 
 test("anything unknown is the overview", () => {

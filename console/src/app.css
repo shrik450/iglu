@@ -429,6 +429,7 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .p-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
 .p-head h1 { margin: 0; font: 500 22px/1.2 var(--display); }
 .p-head .btn { margin-left: auto; }
+.p-head .btn + .btn { margin-left: 0; }
 .p-settings h2 { flex-basis: 100%; margin: 0; font: 500 15px/1.2 var(--display); }
 .opening { flex-basis: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0; min-width: 0; }
 .opening legend { font-size: 12.5px; color: var(--muted); padding: 0 4px; }

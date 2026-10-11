@@ -110,7 +110,10 @@ function items(): Item[] {
     });
   }
   for (const w of listed.value) list.push({ label: called(w), sub: w.attention?.summary || (w.checkout ? `⎇ ${w.checkout.branch}` : ""), run: () => open(w) });
-  for (const p of projects.value) list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
+  for (const p of projects.value) {
+    list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
+    list.push({ label: `Settings of ${p.name}`, sub: "Repository, environment, previews, how workspaces open", run: () => navigate({ view: "project", name: p.name, settings: true }) });
+  }
   for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${called(w)} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });
   list.push(
     { label: "Look: match the system", run: () => setLook("auto") },

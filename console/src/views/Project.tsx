@@ -17,6 +17,8 @@ import { kindText, parsePorts } from "../state/project.ts";
 import { environments, navigate, newIn, overlay, projects, route, say, workspaces } from "../state/store.ts";
 import { oneOf, unreachable } from "../state/unsaved.ts";
 
+const SETTINGS = "project-settings";
+
 const IDLE: Readonly<Record<IdleRule["kind"], string>> = {
   default: "Freeze as usual",
   never: "Stay awake",
@@ -33,11 +35,19 @@ export function ProjectPage() {
       </div>
     );
   }
-  return <Project key={project.id} project={project} />;
+  return <Project key={project.id} project={project} settings={r.view === "project" && r.settings === true} />;
 }
 
-function Project({ project }: { project: ProjectView }) {
+/** A project's workspaces, then its settings; at its settings' address, the
+ * page starts at them, below however many workspaces there are. */
+function Project({ project, settings }: { project: ProjectView; settings: boolean }) {
   const inside = workspaces.value.filter((ws) => ws.project === project.id);
+  useEffect(() => {
+    if (!settings) return;
+    const form = document.getElementById(SETTINGS);
+    form?.scrollIntoView({ block: "start" });
+    form?.querySelector<HTMLElement>("input, select")?.focus({ preventScroll: true });
+  }, [settings]);
   return (
     <div class="project">
       <header class="p-head">
@@ -45,6 +55,9 @@ function Project({ project }: { project: ProjectView }) {
         <span class="muted" translate={false}>
           {project.repo ? repoLabel(project.repo) : "no repository"} · {project.environment}
         </span>
+        <a class="btn" href={`/p/${project.name}/settings`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name, settings: true }))}>
+          Settings
+        </a>
         <button
           type="button"
           class="btn primary"
@@ -148,7 +161,7 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
     if (name !== project.name) navigate({ view: "project", name }, "replace");
   });
   return (
-    <form class="set-form p-settings" aria-label={`Settings for ${project.name}`} onSubmit={save.onSubmit} onInput={props.onEdit} onChange={props.onEdit}>
+    <form id={SETTINGS} class="set-form p-settings" aria-label={`Settings for ${project.name}`} onSubmit={save.onSubmit} onInput={props.onEdit} onChange={props.onEdit}>
       <h2>Settings</h2>
       {/* While saving, a new revision may be this save's own, arriving before its answer. */}
       {props.stale && !save.busy ? (
