@@ -1,15 +1,13 @@
 //! Records iglud stores, as domain types. What the API shows lives in
 //! `iglu-api`; `views` assembles it from these.
 
-use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::{DisplayName, Email, PrincipalStatus};
 use iglu_domain::capacity::Bytes;
-use iglu_domain::column::ColumnSpec;
 use iglu_domain::env::{EnvName, EnvSource};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
-use iglu_domain::label::{AgentName, HostId, ProjectName, RouteName, WorkspaceName};
+use iglu_domain::label::{HostId, ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Instance, Phase, Revision, SecretsGeneration};
 use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
@@ -79,7 +77,6 @@ pub struct ProjectRecord {
     pub environment_id: uuid::Uuid,
     pub environment: EnvName,
     pub opening: Opening,
-    pub agent: Option<AgentName>,
     pub ports: PreviewPorts,
     pub idle: IdleRule,
     pub revision: Revision,
@@ -91,14 +88,6 @@ pub struct EnvironmentRecord {
     pub id: uuid::Uuid,
     pub name: EnvName,
     pub source: EnvSource,
-}
-
-/// A column as stored: its spec, and the prompt its agent starts with until
-/// it first opens.
-#[derive(Clone, Debug)]
-pub struct ColumnRecord {
-    pub spec: ColumnSpec,
-    pub prompt: Option<Prompt>,
 }
 
 #[derive(Clone, Debug)]

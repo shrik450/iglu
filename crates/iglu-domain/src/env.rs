@@ -6,7 +6,6 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::agent::AgentSpec;
 use crate::label::DnsLabel;
 use crate::parse::text_type;
 
@@ -310,8 +309,6 @@ pub struct BuiltImage {
     pub fingerprint: ImageFingerprint,
     pub arch: Arch,
     pub user: GuestUser,
-    /// The agents the environment declares, which its workspaces can run.
-    pub agents: Vec<AgentSpec>,
     /// Whether it has the browser a browser column runs: images from before
     /// iglu had one don't.
     #[serde(default)]

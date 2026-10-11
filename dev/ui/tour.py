@@ -98,7 +98,7 @@ def stops() -> list[Stop]:
         ("docs-typos", "an agent that's done"),
         ("agent-crashed", "an agent that exited with an error"),
         ("unsaved-work", "uncommitted and unpushed work"),
-        ("preview-server", "a server column and a published preview"),
+        ("preview-server", "a dev server in a shell, published as a preview"),
         ("notes-frozen", "frozen"),
         ("notes-stopped", "stopped"),
         ("scratchpad", "no repository"),

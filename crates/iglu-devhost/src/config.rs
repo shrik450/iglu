@@ -40,10 +40,6 @@ pub struct Settings {
     /// The shell terminal sessions run; your account's login shell when unset.
     #[serde(default)]
     pub shell: Option<AbsolutePath>,
-    /// The agents every environment gets here. Local workspaces use this
-    /// machine's tools, so agents are this machine's, not the flake's.
-    #[serde(default)]
-    pub agents: Vec<iglu_domain::agent::AgentSpec>,
     /// A CA certificate that workspaces' Git trusts for `https://*.localhost`
     /// only, such as the dev CA, so workspaces can clone the dev stack's
     /// fixture repositories at `git.localhost`. Other hosts keep Git's own

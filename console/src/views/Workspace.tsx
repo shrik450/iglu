@@ -18,7 +18,6 @@ import {
   loadLive,
   markActive,
   moveColumn,
-  openColumn,
   placeColumn,
   publish,
   remove,
@@ -439,14 +438,13 @@ function Strip({ ws }: { ws: WorkspaceView }) {
         >
           <Icon name="plus" size={13} />
         </button>
-        {question.value?.kind === "add-column" ? <AddMenu ws={ws} server={question.value.server === true} /> : null}
+        {question.value?.kind === "add-column" ? <AddMenu ws={ws} /> : null}
       </div>
     </div>
   );
 }
 
-function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
-  const [command, setCommand] = useState(server);
+function AddMenu({ ws }: { ws: WorkspaceView }) {
   // What's opening: the menu stays, says so, and takes no second click until
   // the column is there (which puts the menu away) or iglu refuses it.
   const [opening, setOpening] = useState<string | null>(null);
@@ -464,36 +462,10 @@ function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
   }, []);
-  const run = useForm(async (data) => {
-    const text = data.get("command");
-    // The person's own command in their own workspace, so a shell may read it.
-    if (typeof text === "string" && text.trim()) await openColumn(ws, { kind: "server", command: ["sh", "-c", text.trim()] });
-  });
-  if (command) {
-    return (
-      <form class="add-menu" onSubmit={run.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
-        <CommandInput form={run} />
-        <button type="submit" class="btn" disabled={run.busy}>
-          Start
-        </button>
-        <p class="about">It keeps running, and starts again with the workspace. For a one-off command, use a shell.</p>
-        <FieldError form={run} input="command" />
-        <FormError form={run} />
-      </form>
-    );
-  }
   return (
     <div class="add-menu" role="group" aria-label="Add a column" aria-busy={opening !== null} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
       <button type="button" ref={first} disabled={opening !== null} onClick={() => add("Shell", { kind: "shell" })}>
         {opening === "Shell" ? "Opening a shell…" : "Shell"}
-      </button>
-      {ws.agents.map((agent) => (
-        <button type="button" key={agent} translate={false} disabled={opening !== null} onClick={() => add(agent, { kind: "agent", agent })}>
-          {opening === agent ? `Opening ${agent}…` : agent}
-        </button>
-      ))}
-      <button type="button" disabled={opening !== null} onClick={() => setCommand(true)}>
-        Server…
       </button>
       {browser ? (
         <button type="button" disabled={opening !== null} onClick={() => (settle(ws, "add-column"), focusColumn(ws, browser.name))}>
@@ -516,11 +488,6 @@ function RenameInput({ ws, form }: { ws: WorkspaceView; form: Form }) {
 function PortInput({ form }: { form: Form }) {
   const ref = useGrab<HTMLInputElement>();
   return <input ref={ref} name="port" inputMode="numeric" placeholder="3000…" aria-label="Port to publish" autocomplete="off" {...invalid(form, "port")} />;
-}
-
-function CommandInput({ form }: { form: Form }) {
-  const ref = useGrab<HTMLInputElement>();
-  return <input ref={ref} name="command" aria-label="Server command" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
 }
 
 /** Naming a column: Enter, or leaving the field, keeps the name, as renaming

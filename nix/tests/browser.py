@@ -219,35 +219,6 @@ def refused_environment(page: Page) -> Any:
     return {"error": form.locator(".field-err").inner_text()}
 
 
-def project_agent(page: Page, project: str, agent: str) -> Any:
-    """Sets the agent a project's workspaces start, and checks that it shows,
-    survives saving other settings, and is what a new workspace offers."""
-    page.goto(f"{CONSOLE}/p/{project}")
-    settings = page.get_by_role("form", name=f"Settings for {project}")
-    starts = settings.get_by_label("Starts")
-
-    def save() -> None:
-        with page.expect_response(lambda r: r.request.method == "PUT" and "/v1/projects/" in r.url) as saved:
-            settings.get_by_role("button", name="Save").click()
-        assert saved.value.ok, saved.value.text()
-        page.reload()
-
-    starts.select_option(agent)
-    save()
-    expect(starts).to_have_value(agent)
-    # Saving something else keeps it.
-    settings.get_by_label("Previews").fill("8000")
-    save()
-    expect(starts).to_have_value(agent)
-    settings.get_by_label("Previews").fill("")
-    save()
-    page.get_by_role("button", name="New workspace").first.click()
-    form = page.get_by_role("form", name="New workspace")
-    expect(form.get_by_text(re.compile(rf"^Opens with .*\b{agent}\.$"))).to_be_visible()
-    form.get_by_role("button", name="Cancel").click()
-    return {"agent": starts.input_value()}
-
-
 def terminal(page: Page, name: str, command: str, expected: str) -> Any:
     """Runs a command in the workspace's first column."""
     open_workspace(page, name)
@@ -1591,7 +1562,6 @@ STEPS: dict[str, Callable[..., Any]] = {
     "labels": labels,
     "opening-gives-keyboard": opening_gives_keyboard,
     "refused-environment": refused_environment,
-    "project-agent": project_agent,
     "terminal": terminal,
     "new-column": new_column,
     "answers-queries": answers_queries,

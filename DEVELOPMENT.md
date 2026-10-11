@@ -206,14 +206,12 @@ just dev-check               # the VM test's browser steps, against this stack
   stack in about two minutes. A console fix gets a step there, which this
   and the VM test both run.
 
-Three agents are declared here:
-
-- **`claude`** is Claude Code as you've set it up.
-- **`haiku`** is the same on Haiku, which is cheap for trying things.
-- **`scripted`** is a stand-in that does no work. It reports whichever
-  attention state you type, such as `wait Approve the migration` or `done
-  Fixed it`, so agent states can be shown and tested without a real agent.
-  `dev/agents/scripted` lists what it understands.
+Agents run in a shell, as anywhere: `claude`, or `claude --model
+claude-haiku-5-5` to try things cheaply. `dev/agents/scripted` is a stand-in
+that does no work. Run in a shell, it reports whichever attention state you
+type, such as `wait Approve the migration` or `done Fixed it`, so agent
+states can be shown and tested without a real agent; it lists what it
+understands.
 
 ### Shared services
 

@@ -249,10 +249,6 @@ try:
         instance = "iglu-" + ws["id"].replace("-", "")
         guest = guest_of(instance)
 
-    with subtest("a project's agent shows in its settings, survives other changes, and is what new workspaces offer"):
-        assert browser("project-agent", "app", "echo") == {"agent": "echo"}
-        assert {p["name"]: p for p in iglu("project ls")}["app"]["agent"] == "echo"
-
     with subtest("the checkout and secrets are in place"):
         assert "init" in guest("git -C ~/app log --oneline")
         assert guest("git -C ~/app branch --show-current").strip() == "demo"
@@ -440,7 +436,7 @@ try:
     with subtest("a workspace clones over HTTPS with the Git credential secret"):
         project = iglu(f"project add app-https --repo https://{GIT_ADDRESS}/app.git --env example")
         # Its workspaces publish port 3000 as they're created.
-        change = {key: project[key] for key in ("name", "repo", "environment", "opening", "agent", "idle")}
+        change = {key: project[key] for key in ("name", "repo", "environment", "opening", "idle")}
         change |= {"expected_revision": project["revision"], "ports": [3000]}
         client.succeed(
             f"{api} -X PUT -H 'Content-Type: application/json' -d {shlex.quote(json.dumps(change))} "
@@ -452,23 +448,17 @@ try:
         https_instance = "iglu-" + https["id"].replace("-", "")
         assert "init" in guest_of(https_instance)("git -C ~/app log --oneline")
 
-    with subtest("a prompt starts an agent in a workspace without a repository"):
-        scratch = iglu("new general 'Fix the login bug' --wait")
-        assert scratch["name"] == "fix-login", scratch
+    with subtest("a workspace without a repository opens a shell, named for what it's called"):
+        scratch = iglu("new general --label 'Fix the login bug' --wait")
+        assert scratch["name"] == "fix-the-login-bug", scratch
         assert scratch["phase"] == "running" and scratch["checkout"] is None, scratch
         guest_of("iglu-" + scratch["id"].replace("-", ""))("test ! -e ~/app")
         columns = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/columns"))
-        assert [(c["name"], c["state"]) for c in columns] == [("shell", "open"), ("echo", "open")], columns
+        assert [(c["name"], c["state"]) for c in columns] == [("shell", "open")], columns
         assert json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/live"))["git"] is None
-        attach = f"wss://iglu.example.test/v1/workspaces/{scratch['id']}/columns/echo/attach?cols=80&rows=24"
-        client.succeed(
-            f"sleep 3 | websocat {shlex.quote(attach)} -b -H 'Authorization: Bearer {token}' > /tmp/prompt.out || true"
-        )
-        output = client.succeed("cat /tmp/prompt.out")
-        assert "PROMPT<Fix the login bug>" in output, f"the agent should get the prompt: {output!r}"
         client.fail(f"{IGLU} new general --name branchy --branch main")
         client.fail(f"{IGLU} project rm general")
-        iglu("rm fix-login --wait")
+        iglu(f"rm {scratch['name']} --wait")
 
     with subtest("workspaces can't reach each other"):
         neighbour = guest_of(https_instance)

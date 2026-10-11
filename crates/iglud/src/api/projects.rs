@@ -129,7 +129,6 @@ async fn change(
                 repo: request.repo,
                 environment_id,
                 opening: request.opening,
-                agent: request.agent,
                 ports: request.ports,
                 idle: request.idle,
             };

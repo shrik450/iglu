@@ -79,8 +79,6 @@ pub struct LocalRuntime {
     tools: PathBuf,
     /// Whom workspaces run as: the devhost's own user.
     user: GuestUser,
-    /// The agents every environment gets; see [`Settings::agents`].
-    agents: Vec<iglu_domain::agent::AgentSpec>,
     memory_available: capacity::Bytes,
     timeouts: Timeouts,
     /// The account's login shell, which terminal sessions run.
@@ -279,7 +277,6 @@ impl LocalRuntime {
             layout,
             tools,
             user,
-            agents: settings.agents.clone(),
             shell: settings
                 .shell
                 .as_ref()
@@ -663,7 +660,6 @@ impl Runtime for LocalRuntime {
             fingerprint,
             arch: iglu_hostd::host_arch().map_err(|e| BuildFailure(e.to_string()))?,
             user: self.user.clone(),
-            agents: self.agents.clone(),
             // Local workspaces use the machine's own; the dev shell has one.
             browser: on_path(self.inherited.get("PATH"), "chromium"),
             // Nothing was built.

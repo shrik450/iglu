@@ -20,10 +20,6 @@
             { pkgs, ... }:
             {
               iglu.user = "dev";
-              iglu.agents.claude = {
-                command = [ "claude" ];
-                attention = "claude-hooks";
-              };
 
               nixpkgs.config.allowUnfree = true;
               environment.systemPackages = with pkgs; [

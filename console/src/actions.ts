@@ -165,7 +165,6 @@ export async function saveOpening(ws: WorkspaceView): Promise<void> {
       repo: project.repo,
       environment: project.environment,
       opening,
-      agent: project.agent,
       ports: project.ports,
       idle: project.idle,
     }),
@@ -302,8 +301,8 @@ export async function loadColumns(ws: WorkspaceView): Promise<void> {
 }
 
 /** Opens a column after the focused one and focuses it; throws what iglu
- * refused, for a form to show. */
-export async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
+ * refused. */
+async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
   if (ws.phase !== "running") return;
   const after = activeOf(ws);
   const created = await api.addColumn(ws.id, after ? { kind, after } : { kind });

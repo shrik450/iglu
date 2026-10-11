@@ -10,8 +10,6 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::agent::{self, AgentError, AgentSpec, Prompt};
-use crate::label::AgentName;
 use crate::parse::{is_printable, text_type};
 use crate::terminal::SessionName;
 
@@ -210,12 +208,9 @@ impl FromStr for ColumnWidth {
     ts(tag = "kind", rename_all = "snake_case")
 )]
 pub enum ColumnKind {
-    /// The workspace user's login shell.
+    /// The workspace user's login shell, where agents are run like anything
+    /// else.
     Shell,
-    /// One of the environment's agents.
-    Agent { agent: AgentName },
-    /// A long-running command, such as a dev server.
-    Server { command: Argv },
     /// A web browser in the workspace, shown in the console, which agents
     /// in the workspace can drive too. A workspace has at most one.
     Browser,
@@ -227,8 +222,6 @@ impl ColumnKind {
     pub fn default_name(&self) -> &str {
         match self {
             Self::Shell => "shell",
-            Self::Agent { agent } => agent.as_str(),
-            Self::Server { .. } => "server",
             Self::Browser => "browser",
         }
     }
@@ -243,23 +236,11 @@ pub const BROWSER_DEBUG_PORT: u16 = 9222;
 pub const BROWSER_PORT_PRIVATE: &str = "can't be 9222: that's the workspace browser's DevTools port, and a preview of it would let anyone with the link drive the browser";
 
 /// What a column's session runs; `None` is the login shell.
-///
-/// # Errors
-///
-/// When an agent column's agent isn't the environment's, or can't take the
-/// prompt.
-pub fn command(
-    kind: &ColumnKind,
-    agents: &[AgentSpec],
-    prompt: Option<&Prompt>,
-) -> Result<Option<Argv>, AgentError> {
+#[must_use]
+pub fn command(kind: &ColumnKind) -> Option<Argv> {
     match kind {
-        ColumnKind::Shell => Ok(None),
-        ColumnKind::Server { command } => Ok(Some(command.clone())),
-        ColumnKind::Browser => Ok(Some(browser_command())),
-        ColumnKind::Agent { agent } => agent::find(agents, agent)
-            .and_then(|found| agent::command(found, prompt))
-            .map(Some),
+        ColumnKind::Shell => None,
+        ColumnKind::Browser => Some(browser_command()),
     }
 }
 
@@ -457,9 +438,8 @@ mod tests {
 
     #[test]
     fn kinds_and_widths_round_trip_as_the_console_writes_them() {
-        let kind: ColumnKind =
-            serde_json::from_str(r#"{"kind":"server","command":["just","dev"]}"#).expect("parses");
-        assert!(matches!(kind, ColumnKind::Server { .. }));
+        let kind: ColumnKind = serde_json::from_str(r#"{"kind":"browser"}"#).expect("parses");
+        assert_eq!(kind, ColumnKind::Browser);
         let width: ColumnWidth = serde_json::from_str(r#""two-thirds""#).expect("parses");
         assert_eq!(width, ColumnWidth::TwoThirds);
         assert_eq!(
@@ -467,7 +447,7 @@ mod tests {
             Ok(ColumnWidth::TwoThirds)
         );
         assert!(
-            serde_json::from_str::<ColumnKind>(r#"{"kind":"agent","agent":"Bad Name"}"#).is_err()
+            serde_json::from_str::<ColumnKind>(r#"{"kind":"agent","agent":"claude"}"#).is_err()
         );
     }
 
@@ -571,37 +551,21 @@ mod tests {
 
     #[test]
     fn templates_get_distinct_names_in_order() {
-        let claude: AgentName = "claude".parse().expect("agent");
+        let template = |name: Option<&str>, kind: ColumnKind| ColumnTemplate {
+            name: name.map(|n| n.parse().expect("name")),
+            kind,
+            width: ColumnWidth::Half,
+        };
         let templates = vec![
-            ColumnTemplate {
-                name: None,
-                kind: ColumnKind::Agent {
-                    agent: claude.clone(),
-                },
-                width: ColumnWidth::TwoThirds,
-            },
-            ColumnTemplate {
-                name: Some("dev".parse().expect("name")),
-                kind: ColumnKind::Server {
-                    command: argv(&["just", "dev"]).expect("argv"),
-                },
-                width: ColumnWidth::Third,
-            },
-            ColumnTemplate {
-                name: None,
-                kind: ColumnKind::Agent { agent: claude },
-                width: ColumnWidth::Half,
-            },
-            ColumnTemplate {
-                name: None,
-                kind: ColumnKind::Shell,
-                width: ColumnWidth::Half,
-            },
+            template(None, ColumnKind::Shell),
+            template(Some("dev"), ColumnKind::Shell),
+            template(None, ColumnKind::Shell),
+            template(None, ColumnKind::Browser),
         ];
         let names: Vec<String> = name_templates(&templates)
             .into_iter()
             .map(|s| s.name.to_string())
             .collect();
-        assert_eq!(names, ["claude", "dev", "claude-2", "shell"]);
+        assert_eq!(names, ["shell", "dev", "shell-2", "browser"]);
     }
 }

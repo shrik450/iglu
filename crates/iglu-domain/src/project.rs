@@ -9,15 +9,13 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::agent::{self, AgentError, AgentSpec, Prompt};
 use crate::column::{
     BROWSER_DEBUG_PORT, BROWSER_PORT_PRIVATE, ColumnKind, ColumnSpec, ColumnTemplate, ColumnWidth,
-    free_name, name_templates,
+    name_templates,
 };
-use crate::label::{AgentName, ProjectName, WorkspaceName};
+use crate::label::{ProjectName, WorkspaceName};
 use crate::port::GuestPort;
 use crate::repo::{BranchName, Checkout, RepoUrl};
-use crate::terminal::SessionName;
 
 /// Whether iglu made the project or the person did. The built-in one can't
 /// be deleted, so everyone always has somewhere to start a workspace.
@@ -154,79 +152,6 @@ pub fn general() -> ProjectName {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum StartError {
-    #[error("the environment declares no agents to start")]
-    NoAgents,
-    #[error(transparent)]
-    Agent(#[from] AgentError),
-}
-
-/// A new workspace's columns, and the one that starts with the prompt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Start {
-    pub columns: Vec<ColumnSpec>,
-    pub prompted: Option<SessionName>,
-}
-
-/// The columns a new workspace opens with. Asked for an agent, or given a
-/// prompt, it starts one: the opening's first column for that agent (any
-/// agent, when none is named), or else a new one at the end for the named
-/// agent or the environment's first. The prompt goes to that column.
-///
-/// # Errors
-///
-/// When the agent isn't declared, takes no prompt or the prompt makes its
-/// command too long, or when a prompt has no agent to go to.
-pub fn start(
-    opening: &Opening,
-    agents: &[AgentSpec],
-    agent: Option<&AgentName>,
-    prompt: Option<&Prompt>,
-) -> Result<Start, StartError> {
-    let mut columns = opening.columns();
-    if agent.is_none() && prompt.is_none() {
-        return Ok(Start {
-            columns,
-            prompted: None,
-        });
-    }
-    let existing = columns.iter().find_map(|column| match &column.kind {
-        ColumnKind::Agent { agent: has } if agent.is_none_or(|wanted| wanted == has) => {
-            Some((column.name.clone(), has.clone()))
-        }
-        ColumnKind::Agent { .. }
-        | ColumnKind::Shell
-        | ColumnKind::Server { .. }
-        | ColumnKind::Browser => None,
-    });
-    let (name, chosen) = if let Some(found) = existing {
-        found
-    } else {
-        let chosen = match agent {
-            Some(named) => named.clone(),
-            None => agents.first().ok_or(StartError::NoAgents)?.name.clone(),
-        };
-        let kind = ColumnKind::Agent {
-            agent: chosen.clone(),
-        };
-        let name = free_name(kind.default_name(), columns.iter().map(|c| &c.name));
-        columns.push(ColumnSpec {
-            name: name.clone(),
-            kind,
-            width: ColumnWidth::TwoThirds,
-            label: None,
-        });
-        (name, chosen)
-    };
-    // Refused now rather than when the column first opens.
-    agent::command(agent::find(agents, &chosen)?, prompt)?;
-    Ok(Start {
-        columns,
-        prompted: prompt.map(|_| name),
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CheckoutError {
     #[error("the project has no repository, so its workspaces have no branch")]
     NoRepository,
@@ -323,105 +248,6 @@ mod tests {
 
     fn name(n: &str) -> ProjectName {
         n.parse().expect("a valid project name")
-    }
-
-    fn spec(name: &str, prompt: crate::agent::PromptStyle) -> AgentSpec {
-        AgentSpec {
-            name: name.parse().expect("an agent name"),
-            command: crate::column::Argv::try_from(vec![
-                name.parse::<crate::column::Arg>().expect("an argument"),
-            ])
-            .expect("a command"),
-            prompt,
-            attention: crate::agent::AttentionAdapter::StatusCommand,
-        }
-    }
-
-    fn kinds(start: &Start) -> Vec<(String, String)> {
-        start
-            .columns
-            .iter()
-            .map(|c| (c.name.as_str().to_owned(), c.kind.default_name().to_owned()))
-            .collect()
-    }
-
-    #[test]
-    fn without_an_agent_or_prompt_the_opening_stands() {
-        let started = start(&Opening::shell(), &[], None, None).expect("a start");
-        assert_eq!(kinds(&started), [("shell".into(), "shell".into())]);
-        assert_eq!(started.prompted, None);
-    }
-
-    #[test]
-    fn a_prompt_goes_to_the_first_agent_or_a_new_one() {
-        use crate::agent::PromptStyle;
-        let agents = [
-            spec("claude", PromptStyle::Argument),
-            spec("codex", PromptStyle::Argument),
-        ];
-        let prompt: Prompt = "fix the login bug".parse().expect("a prompt");
-        let added = start(&Opening::shell(), &agents, None, Some(&prompt)).expect("a start");
-        assert_eq!(
-            kinds(&added),
-            [
-                ("shell".into(), "shell".into()),
-                ("claude".into(), "claude".into())
-            ]
-        );
-        assert_eq!(
-            added.prompted.map(|n| n.as_str().to_owned()).as_deref(),
-            Some("claude")
-        );
-
-        let codex: AgentName = "codex".parse().expect("an agent name");
-        let chosen =
-            start(&Opening::shell(), &agents, Some(&codex), Some(&prompt)).expect("a start");
-        assert_eq!(
-            chosen.prompted.map(|n| n.as_str().to_owned()).as_deref(),
-            Some("codex")
-        );
-
-        let opening = Opening::try_from(vec![
-            ColumnTemplate {
-                name: None,
-                kind: ColumnKind::Agent {
-                    agent: "claude".parse().expect("an agent name"),
-                },
-                width: ColumnWidth::Half,
-            },
-            Opening::shell().templates()[0].clone(),
-        ])
-        .expect("an opening");
-        let reused = start(&opening, &agents, None, Some(&prompt)).expect("a start");
-        assert_eq!(
-            reused.columns.len(),
-            2,
-            "the opening's agent column takes it"
-        );
-        assert_eq!(
-            reused.prompted.map(|n| n.as_str().to_owned()).as_deref(),
-            Some("claude")
-        );
-    }
-
-    #[test]
-    fn prompts_are_refused_early() {
-        use crate::agent::PromptStyle;
-        let prompt: Prompt = "fix it".parse().expect("a prompt");
-        assert_eq!(
-            start(&Opening::shell(), &[], None, Some(&prompt)),
-            Err(StartError::NoAgents)
-        );
-        let quiet = [spec("aider", PromptStyle::None)];
-        assert!(matches!(
-            start(&Opening::shell(), &quiet, None, Some(&prompt)),
-            Err(StartError::Agent(AgentError::TakesNoPrompt(_)))
-        ));
-        let missing: AgentName = "ghost".parse().expect("an agent name");
-        assert!(matches!(
-            start(&Opening::shell(), &quiet, Some(&missing), None),
-            Err(StartError::Agent(AgentError::Unknown(_)))
-        ));
     }
 
     #[test]

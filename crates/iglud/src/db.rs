@@ -10,7 +10,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
-use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::{Grant, VerifiedIdentity};
 use iglu_domain::capacity::Bytes;
@@ -18,7 +17,7 @@ use iglu_domain::column::{ColumnLabel, ColumnSpec};
 use iglu_domain::env::{BuiltImage, EnvName, EnvSource, ImageFingerprint};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
-use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
+use iglu_domain::label::{ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Instance, Revision, SecretsGeneration};
 use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
@@ -35,8 +34,8 @@ use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 use crate::model::{
-    AttentionRecord, ColumnRecord, Condition, EnvironmentRecord, PrincipalRecord, ProjectRecord,
-    RouteRecord, WorkspaceRecord,
+    AttentionRecord, Condition, EnvironmentRecord, PrincipalRecord, ProjectRecord, RouteRecord,
+    WorkspaceRecord,
 };
 
 /// One step of the schema's history: SQL, or a data change SQL can't express.
@@ -58,6 +57,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0008_preferences.sql")),
     Migration::Sql(include_str!("migrations/0009_access.sql")),
     Migration::Sql(include_str!("migrations/0010_workspace_labels.sql")),
+    Migration::Sql(include_str!("migrations/0011_shells_and_browsers.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -837,7 +837,7 @@ pub fn live_workspaces(tx: &Connection) -> Result<Vec<WorkspaceRecord>, DbError>
 
 const PROJECT_COLUMNS: &str = "project.id, project.name, project.origin, project.repo,
     project.environment_id, environment.name, project.opening, project.revision, project.created_at,
-    project.agent, project.ports, project.idle";
+    project.ports, project.idle";
 const PROJECT_FROM: &str = "project JOIN environment ON environment.id = project.environment_id";
 
 fn project_row(row: &Row<'_>) -> rusqlite::Result<ProjectRecord> {
@@ -851,9 +851,8 @@ fn project_row(row: &Row<'_>) -> rusqlite::Result<ProjectRecord> {
         opening: json(row, 6)?,
         revision: Revision::from_u64(u64_col(row, 7)?),
         created_at: timestamp(row, 8)?,
-        agent: opt_text(row, 9)?,
-        ports: json(row, 10)?,
-        idle: json(row, 11)?,
+        ports: json(row, 9)?,
+        idle: json(row, 10)?,
     })
 }
 
@@ -985,7 +984,6 @@ pub struct ProjectChange {
     pub repo: Option<RepoUrl>,
     pub environment_id: Uuid,
     pub opening: Opening,
-    pub agent: Option<AgentName>,
     pub ports: PreviewPorts,
     pub idle: IdleRule,
 }
@@ -1017,7 +1015,7 @@ pub fn change_project(
     }
     tx.execute(
         "UPDATE project SET name = ?3, repo = ?4, environment_id = ?5, opening = ?6, revision = ?7,
-                            agent = ?8, ports = ?9, idle = ?10
+                            ports = ?8, idle = ?9
          WHERE owner_id = ?1 AND id = ?2",
         params![
             owner.to_string(),
@@ -1027,7 +1025,6 @@ pub fn change_project(
             uuid_text(change.environment_id),
             to_json(&change.opening)?,
             i64_of(expected.next().get()),
-            change.agent.as_ref().map(AgentName::as_str),
             to_json(&change.ports)?,
             to_json(&change.idle)?,
         ],
@@ -1386,22 +1383,19 @@ pub fn mark_seen(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<(),
 
 // ---- columns ----
 
-fn column_row(row: &Row<'_>) -> rusqlite::Result<ColumnRecord> {
-    Ok(ColumnRecord {
-        spec: ColumnSpec {
-            name: text(row, 0)?,
-            kind: json(row, 1)?,
-            width: text(row, 2)?,
-            label: opt_text(row, 4)?,
-        },
-        prompt: opt_text(row, 3)?,
+fn column_row(row: &Row<'_>) -> rusqlite::Result<ColumnSpec> {
+    Ok(ColumnSpec {
+        name: text(row, 0)?,
+        kind: json(row, 1)?,
+        width: text(row, 2)?,
+        label: opt_text(row, 3)?,
     })
 }
 
 /// A workspace's columns, in order.
-pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnRecord>, DbError> {
+pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnSpec>, DbError> {
     let mut statement = tx.prepare(
-        "SELECT name, kind, width, prompt, label FROM workspace_column WHERE workspace_id = ?1 ORDER BY position",
+        "SELECT name, kind, width, label FROM workspace_column WHERE workspace_id = ?1 ORDER BY position",
     )?;
     Ok(statement
         .query_map([workspace.to_string()], column_row)?
@@ -1412,25 +1406,24 @@ pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnReco
 pub fn replace_columns(
     tx: &Connection,
     workspace: WorkspaceId,
-    columns: &[ColumnRecord],
+    columns: &[ColumnSpec],
 ) -> Result<(), DbError> {
     tx.execute(
         "DELETE FROM workspace_column WHERE workspace_id = ?1",
         [workspace.to_string()],
     )?;
     let mut insert = tx.prepare(
-        "INSERT INTO workspace_column (workspace_id, position, name, kind, width, prompt, label)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO workspace_column (workspace_id, position, name, kind, width, label)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )?;
     for (position, column) in columns.iter().enumerate() {
         insert.execute(params![
             workspace.to_string(),
             i64::try_from(position).unwrap_or(i64::MAX),
-            column.spec.name.as_str(),
-            to_json(&column.spec.kind)?,
-            column.spec.width.as_str(),
-            column.prompt.as_ref().map(Prompt::as_str),
-            column.spec.label.as_ref().map(ColumnLabel::as_str),
+            column.name.as_str(),
+            to_json(&column.kind)?,
+            column.width.as_str(),
+            column.label.as_ref().map(ColumnLabel::as_str),
         ])?;
     }
     Ok(())
@@ -1453,23 +1446,6 @@ pub fn label_column(
         ],
     )?;
     Ok(changed > 0)
-}
-
-/// Forgets the prompts of the columns whose sessions opened: a restart
-/// mustn't hand an agent its task again. A column that didn't open keeps
-/// its prompt for the next try.
-pub fn clear_prompts(
-    tx: &Connection,
-    workspace: WorkspaceId,
-    opened: &[SessionName],
-) -> Result<(), DbError> {
-    let names: Vec<&str> = opened.iter().map(SessionName::as_str).collect();
-    tx.execute(
-        "UPDATE workspace_column SET prompt = NULL
-         WHERE workspace_id = ?1 AND name IN (SELECT value FROM json_each(?2))",
-        params![workspace.to_string(), to_json(&names)?],
-    )?;
-    Ok(())
 }
 
 // ---- routes ----
@@ -1770,6 +1746,7 @@ pub fn activity(
 mod tests {
     use iglu_domain::attention::{AttentionState, Summary};
     use iglu_domain::auth::{Email, Issuer, Subject};
+    use iglu_domain::column::ColumnKind;
     use iglu_domain::terminal::SessionName;
 
     use super::*;
@@ -2300,7 +2277,6 @@ mod tests {
             repo: None,
             environment_id: general.environment_id,
             opening: Opening::shell(),
-            agent: None,
             ports: PreviewPorts::default(),
             idle: IdleRule::Never,
         };
@@ -2322,27 +2298,59 @@ mod tests {
     }
 
     #[test]
-    fn only_columns_that_opened_forget_their_prompts() {
-        let conn = conn();
+    fn agent_and_command_columns_become_shells() {
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate_until(&mut conn, 10).expect("the schema before");
         let owner = principal(&conn, "alice");
         let ws = new_workspace(&conn, owner, "demo");
-        let column = |name: &str| ColumnRecord {
-            spec: ColumnSpec {
-                name: name.parse().expect("a session"),
-                kind: iglu_domain::column::ColumnKind::Shell,
-                width: iglu_domain::column::ColumnWidth::Half,
-                label: None,
-            },
-            prompt: Some("fix the login bug".parse().expect("a prompt")),
-        };
-        replace_columns(&conn, ws.id, &[column("opened"), column("failed")]).expect("columns");
-        clear_prompts(&conn, ws.id, &["opened".parse().expect("a session")]).expect("cleared");
-        let prompts: Vec<(String, bool)> = columns(&conn, ws.id)
-            .expect("columns")
+        for (position, (name, kind)) in [
+            ("claude", r#"{"kind":"agent","agent":"claude"}"#),
+            ("dev", r#"{"kind":"server","command":["just","dev"]}"#),
+            ("browser", r#"{"kind":"browser"}"#),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            conn.execute(
+                "INSERT INTO workspace_column (workspace_id, position, name, kind, width, prompt)
+                 VALUES (?1, ?2, ?3, ?4, 'half', 'fix it')",
+                params![
+                    ws.id.to_string(),
+                    i64::try_from(position).expect("small"),
+                    name,
+                    kind
+                ],
+            )
+            .expect("a column");
+        }
+        conn.execute(
+            r#"UPDATE project SET agent = 'claude', opening = '[{"kind":{"kind":"agent","agent":"claude"},"width":"half"},{"kind":{"kind":"browser"},"width":"third"}]'
+               WHERE id = ?1"#,
+            [ws.project.to_string()],
+        )
+        .expect("an opening with an agent");
+        migrate(&mut conn).expect("the rest apply");
+        let kinds: Vec<(String, ColumnKind)> = columns(&conn, ws.id)
+            .expect("columns read")
             .into_iter()
-            .map(|c| (c.spec.name.as_str().to_owned(), c.prompt.is_some()))
+            .map(|c| (c.name.as_str().to_owned(), c.kind))
             .collect();
-        assert_eq!(prompts, [("opened".into(), false), ("failed".into(), true)]);
+        assert_eq!(
+            kinds,
+            [
+                ("claude".into(), ColumnKind::Shell),
+                ("dev".into(), ColumnKind::Shell),
+                ("browser".into(), ColumnKind::Browser),
+            ]
+        );
+        let opening = project(&conn, owner, ws.project)
+            .expect("query")
+            .expect("the project")
+            .opening;
+        let opened: Vec<ColumnKind> = opening.templates().iter().map(|t| t.kind.clone()).collect();
+        assert_eq!(opened, [ColumnKind::Browser]);
     }
 
     #[test]
@@ -2384,10 +2392,9 @@ mod tests {
             live[0].observed.is_none(),
             "observed again on the next tick"
         );
-        let image = revision_image(&conn, revision)
+        revision_image(&conn, revision)
             .expect("an old image reads")
             .expect("ready");
-        assert!(image.agents.is_empty());
     }
 
     #[test]
@@ -2405,7 +2412,7 @@ mod tests {
         let env = Uuid::parse_str(&env).expect("a UUID");
         let image = |n: u8| -> BuiltImage {
             serde_json::from_str(&format!(
-                r#"{{"fingerprint":"{n:064x}","arch":"x86_64","user":{{"name":"dev","uid":1000,"gid":100,"home":"/home/dev"}},"agents":[],"browser":false,"store_path":"/nix/store/x"}}"#
+                r#"{{"fingerprint":"{n:064x}","arch":"x86_64","user":{{"name":"dev","uid":1000,"gid":100,"home":"/home/dev"}},"browser":false,"store_path":"/nix/store/x"}}"#
             ))
             .expect("an image")
         };

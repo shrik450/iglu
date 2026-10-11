@@ -22,10 +22,6 @@ export function kindText(kind: ColumnKind): string {
   switch (kind.kind) {
     case "shell":
       return "Shell";
-    case "agent":
-      return kind.agent;
-    case "server":
-      return kind.command.join(" ");
     case "browser":
       return "Browser";
     default:
@@ -33,12 +29,7 @@ export function kindText(kind: ColumnKind): string {
   }
 }
 
-/** The columns a new workspace in the project opens with, as iglu opens
- * them: its opening, and the agent it starts at the end unless the opening
- * already has one for it. */
-export function opensWith(project: Pick<ProjectView, "agent" | "opening">): string[] {
-  const names = project.opening.map((t) => t.name ?? kindText(t.kind));
-  const agent = project.agent;
-  const has = project.opening.some((t) => t.kind.kind === "agent" && t.kind.agent === agent);
-  return agent && !has ? [...names, agent] : names;
+/** The columns a new workspace in the project opens with. */
+export function opensWith(project: Pick<ProjectView, "opening">): string[] {
+  return project.opening.map((t) => t.name ?? kindText(t.kind));
 }

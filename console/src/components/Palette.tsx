@@ -90,8 +90,7 @@ function items(): Item[] {
     for (const r of ws.routes) list.push({ label: `Copy the link to ${r.name}`, sub: ONLY_YOU, run: () => copyLink(r.url) });
     if (ws.phase === "running") {
       list.push({ label: `Shell in ${called(ws)}`, run: () => void addColumn(ws, { kind: "shell" }) });
-      for (const agent of ws.agents) list.push({ label: `${agent} in ${called(ws)}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
-      list.push({ label: `Server in ${called(ws)}`, sub: "A command that keeps running, such as a dev server", run: () => ask(ws, { kind: "add-column", server: true }) });
+      if (ws.browser && !ws.columns.some((c) => c.kind.kind === "browser")) list.push({ label: `Browser in ${called(ws)}`, run: () => void addColumn(ws, { kind: "browser" }) });
       list.push({ label: `Freeze ${called(ws)}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
     }
     if (ws.phase === "frozen") list.push({ label: `Thaw ${called(ws)}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });

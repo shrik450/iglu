@@ -47,16 +47,6 @@
           self.nixosModules.workspace
           {
             iglu.user = "dev";
-            # A stand-in agent that shows its prompt, so the test can read it back.
-            iglu.agents.echo = {
-              command = [
-                "/bin/sh"
-                "-c"
-                "printf 'PROMPT<%s>' \"$1\"; exec sleep infinity"
-                "echo"
-              ];
-              prompt = "argument";
-            };
             system.stateVersion = "26.05";
           }
         ];

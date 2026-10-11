@@ -41,7 +41,7 @@ function Welcome() {
         </li>
         <li>
           <b>Start a workspace</b>
-          <span>A branch to work on, with terminals; start agents in it from its + menu.</span>
+          <span>A branch to work on, with terminals to run your agents in.</span>
         </li>
       </ol>
     </div>

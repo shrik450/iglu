@@ -157,12 +157,7 @@ dev:
         "runtime_dir": "{{ dev_runtime }}",
         "guest_tools": "{{ justfile_directory() }}/target/debug",
         "memory_available": 68719476736,
-        "localhost_ca": "{{ dev_shared }}/ca/ca.crt",
-        "agents": [
-          { "name": "claude", "command": ["claude"], "prompt": "argument", "attention": "claude-hooks" },
-          { "name": "haiku", "command": ["claude", "--model", "claude-haiku-5-5"], "prompt": "argument", "attention": "claude-hooks" },
-          { "name": "scripted", "command": ["{{ justfile_directory() }}/dev/agents/scripted"], "prompt": "argument", "attention": "status-command" }
-        ]
+        "localhost_ca": "{{ dev_shared }}/ca/ca.crt"
       }
     }
     JSON

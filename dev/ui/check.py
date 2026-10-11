@@ -67,7 +67,6 @@ def main() -> None:
             step("signed-out", browser.signed_out, page, "/settings")
             step("refused-environment", browser.refused_environment, page)
             step("create", browser.create, page, "default", repo, NAME)
-            step("project-agent", browser.project_agent, page, PROJECT, "scripted")
             step("terminal", browser.terminal, page, NAME, "printf 'one-%s\\n' 42", "one-42")
             step("answers-queries", browser.answers_queries, page, NAME)
             step("draws-blocks", browser.draws_blocks, page, NAME)

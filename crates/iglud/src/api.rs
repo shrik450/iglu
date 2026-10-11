@@ -19,7 +19,6 @@ use iglu_api::{
     ListenerView, LiveView, Me, PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace,
     RouteView, SecretView, SendInput, SetDesiredState, Snapshot, WorkspaceView,
 };
-use iglu_domain::agent::Prompt;
 use iglu_domain::auth::{Action, Grant, Permission};
 use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
 use iglu_domain::download::DownloadName;
@@ -47,7 +46,7 @@ use crate::app::{
 use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, RenameOutcome, SealedSecret};
 use crate::extract::{Body, Path, Query, Upgrade, read_within};
-use crate::model::{ColumnRecord, RouteRecord, WorkspaceRecord};
+use crate::model::{RouteRecord, WorkspaceRecord};
 use crate::views::{ordered, route_view, workspace_view};
 
 mod projects;
@@ -415,21 +414,12 @@ fn insert_requested(
     let Some(project) = db::project(tx, owner, request.project)? else {
         return Ok(Err(Problem::at("project", "no such project")));
     };
-    let Some((revision, image)) = db::latest_ready_revision(tx, project.environment_id)? else {
+    let Some((revision, _)) = db::latest_ready_revision(tx, project.environment_id)? else {
         return Ok(Err(format!(
             "the environment {} has no built image yet",
             project.environment
         )
         .into()));
-    };
-    let started = match project::start(
-        &project.opening,
-        &image.agents,
-        request.agent.as_ref().or(project.agent.as_ref()),
-        request.prompt.as_ref(),
-    ) {
-        Ok(started) => started,
-        Err(refused) => return Ok(Err(refused.to_string().into())),
     };
     let made = made_from(&request);
     let name = match choose_name(tx, owner, request.name, &made, fresh.entropy)? {
@@ -471,18 +461,7 @@ fn insert_requested(
         })
         .collect();
     db::replace_grants(tx, fresh.id, &own)?;
-    let columns: Vec<ColumnRecord> = started
-        .columns
-        .into_iter()
-        .map(|spec| ColumnRecord {
-            prompt: request
-                .prompt
-                .clone()
-                .filter(|_| started.prompted.as_ref() == Some(&spec.name)),
-            spec,
-        })
-        .collect();
-    db::replace_columns(tx, fresh.id, &columns)?;
+    db::replace_columns(tx, fresh.id, &project.opening.columns())?;
     let what = match &record.checkout {
         Some(checkout) => format!("{} on {}", checkout.branch, checkout.repo),
         None => format!("in {}", project.name),
@@ -549,7 +528,7 @@ fn publish_in(
 }
 
 /// What a new workspace's name can be made from, in the order tried: what
-/// the person calls it, its branch, and what it was started to do.
+/// the person calls it, then its branch.
 fn made_from(request: &CreateWorkspace) -> Vec<Made> {
     let mut made = Vec::new();
     if let Some(label) = &request.label {
@@ -558,9 +537,6 @@ fn made_from(request: &CreateWorkspace) -> Vec<Made> {
     if let Some(branch) = &request.branch {
         made.push(Made::Branch(branch.to_string()));
     }
-    if let Some(prompt) = &request.prompt {
-        made.push(Made::Prompt(prompt.as_str().to_owned()));
-    }
     made
 }
 
@@ -568,7 +544,6 @@ fn made_from(request: &CreateWorkspace) -> Vec<Made> {
 enum Made {
     Label(String),
     Branch(String),
-    Prompt(String),
 }
 
 impl Made {
@@ -576,13 +551,12 @@ impl Made {
         match self {
             Self::Label(text) => names::from_label(text, attempt),
             Self::Branch(text) => names::from_branch(text, attempt),
-            Self::Prompt(text) => names::from_prompt(text, attempt),
         }
     }
 }
 
 /// The name asked for if it's free; else the first free one made from the
-/// label, branch or prompt; else the first unused generated name.
+/// label or branch; else the first unused generated name.
 fn choose_name(
     tx: &rusqlite::Connection,
     owner: PrincipalId,
@@ -811,7 +785,7 @@ async fn list_columns(
         .call(move |tx| db::columns(tx, id))
         .await?
         .into_iter()
-        .map(|column| column.spec.name)
+        .map(|column| column.name)
         .collect();
     let open: Vec<(SessionName, u32)> = host_for(&app, &ws)?
         .terminals(id)
@@ -854,42 +828,29 @@ impl Noted {
     }
 }
 
-/// What a column runs, resolving an agent through the workspace's environment.
+/// What a column runs. A browser needs an image that has one.
 async fn session_for(
     app: &App,
     ws: &WorkspaceRecord,
     spec: &ColumnSpec,
-    prompt: Option<&Prompt>,
 ) -> Result<SessionSpec, ApiError> {
-    let revision = ws.env_revision;
-    let agents = match &spec.kind {
-        ColumnKind::Agent { .. } => app
+    if spec.kind == ColumnKind::Browser {
+        let revision = ws.env_revision;
+        let image = app
             .db
             .call(move |tx| db::revision_image(tx, revision))
-            .await?
-            .map(|image| image.agents)
-            .unwrap_or_default(),
-        ColumnKind::Browser => {
-            let image = app
-                .db
-                .call(move |tx| db::revision_image(tx, revision))
-                .await?;
-            if !image.is_some_and(|image| image.browser) {
-                return Err(ApiError::Conflict(
-                    "this workspace's image has no browser: rebuild its environment with \
-                     iglu.browser.enable, and recreate the workspace"
-                        .into(),
-                ));
-            }
-            Vec::new()
+            .await?;
+        if !image.is_some_and(|image| image.browser) {
+            return Err(ApiError::Conflict(
+                "this workspace's image has no browser: rebuild its environment with \
+                 iglu.browser.enable, and recreate the workspace"
+                    .into(),
+            ));
         }
-        ColumnKind::Shell | ColumnKind::Server { .. } => Vec::new(),
-    };
-    let command = column::command(&spec.kind, &agents, prompt)
-        .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
+    }
     Ok(SessionSpec {
         name: spec.name.clone(),
-        command,
+        command: column::command(&spec.kind),
     })
 }
 
@@ -900,31 +861,21 @@ async fn add_column(
     Body(request): Body<AddColumn>,
 ) -> Result<(StatusCode, Json<ColumnSpec>), ApiError> {
     let ws = workspace_for(&app, &actor, id, Action::ManageColumns).await?;
-    if request.prompt.is_some() && !matches!(request.kind, ColumnKind::Agent { .. }) {
-        return Err(ApiError::BadRequest(Problem::at(
-            "prompt",
-            "only an agent column starts on a prompt",
-        )));
-    }
     let host = host_for(&app, &ws)?;
     let _editing = app.column_edits.lock(id).await;
     let columns = app.db.call(move |tx| db::columns(tx, id)).await?;
     // There's one debugging port for agents to find the browser on.
     if request.kind == ColumnKind::Browser
-        && let Some(browser) = columns.iter().find(|c| c.spec.kind == ColumnKind::Browser)
+        && let Some(browser) = columns.iter().find(|c| c.kind == ColumnKind::Browser)
     {
         return Err(ApiError::Conflict(
-            format!(
-                "this workspace has a browser already: {}",
-                browser.spec.name
-            )
-            .into(),
+            format!("this workspace has a browser already: {}", browser.name).into(),
         ));
     }
     let open = host.terminals(id).await.map_err(host_error)?;
     let taken: Vec<SessionName> = columns
         .iter()
-        .map(|c| c.spec.name.clone())
+        .map(|c| c.name.clone())
         .chain(open.into_iter().map(|t| t.name))
         .collect();
     let name = match request.name {
@@ -943,12 +894,9 @@ async fn add_column(
         width: request.width.unwrap_or(ColumnWidth::Half),
         label: None,
     };
-    host.open_terminal(
-        id,
-        &session_for(&app, &ws, &spec, request.prompt.as_ref()).await?,
-    )
-    .await
-    .map_err(host_error)?;
+    host.open_terminal(id, &session_for(&app, &ws, &spec).await?)
+        .await
+        .map_err(host_error)?;
     // Read again: other changes may have landed while the session opened.
     let added = spec.clone();
     let after = request.after;
@@ -958,15 +906,9 @@ async fn add_column(
             noted.add(tx, id)?;
             let mut columns = db::columns(tx, id)?;
             let at = after
-                .and_then(|after| columns.iter().position(|c| c.spec.name == after))
+                .and_then(|after| columns.iter().position(|c| c.name == after))
                 .map_or(columns.len(), |i| i + 1);
-            columns.insert(
-                at,
-                ColumnRecord {
-                    spec: added,
-                    prompt: None,
-                },
-            );
+            columns.insert(at, added);
             db::replace_columns(tx, id, &columns)
         })
         .await?;
@@ -990,20 +932,9 @@ async fn put_layout(
         .db
         .call(move |tx| {
             let columns = db::columns(tx, id)?;
-            let specs: Vec<ColumnSpec> = columns.iter().map(|c| c.spec.clone()).collect();
-            Ok(match column::arrange(&specs, &layout) {
+            Ok(match column::arrange(&columns, &layout) {
                 Ok(arranged) => {
-                    let records: Vec<ColumnRecord> = arranged
-                        .into_iter()
-                        .map(|spec| ColumnRecord {
-                            prompt: columns
-                                .iter()
-                                .find(|c| c.spec.name == spec.name)
-                                .and_then(|c| c.prompt.clone()),
-                            spec,
-                        })
-                        .collect();
-                    db::replace_columns(tx, id, &records)?;
+                    db::replace_columns(tx, id, &arranged)?;
                     Ok(())
                 }
                 Err(mismatch) => Err(mismatch),
@@ -1048,21 +979,15 @@ async fn restart_column(
         .call(move |tx| db::columns(tx, id))
         .await?
         .into_iter()
-        .find(|c| c.spec.name == lookup)
+        .find(|c| c.name == lookup)
         .ok_or(ApiError::NotFound)?;
-    // A column that never opened still has its prompt; this is its next try.
-    let session = session_for(&app, &ws, &column.spec, column.prompt.as_ref()).await?;
+    let session = session_for(&app, &ws, &column).await?;
     host_for(&app, &ws)?
         .open_terminal(id, &session)
         .await
         .map_err(host_error)?;
     let noted = noted(&actor, "column-restarted", name.to_string());
-    app.db
-        .call(move |tx| {
-            noted.add(tx, id)?;
-            db::clear_prompts(tx, id, &[name])
-        })
-        .await?;
+    app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1084,7 +1009,7 @@ async fn close_column(
         .call(move |tx| {
             noted.add(tx, id)?;
             let mut columns = db::columns(tx, id)?;
-            columns.retain(|c| c.spec.name != name);
+            columns.retain(|c| c.name != name);
             db::replace_columns(tx, id, &columns)
         })
         .await?;

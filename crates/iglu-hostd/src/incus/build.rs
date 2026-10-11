@@ -10,7 +10,6 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use hyper::Method;
-use iglu_domain::agent::{AgentSpec, MAX_AGENTS};
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
 use iglu_domain::guest::{self, INTERFACE, Incompatible, Interface};
 use iglu_domain::secret::FetchTokens;
@@ -23,20 +22,28 @@ use tokio::process::Command;
 use super::client::{Incus, IncusError};
 use crate::config;
 
+/// The interface alone, read before the rest of `iglu.json`: an image from
+/// another iglu may say what this one doesn't know, and should be told to
+/// update rather than that.
+#[derive(Deserialize)]
+struct Speaks {
+    /// The guest-tools interface the image's tools speak. Images from
+    /// before it was recorded don't say.
+    #[serde(default)]
+    guest_interface: Option<Interface>,
+}
+
 /// `iglu.json` in the image output, written by the workspace module.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ImageManifest {
     arch: Arch,
     user: GuestUser,
-    /// The guest-tools interface the image's tools speak. Images from
-    /// before it was recorded don't say.
+    /// Checked through [`Speaks`] before the rest is read; here so it isn't
+    /// an unknown field.
     #[serde(default)]
+    #[expect(dead_code, reason = "read through Speaks")]
     guest_interface: Option<Interface>,
-    /// The agents the environment declares. Parsed, so a malformed one
-    /// fails the build with a message instead of reaching a workspace.
-    #[serde(default)]
-    agents: Vec<AgentSpec>,
     /// Whether the environment has the browser, `iglu.browser.enable`.
     #[serde(default)]
     browser: bool,
@@ -66,15 +73,11 @@ pub async fn build(
     let manifest_bytes = tokio::fs::read(store_path.join("iglu.json"))
         .await
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
+    let speaks: Speaks = serde_json::from_slice(&manifest_bytes)
+        .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
+    guest::compatible(speaks.guest_interface)?;
     let manifest: ImageManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
-    guest::compatible(manifest.guest_interface)?;
-    if manifest.agents.len() > MAX_AGENTS {
-        return Err(BuildError::BadOutput(format!(
-            "iglu.json declares {} agents; at most {MAX_AGENTS} are allowed",
-            manifest.agents.len()
-        )));
-    }
     let metadata = store_path.join("metadata.tar.xz");
     let rootfs = store_path.join("rootfs.squashfs");
     let fingerprint = fingerprint(&metadata, &rootfs).await?;
@@ -91,7 +94,6 @@ pub async fn build(
         fingerprint,
         arch: manifest.arch,
         user: manifest.user,
-        agents: manifest.agents,
         browser: manifest.browser,
         store_path: store_path.display().to_string(),
     })

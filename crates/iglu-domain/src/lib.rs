@@ -6,7 +6,6 @@
 
 mod parse;
 
-pub mod agent;
 pub mod attention;
 pub mod auth;
 pub mod capacity;

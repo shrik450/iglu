@@ -57,7 +57,8 @@ workspaces.
 
 Terminals are [zmx](https://github.com/neurosnap/zmx) sessions: they survive
 disconnects, several browsers can attach to the same one, and you can still use
-tmux inside them. Claude Code hooks, and anything else that calls
+tmux inside them. Columns are shells, where you run agents as anything else,
+and the workspace's browser. Claude Code hooks, and anything else that calls
 `iglu-status`, report whether a session is working, waiting for you, or done.
 The console sorts workspaces by what needs you.
 
@@ -214,7 +215,7 @@ copy come back, freshly cloned.
 ```sh
 iglu project add --repo https://github.com/acme/app.git   # a project named app
 iglu new app --wait                                  # a workspace on a new branch
-iglu new general "Tidy my notes"                     # an agent with a prompt, no repository
+iglu new general --label "Tidy my notes"             # no repository, named tidy-my-notes
 iglu attach <workspace> [column]                     # a column in this terminal; Ctrl-] detaches
 iglu ls
 iglu port <workspace> 3000                           # publish a preview
@@ -243,9 +244,9 @@ whatever their environment. Sign in, finish onboarding, trust a checkout and
 change a setting once, and every workspace has it. Sessions find the
 directory in `IGLU_KEPT`, and `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
 `GH_CONFIG_DIR` point into it, so these programs don't read their files in
-your home directory, from Home Manager or otherwise. Being shared, a hook or MCP server an agent adds there runs in
-all your workspaces, and two agents saving settings at the same moment can
-lose one change. Codex replaces its sign-in token as it uses it, so a
+your home directory, from Home Manager or otherwise. Being shared, a hook or
+MCP server an agent adds there runs in all your workspaces, and two agents
+saving settings at the same moment can lose one change. Codex replaces its sign-in token as it uses it, so a
 workspace's Codex may find itself signed out after another's refreshed it;
 sign in again there. On a host it's the Incus volume
 `iglu-kept-<your id>-<uid>` in the `iglu` pool, which hostd never deletes.
@@ -260,9 +261,9 @@ Agents use it to open, read and type into the workspace's columns:
 
 ```sh
 iglu whoami
-iglu column new --agent claude --prompt "Review the diff"
-iglu column output claude --lines 50
-iglu column send shell "make test" --enter
+iglu column new --name tests
+iglu column send tests "make test" --enter
+iglu column output tests --lines 50
 ```
 
 A workspace reaches another of yours only as far as you allow, in its

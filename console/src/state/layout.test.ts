@@ -6,8 +6,8 @@ import { inView, moved, nextWidth, placed, scrollTarget, shown, stepIndex, title
 
 const columns: ColumnSpec[] = [
   { name: "shell", kind: { kind: "shell" }, width: "half", label: null },
-  { name: "claude", kind: { kind: "agent", agent: "claude" }, width: "two-thirds", label: null },
-  { name: "server", kind: { kind: "server", command: ["npm", "run", "dev"] }, width: "third", label: "preview" },
+  { name: "claude", kind: { kind: "shell" }, width: "two-thirds", label: null },
+  { name: "server", kind: { kind: "browser" }, width: "third", label: "preview" },
 ];
 
 test("widths cycle through every preset", () => {
@@ -35,8 +35,8 @@ test("missing sessions are ended and unasked ones come last as shells", () => {
     shown(columns, statuses).map((c) => [c.name, c.state, c.kind.kind]),
     [
       ["shell", "open", "shell"],
-      ["claude", "ended", "agent"],
-      ["server", "open", "server"],
+      ["claude", "ended", "shell"],
+      ["server", "open", "browser"],
       ["adhoc", "adopted", "shell"],
     ],
   );

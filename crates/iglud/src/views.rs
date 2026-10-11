@@ -28,7 +28,6 @@ pub fn project_view(project: ProjectRecord) -> ProjectView {
         repo: project.repo,
         environment: project.environment,
         opening: project.opening,
-        agent: project.agent,
         ports: project.ports,
         idle: project.idle,
         revision: project.revision,
@@ -47,10 +46,7 @@ pub fn workspace_view(
     let columns = db::columns(tx, ws.id)?;
     let access = access(&db::grants(tx, ws.id)?);
     let image = db::revision_image(tx, ws.env_revision)?;
-    let browser = image.as_ref().is_some_and(|image| image.browser);
-    let agents = image
-        .map(|image| image.agents.into_iter().map(|agent| agent.name).collect())
-        .unwrap_or_default();
+    let browser = image.is_some_and(|image| image.browser);
     let environment = db::environment_name_of_revision(tx, ws.env_revision)?.unwrap_or_else(|| {
         "unknown"
             .parse::<EnvName>()
@@ -100,8 +96,7 @@ pub fn workspace_view(
             });
             threads.into_iter().map(attention_view).collect()
         },
-        columns: columns.into_iter().map(|column| column.spec).collect(),
-        agents,
+        columns,
         browser,
         routes: routes
             .iter()

@@ -101,9 +101,9 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
   };
   const [idle, setIdle] = useState<IdleRule["kind"]>(idleChoice(project.idle));
   const [envName, setEnvName] = useState(project.environment);
-  const [agent, setAgent] = useState(project.agent ?? "");
   const latest = environments.value.find((env) => env.name === envName)?.latest;
-  const agents = latest?.status === "ready" ? latest.image.agents.map((a) => a.name) : [];
+  // A workspace has one browser, and only from an image that has one.
+  const browser = latest?.status === "ready" && latest.image.browser && !opening.some((t) => t.kind.kind === "browser");
   const move = (index: number, step: -1 | 1) => {
     const next = [...opening];
     const [item] = next.splice(index, 1);
@@ -140,7 +140,6 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
       repo: text("repo") ?? null,
       environment: envName,
       opening,
-      agent: text("agent") ?? null,
       ports: ports.ports,
       idle: rule,
     });
@@ -180,18 +179,6 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
           ))}
         </select>
         <FieldError form={save} input="environment" />
-      </label>
-      <label>
-        Starts
-        <select name="agent" value={agent} onChange={(e) => setAgent(e.currentTarget.value)} {...invalid(save, "agent")}>
-          <option value="">No agent</option>
-          {agents.map((a) => (
-            <option key={a} value={a}>
-              {a}
-            </option>
-          ))}
-        </select>
-        <FieldError form={save} input="agent" />
       </label>
       <label>
         Previews
@@ -260,12 +247,12 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
             <Icon name="plus" size={12} />
             Shell
           </button>
-          {agents.map((agent) => (
-            <button key={agent} type="button" class="btn" onClick={() => add({ kind: "agent", agent })}>
+          {browser ? (
+            <button type="button" class="btn" onClick={() => add({ kind: "browser" })}>
               <Icon name="plus" size={12} />
-              {agent}
+              Browser
             </button>
-          ))}
+          ) : null}
         </div>
         <FieldError form={save} input="opening" />
       </fieldset>

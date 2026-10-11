@@ -13,7 +13,6 @@ use iglu_domain::lifecycle::{
     AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
 use iglu_domain::secret::bundle;
-use iglu_domain::terminal::SessionName;
 use iglu_domain::time::{Millis, Timestamp};
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
@@ -471,15 +470,6 @@ async fn perform(
         Ok(CommandOutcome::Failed(error)) | Err(error) => Err(error),
     };
     let succeeded = result.is_ok();
-    // Only the columns whose sessions are open now have started their agents.
-    let opened: Vec<SessionName> = match (&result, effect) {
-        (Ok(_), Effect::OpenColumns) => host
-            .terminals(id)
-            .await
-            .map(|open| open.into_iter().map(|t| t.name).collect())
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
     let stored = app
         .db
         .call(move |tx| {
@@ -487,7 +477,6 @@ async fn perform(
                 Ok(instance) => {
                     db::record_observation(tx, id, instance, None, now())?;
                     db::set_condition(tx, id, None)?;
-                    db::clear_prompts(tx, id, &opened)?;
                     if !matches!(effect, Effect::DeliverSecrets) {
                         db::add_activity(tx, Some(id), None, effect_name(effect), "", now())?;
                     }
@@ -519,40 +508,21 @@ async fn perform(
     succeeded
 }
 
-/// What each of a workspace's columns runs, for this boot's opening. A
-/// column whose agent the environment doesn't declare is left out, and
-/// recorded, rather than stopping the others.
+/// What each of a workspace's columns runs, for this boot's opening.
 async fn sessions_for(app: &App, ws: &WorkspaceRecord) -> Result<Vec<SessionSpec>, CommandError> {
     let id = ws.id;
-    let revision = ws.env_revision;
-    app.db
-        .call(move |tx| {
-            let columns = db::columns(tx, id)?;
-            let agents = db::revision_image(tx, revision)?
-                .map(|image| image.agents)
-                .unwrap_or_default();
-            let mut sessions = Vec::with_capacity(columns.len());
-            for column in columns {
-                let command = column::command(&column.spec.kind, &agents, column.prompt.as_ref());
-                match command {
-                    Ok(command) => sessions.push(SessionSpec {
-                        name: column.spec.name,
-                        command,
-                    }),
-                    Err(error) => db::add_activity(
-                        tx,
-                        Some(id),
-                        None,
-                        "error",
-                        &format!("{} didn't open: {error}", column.spec.name),
-                        now(),
-                    )?,
-                }
-            }
-            Ok(sessions)
-        })
+    let columns = app
+        .db
+        .call(move |tx| db::columns(tx, id))
         .await
-        .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))
+        .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))?;
+    Ok(columns
+        .into_iter()
+        .map(|column| SessionSpec {
+            command: column::command(&column.kind),
+            name: column.name,
+        })
+        .collect())
 }
 
 async fn command_for(

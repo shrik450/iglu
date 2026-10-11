@@ -7,7 +7,6 @@
 
 pub mod browser;
 
-use iglu_domain::agent::Prompt;
 use iglu_domain::attention::{AttentionState, Seen, Summary, ThreadKey};
 use iglu_domain::auth::{DisplayName, Email, Permission};
 use iglu_domain::capacity::{Bytes, Capacity};
@@ -16,7 +15,7 @@ use iglu_domain::env::{BuiltImage, EnvName, EnvSource, GuestPath};
 use iglu_domain::git::{GitState, Unsaved};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
-use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
+use iglu_domain::label::{ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Phase, Revision};
 use iglu_domain::listener::Listener;
 use iglu_domain::names::WorkspaceLabel;
@@ -75,8 +74,6 @@ pub struct WorkspaceView {
     pub threads: Vec<AttentionView>,
     /// The columns the workspace opens, in order.
     pub columns: Vec<ColumnSpec>,
-    /// The agents its image can run, for agent columns.
-    pub agents: Vec<AgentName>,
     /// Whether its image has a browser, for a browser column.
     pub browser: bool,
     pub routes: Vec<RouteView>,
@@ -239,8 +236,6 @@ pub struct ProjectView {
     pub environment: EnvName,
     /// The columns its new workspaces open with.
     pub opening: Opening,
-    /// The agent its new workspaces start, if any.
-    pub agent: Option<AgentName>,
     /// Ports its new workspaces publish as previews.
     pub ports: PreviewPorts,
     pub idle: IdleRule,
@@ -330,10 +325,6 @@ pub struct AddColumn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub after: Option<SessionName>,
-    /// What an agent column's agent starts on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub prompt: Option<Prompt>,
 }
 
 /// What to call a column; `null` goes back to its session name.
@@ -476,16 +467,6 @@ pub struct CreateWorkspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub label: Option<WorkspaceLabel>,
-    /// What to work on: it starts an agent with it, and names the workspace
-    /// when nothing else does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub prompt: Option<Prompt>,
-    /// The agent to start. Defaults to the opening's first agent column, or
-    /// the environment's first agent when there's a prompt.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub agent: Option<AgentName>,
     /// The branch to work on. Defaults to the workspace name, and names it
     /// when no name or label is given. Only for projects with a repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -495,8 +476,7 @@ pub struct CreateWorkspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub base: Option<BranchName>,
-    /// Made from the label, the branch or the prompt when absent, or else
-    /// generated.
+    /// Made from the label or the branch when absent, or else generated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub name: Option<WorkspaceName>,
@@ -592,8 +572,6 @@ pub struct ChangeProject {
     pub repo: Option<RepoUrl>,
     pub environment: EnvName,
     pub opening: Opening,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub agent: Option<AgentName>,
     pub ports: PreviewPorts,
     pub idle: IdleRule,
 }
@@ -614,7 +592,7 @@ mod tests {
 
     #[test]
     fn a_whole_project_change_names_every_field() {
-        let whole = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"agent":null,"ports":[],"idle":{"kind":"default"}}"#;
+        let whole = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"ports":[],"idle":{"kind":"default"}}"#;
         assert!(serde_json::from_str::<ChangeProject>(whole).is_ok());
         let without_repo = whole.replace(r#""repo":null,"#, "");
         assert!(serde_json::from_str::<ChangeProject>(&without_repo).is_err());
