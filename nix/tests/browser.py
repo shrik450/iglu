@@ -1398,6 +1398,24 @@ def opening_gives_keyboard(page: Page, name: str) -> Any:
     return {"opened": name}
 
 
+def rings(page: Page, name: str) -> Any:
+    """A bell rung in a column the person isn't in marks its chip until they
+    go back to it: a program finishing or asking off screen was missed."""
+    open_workspace(page, name)
+    first, second = columns(page)[:2]
+    at_prompt(page, second)
+    page.keyboard.type("sleep 2; printf '\\a'")
+    page.keyboard.press("Enter")
+    column(page, first).locator(".term-host").click()
+    chips = page.get_by_role("navigation", name="Columns")
+    rang = chips.get_by_role("button", name=f"{second} (rang the bell)")
+    expect(rang).to_be_visible(timeout=15_000)
+    rang.click()
+    expect(rang).to_have_count(0)
+    expect(chips.get_by_role("button", name=second, exact=True)).to_be_visible()
+    return {"rang": second}
+
+
 def loads_quietly(page: Page, name: str) -> Any:
     """A page loaded straight at a workspace waits for iglu's first word
     rather than saying there's no such workspace, then shows it: it said
@@ -1598,6 +1616,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "create": create,
     "labels": labels,
     "loads-quietly": loads_quietly,
+    "rings": rings,
     "opening-gives-keyboard": opening_gives_keyboard,
     "refused-environment": refused_environment,
     "terminal": terminal,

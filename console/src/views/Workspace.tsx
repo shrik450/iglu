@@ -63,7 +63,7 @@ import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { situation } from "../state/situation.ts";
 import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
-import { ctrlHeld, newCore, panes, TerminalPane, titles } from "../terminal.ts";
+import { ctrlHeld, newCore, panes, rang, TerminalPane, titles } from "../terminal.ts";
 import { called } from "../state/naming.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
@@ -405,7 +405,7 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             type="button"
             aria-current={c.name === active ? "true" : undefined}
             key={c.name}
-            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}${dragging === c.name ? " dragging" : ""}`}
+            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}${dragging === c.name ? " dragging" : ""}${rang.value.has(`${ws.id}/${c.name}`) ? " rang" : ""}`}
             data-drop={drop?.name === c.name ? (drop.after ? "after" : "before") : undefined}
             draggable={arrangeable(c.state)}
             onDragStart={(e) => {
@@ -433,6 +433,12 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             <span translate={false} title={c.label ? `${c.label} (session ${c.name})` : undefined}>
               {titleOf(c)}
             </span>
+            {rang.value.has(`${ws.id}/${c.name}`) ? (
+              <span class="bell" title="It rang the bell">
+                <Icon name="bell" size={12} />
+                <span class="sr-only">(rang the bell)</span>
+              </span>
+            ) : null}
           </button>
         ))}
       </nav>

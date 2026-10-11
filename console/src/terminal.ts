@@ -105,6 +105,18 @@ export function setTitle(key: string, title: string): void {
   titles.value = next;
 }
 
+/** Panes, by `workspace/session`, whose program rang the bell while the
+ * person was elsewhere: their chips say so until they go back. */
+export const rang = signal<ReadonlySet<string>>(new Set());
+
+function ring(key: string, on: boolean): void {
+  if (rang.peek().has(key) === on) return;
+  const next = new Set(rang.peek());
+  if (on) next.add(key);
+  else next.delete(key);
+  rang.value = next;
+}
+
 /** The pane the person last focused, for `globalThis.iglu.screen()`. */
 let lastFocused: TerminalPane | null = null;
 
@@ -187,6 +199,9 @@ export class TerminalPane implements Pane {
       onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
       onPasteFiles: (files) => void this.pasteFiles(files),
       onTitle: (title) => setTitle(this.key, programTitle(title)),
+      onBell: () => {
+        if (!this.focused || document.visibilityState !== "visible") ring(this.key, true);
+      },
       // Ghostty's own answer: a VT220 with colour, which can set the
       // clipboard (OSC 52), so programs like nvim copy through it.
       primaryAttributes: "\x1b[?62;22;52c",
@@ -270,6 +285,7 @@ export class TerminalPane implements Pane {
   private readonly focusIn = () => {
     this.focused = true;
     lastFocused = this;
+    ring(this.key, false);
     this.sendResize(this.term.cols, this.term.rows, true);
     this.onFocus();
   };
@@ -383,6 +399,7 @@ export class TerminalPane implements Pane {
     panes.delete(this.key);
     setTitle(this.key, "");
     if (lastFocused === this) lastFocused = null;
+    ring(this.key, false);
     this.sight.disconnect();
     this.container.removeEventListener("keydown", this.keyDown, { capture: true });
     this.container.removeEventListener("wheel", this.wheel, { capture: true });

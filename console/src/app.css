@@ -278,7 +278,9 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .w-strip { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .minimap { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; padding: 2px; scrollbar-width: none; }
 .sc { display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 200px; padding: 4px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; font: 12px/1.2 var(--mono); color: var(--muted); }
-.sc span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sc > span:nth-child(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sc .bell { display: inline-grid; color: var(--waiting); }
+.sc.rang { color: var(--ink); }
 .sc:hover { color: var(--ink); }
 .sc.vis { color: var(--ink); background: var(--raised); }
 .sc[aria-current] { border-color: var(--accent); color: var(--ink); }

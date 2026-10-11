@@ -107,6 +107,7 @@ def main() -> None:
             step("labels", browser.labels, page, NAME, PROJECT)
             step("opening-gives-keyboard", browser.opening_gives_keyboard, page, NAME)
             step("loads-quietly", browser.loads_quietly, page, NAME)
+            step("rings", browser.rings, page, NAME)
             step("drafts-survive", browser.drafts_survive, page, PROJECT)
             step("adds-at-once", browser.adds_at_once, page, NAME)
             step("questions-end", browser.questions_end, page, NAME)

@@ -301,6 +301,7 @@ try:
         browser("labels", "demo", "app")
         browser("opening-gives-keyboard", "demo")
         browser("loads-quietly", "demo")
+        browser("rings", "demo")
         browser("drafts-survive", "app")
         browser("adds-at-once", "demo")
         browser("questions-end", "demo")
