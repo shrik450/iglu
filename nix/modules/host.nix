@@ -29,6 +29,7 @@ let
       socket = "/var/lib/incus/unix.socket";
       binary = lib.getExe' incus.clientPackage "incus";
       profile = "iglu";
+      pool = "iglu";
       network = cfg.network.name;
       acl = "iglu-egress";
     };

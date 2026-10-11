@@ -25,9 +25,9 @@ use futures_util::{SinkExt, StreamExt};
 use hyper::Method;
 use iglu_domain::capacity;
 use iglu_domain::download::DownloadName;
-use iglu_domain::env::{BuiltImage, EnvSource};
+use iglu_domain::env::{BuiltImage, EnvSource, GuestUser};
 use iglu_domain::guest as guest_tools;
-use iglu_domain::id::InstanceName;
+use iglu_domain::id::{InstanceName, PrincipalId};
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
@@ -44,6 +44,16 @@ use self::observe::keys;
 
 /// The proxy device that is an instance's channel to iglu.
 const CHANNEL_DEVICE: &str = "iglu-channel";
+
+/// The disk device that is the owner's kept directory.
+const KEPT_DEVICE: &str = "iglu-kept";
+
+/// The volume that holds a person's kept directory on this host. Its files
+/// belong to the workspace account's uid, so an environment whose account
+/// has another gets a volume of its own.
+fn kept_volume(owner: PrincipalId, user: &GuestUser) -> String {
+    format!("iglu-kept-{}-{}", owner.as_uuid().simple(), user.uid.get())
+}
 use crate::config::{self, Timeouts};
 use crate::guest::{self, GuestCommand};
 use crate::runtime::{
@@ -117,6 +127,44 @@ impl IncusRuntime {
         })
     }
 
+    /// Makes the person's kept volume unless it's there. It's shifted, so
+    /// every one of their instances, each with an idmap of its own, sees its
+    /// files as the workspace account's. hostd never removes one.
+    async fn keep(&self, volume: &str, user: &GuestUser) -> Result<(), RuntimeError> {
+        let volumes = format!("/1.0/storage-pools/{}/volumes/custom", self.settings.pool);
+        let path = format!("{volumes}/{volume}");
+        match self.incus.get::<Value>(&path).await {
+            Ok(_) => return Ok(()),
+            Err(error) if error.is_not_found() => {}
+            Err(error) => return Err(failed(error)),
+        }
+        let body = json!({
+            "name": volume,
+            "content_type": "filesystem",
+            "config": {
+                "security.shifted": "true",
+                "initial.uid": user.uid.get().to_string(),
+                "initial.gid": user.gid.get().to_string(),
+                "initial.mode": "0700",
+            },
+        });
+        match self
+            .incus
+            .run(
+                Method::POST,
+                &volumes,
+                Some(&body),
+                self.timeouts.operation(),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            // Another of the person's workspaces made it first.
+            Err(_) if self.incus.get::<Value>(&path).await.is_ok() => Ok(()),
+            Err(error) => Err(failed(error)),
+        }
+    }
+
     async fn change(&self, name: InstanceName, action: StateAction) -> Result<(), RuntimeError> {
         self.incus
             .change_state(name, action, self.timeouts.operation())
@@ -175,6 +223,8 @@ impl Runtime for IncusRuntime {
             Err(error) => return Err(failed(error)),
         }
         let guest_user = serde_json::to_string(&spec.user).map_err(RuntimeError::failed)?;
+        let kept = kept_volume(spec.owner, &spec.user);
+        self.keep(&kept, &spec.user).await?;
         // The instance's end of its channel, which only the workspace user
         // can open; the host's end is hostd's listener for this instance.
         let channel = json!({
@@ -206,7 +256,15 @@ impl Runtime for IncusRuntime {
                 // The image was just checked to speak this host's interface.
                 keys::GUEST_INTERFACE: guest_tools::INTERFACE.to_string(),
             },
-            "devices": { CHANNEL_DEVICE: channel },
+            "devices": {
+                CHANNEL_DEVICE: channel,
+                KEPT_DEVICE: {
+                    "type": "disk",
+                    "pool": self.settings.pool,
+                    "source": kept,
+                    "path": guest_tools::INSTANCE_KEPT,
+                },
+            },
         });
         self.incus
             .run(

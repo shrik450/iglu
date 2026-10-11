@@ -140,6 +140,7 @@ shows after the next one. A change to iglud or hostd needs a restart.
 | Local host  | `127.0.0.1:7200`                                           |
 | State       | `.dev/state/` in the current worktree                      |
 | Workspaces  | `.dev/state/devhost/instances/<instance>/home`             |
+| Kept        | `.dev/state/devhost/kept/<person>`                         |
 | Sessions    | `~/.cache/iglu/<worktree hash>/<slot>/`                    |
 | Fixtures    | `https://git.localhost`, from `.dev/shared/git/`           |
 | Tours       | `.dev/tour/<label>/index.html`                             |

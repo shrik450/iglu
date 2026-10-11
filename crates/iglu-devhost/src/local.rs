@@ -354,6 +354,10 @@ impl LocalRuntime {
         env.insert("HOME".into(), self.layout.home(name).into());
         env.insert("XDG_RUNTIME_DIR".into(), run.into());
         env.insert(
+            guest_tools::KEPT_ENV.into(),
+            self.layout.kept_link(name).into(),
+        );
+        env.insert(
             iglu_domain::guest::CHANNEL_ENV.into(),
             self.layout.channel(name).into(),
         );
@@ -455,8 +459,28 @@ impl LocalRuntime {
 
     /// Claude Code's hooks, as the workspace module installs them, so the
     /// console sees agents' attention. Local workspaces have no system
-    /// settings of their own, so they go in the user's.
-    fn claude_settings(&self) -> serde_json::Value {
+    /// settings of their own, so they go in the person's, in place of any
+    /// hooks there and beside the rest.
+    async fn hook_claude(&self, kept: &Path) -> std::io::Result<()> {
+        let dir = kept.join(guest_tools::CLAUDE_KEPT);
+        tokio::fs::create_dir_all(&dir).await?;
+        let file = dir.join("settings.json");
+        let mut settings = match tokio::fs::read(&file).await {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(std::io::Error::other)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(error) => return Err(error),
+        };
+        let serde_json::Value::Object(fields) = &mut settings else {
+            return Err(std::io::Error::other(format!(
+                "{} isn't an object",
+                file.display()
+            )));
+        };
+        fields.insert("hooks".into(), self.claude_hooks());
+        store::write_json(&file, &settings).await
+    }
+
+    fn claude_hooks(&self) -> serde_json::Value {
         let hook = serde_json::json!({
             "type": "command",
             "command": format!("{} claude-hook", self.tool("iglu-status").display()),
@@ -477,7 +501,7 @@ impl LocalRuntime {
                 serde_json::json!([{ "matcher": "*", "hooks": [hook] }]),
             );
         }
-        serde_json::json!({ "hooks": hooks })
+        serde_json::Value::Object(hooks)
     }
 
     /// Lays the workspace out beside the others, then moves it into place,
@@ -488,7 +512,10 @@ impl LocalRuntime {
             tokio::fs::remove_dir_all(&staging).await?;
         }
         let home = staging.join("home");
-        tokio::fs::create_dir_all(home.join(".claude")).await?;
+        tokio::fs::create_dir_all(&home).await?;
+        let kept = self.layout.kept(spec.owner);
+        self.hook_claude(&kept).await?;
+        tokio::fs::symlink(&kept, staging.join("kept")).await?;
         if let Some(profile) = &self.profile {
             tokio::fs::symlink(profile, home.join(".nix-profile")).await?;
         }
@@ -509,7 +536,6 @@ impl LocalRuntime {
             )
             .await?;
         }
-        store::write_json(&home.join(".claude/settings.json"), &self.claude_settings()).await?;
         let user = GuestUser {
             home: guest_path(&self.layout.home(name)).map_err(std::io::Error::other)?,
             ..spec.user.clone()

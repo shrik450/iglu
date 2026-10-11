@@ -76,6 +76,8 @@ pub struct Incus {
     pub project: Option<String>,
     /// The profile every workspace instance uses: root disk and NIC.
     pub profile: String,
+    /// The storage pool each person's kept volume is on.
+    pub pool: String,
     /// The managed bridge workspaces attach to.
     pub network: String,
     /// The ACL hostd maintains on that bridge.

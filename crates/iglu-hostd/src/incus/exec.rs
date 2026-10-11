@@ -54,6 +54,10 @@ impl<'a> Program<'a> {
                 iglu_domain::guest::INSTANCE_CHANNEL.to_owned(),
             ),
             (
+                iglu_domain::guest::KEPT_ENV,
+                iglu_domain::guest::INSTANCE_KEPT.to_owned(),
+            ),
+            (
                 "PATH",
                 format!(
                     "/run/wrappers/bin:/etc/profiles/per-user/{}/bin:/run/current-system/sw/bin",

@@ -198,7 +198,8 @@ iglud copies its database to `/var/lib/iglud/backups` at every start, before
 any migration, and every six hours, keeping the newest 28
 (`services.iglu.control.backups`). Ship that directory off the box. The copies
 hold stored secrets sealed with `/var/lib/iglud/secret-key`, which they don't
-include: back the key up once, separately.
+include: back the key up once, separately. People's kept directories (see
+[Using it](#using-it)) are on the execution host, not in these copies.
 
 To restore, stop `iglud`, replace `/var/lib/iglud/iglu.db` with a copy and
 delete any `iglu.db-wal` and `iglu.db-shm` beside it, then start `iglud`.
@@ -233,6 +234,19 @@ terminals, files under the home directory, and answers from `iglu-guest`,
 which is the Git credential helper for HTTPS remotes. For Claude Code, run
 `claude setup-token` and store the result as `CLAUDE_CODE_OAUTH_TOKEN`. That
 token is meant for sharing across machines; copied OAuth login files aren't.
+
+Claude Code, Codex and GitHub's `gh` keep their configuration in your kept
+directory, one per person on each host, which all your workspaces share,
+whatever their environment. Sign in, finish onboarding, trust a checkout and
+change a setting once, and every workspace has it. Sessions find the
+directory in `IGLU_KEPT`, and `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
+`GH_CONFIG_DIR` point into it, so these programs don't read their files in
+your home directory, from Home Manager or otherwise. Being shared, a hook or MCP server an agent adds there runs in
+all your workspaces, and two agents saving settings at the same moment can
+lose one change. Codex replaces its sign-in token as it uses it, so a
+workspace's Codex may find itself signed out after another's refreshed it;
+sign in again there. On a host it's the Incus volume
+`iglu-kept-<your id>-<uid>` in the `iglu` pool, which hostd never deletes.
 
 Every command takes `--json`.
 

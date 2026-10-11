@@ -56,7 +56,9 @@ pub trait Runtime: Send + Sync + 'static {
     ) -> impl Future<Output = Result<BuiltImage, BuildFailure>> + Send;
 
     /// Creates a stopped instance from a built image, recording the spec's
-    /// owner and user on it. The name is free.
+    /// owner and user on it. The name is free. Its processes find the
+    /// owner's kept directory, the same for every instance of theirs and
+    /// no one else's, in `IGLU_KEPT`.
     fn create(
         &self,
         name: InstanceName,
@@ -79,7 +81,8 @@ pub trait Runtime: Send + Sync + 'static {
     /// stop timeout, then by force.
     fn stop(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
-    /// Removes a stopped instance and everything the runtime keeps for it.
+    /// Removes a stopped instance and everything the runtime keeps for it,
+    /// but for its owner's kept directory.
     fn delete(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
     /// Records on the instance that its repository is in place, so the

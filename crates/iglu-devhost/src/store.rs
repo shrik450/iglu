@@ -65,6 +65,17 @@ impl Layout {
         self.instance(name).join("home")
     }
 
+    /// A person's kept directory, shared by their workspaces and never
+    /// removed with one.
+    pub fn kept(&self, owner: PrincipalId) -> PathBuf {
+        self.state.join("kept").join(owner.to_string())
+    }
+
+    /// A workspace's way to its owner's kept directory: a link to it.
+    pub fn kept_link(&self, name: InstanceName) -> PathBuf {
+        self.instance(name).join("kept")
+    }
+
     pub fn slots(&self) -> PathBuf {
         self.state.join("slots")
     }

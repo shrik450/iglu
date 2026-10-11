@@ -1,6 +1,7 @@
 //! Where the guest tools keep their state. Everything hangs off the user's
-//! home and runtime directories, so a runtime relocates a workspace by
-//! setting `HOME` and `XDG_RUNTIME_DIR`.
+//! home and runtime directories and the person's kept directory, so a
+//! runtime relocates a workspace by setting `HOME`, `XDG_RUNTIME_DIR` and
+//! `IGLU_KEPT`.
 
 use std::path::{Path, PathBuf};
 
@@ -14,11 +15,13 @@ pub enum DirsError {
     Relative(&'static str),
 }
 
-/// The user's home and runtime directories, from the environment.
+/// The user's home and runtime directories and the person's kept
+/// directory, from the environment.
 #[derive(Clone, Debug)]
 pub struct Dirs {
     home: PathBuf,
     runtime: PathBuf,
+    kept: PathBuf,
     channel: Option<PathBuf>,
 }
 
@@ -34,11 +37,12 @@ fn absolute(name: &'static str) -> Result<PathBuf, DirsError> {
 impl Dirs {
     /// # Errors
     ///
-    /// When `HOME` or `XDG_RUNTIME_DIR` is unset or relative.
+    /// When `HOME`, `XDG_RUNTIME_DIR` or `IGLU_KEPT` is unset or relative.
     pub fn from_env() -> Result<Self, DirsError> {
         Ok(Self {
             home: absolute("HOME")?,
             runtime: absolute("XDG_RUNTIME_DIR")?,
+            kept: absolute(guest::KEPT_ENV)?,
             channel: absolute(guest::CHANNEL_ENV).ok(),
         })
     }
@@ -51,6 +55,12 @@ impl Dirs {
     #[must_use]
     pub fn runtime(&self) -> &Path {
         &self.runtime
+    }
+
+    /// What the person's agents keep, shared by all of their workspaces.
+    #[must_use]
+    pub fn kept(&self) -> &Path {
+        &self.kept
     }
 
     /// The workspace's channel to iglu, where the host gave one.

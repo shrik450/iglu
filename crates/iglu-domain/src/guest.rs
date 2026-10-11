@@ -69,7 +69,7 @@ pub const COLUMNS_OPENED: &str = "iglu/columns-opened";
 /// tools' command line and the files above. An image records the version
 /// its tools speak, and a host only uses images that speak its own. Bump it
 /// with any change either side would notice.
-pub const INTERFACE: Interface = Interface(4);
+pub const INTERFACE: Interface = Interface(5);
 
 /// Where a workspace's processes reach iglu: a socket that only that
 /// workspace's channel answers on, so whatever connects is that workspace.
@@ -81,6 +81,29 @@ pub const CHANNEL_ENV: &str = "IGLU_SOCKET";
 /// filesystem: Incus binds the socket when the instance starts, and one
 /// under `/run` is hidden by the tmpfs mounted there on a restart.
 pub const INSTANCE_CHANNEL: &str = "/var/lib/iglu-api.sock";
+
+/// Where a person's kept directory is: what their agents keep once it's set
+/// up, shared by all of the person's workspaces on a host and by no one
+/// else's. The runtime gives the guest tools its path in this variable, and
+/// they pass it on to every session.
+pub const KEPT_ENV: &str = "IGLU_KEPT";
+
+/// The kept directory's path inside an Incus instance, where the person's
+/// volume is mounted.
+pub const INSTANCE_KEPT: &str = "/var/lib/iglu/kept";
+
+/// What agents and tools keep in the kept directory: each variable names a
+/// directory of the program's own there, which it takes as its
+/// configuration directory. Sign-in, onboarding, trust and settings are then made once,
+/// for every workspace.
+pub const KEPT_DIRS: [(&str, &str); 3] = [
+    ("CLAUDE_CONFIG_DIR", CLAUDE_KEPT),
+    ("CODEX_HOME", "codex"),
+    ("GH_CONFIG_DIR", "gh"),
+];
+
+/// Claude Code's directory in the kept directory.
+pub const CLAUDE_KEPT: &str = "claude";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]

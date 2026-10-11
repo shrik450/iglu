@@ -155,6 +155,14 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check(
+                "agents keep their configuration for every workspace of the person's, and no one else's",
+                Suite::keeps_per_person,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
                 "a failed clone leaves provisioning pending",
                 Suite::failed_clone,
             )
@@ -206,6 +214,9 @@ struct Suite<'a, R> {
     host: &'a Host<R>,
     image: BuiltImage,
     boot_timeout: Duration,
+    /// Who owns the workspaces the checks make, one person for the run, so
+    /// the run makes one kept directory.
+    owner: PrincipalId,
 }
 
 fn ensure(condition: bool, what: impl FnOnce() -> String) -> Checked {
@@ -236,6 +247,7 @@ impl<'a, R: Runtime> Suite<'a, R> {
                 host,
                 image,
                 boot_timeout: fixture.boot_timeout,
+                owner: PrincipalId::from_uuid(Uuid::new_v4()),
             }),
             BuildOutcome::Failed { log_tail } => Err(Outcome {
                 check: "builds the environment",
@@ -261,8 +273,12 @@ impl<'a, R: Runtime> Suite<'a, R> {
     }
 
     fn spec(&self) -> CreateSpec {
+        self.spec_for(self.owner)
+    }
+
+    fn spec_for(&self, owner: PrincipalId) -> CreateSpec {
         CreateSpec {
-            owner: PrincipalId::from_uuid(Uuid::new_v4()),
+            owner,
             image: self.image.fingerprint.clone(),
             user: self.image.user.clone(),
             limits: Limits {
@@ -561,6 +577,48 @@ impl<'a, R: Runtime> Suite<'a, R> {
         self.perform(workspace, Command::Create(self.spec()))
             .await?;
         self.boot(workspace).await.map(|_| ())
+    }
+
+    /// What one of a person's workspaces keeps, their others see, live;
+    /// another person's don't. The words the checks wait for are split in
+    /// what's typed, so only the output has them whole.
+    async fn keeps_per_person(&self, workspace: WorkspaceId) -> Checked {
+        let same = WorkspaceId::from_uuid(Uuid::new_v4());
+        let other = WorkspaceId::from_uuid(Uuid::new_v4());
+        let result = async {
+            self.running_workspace(workspace).await?;
+            self.shell(
+                workspace,
+                "keeps",
+                r#"printf 'kept-%s\n' yes > "$CLAUDE_CONFIG_DIR/mark" && test -d "$CODEX_HOME" && echo wr''ote"#,
+                "wrote",
+            )
+            .await?;
+            self.perform(same, Command::Create(self.spec())).await?;
+            self.boot(same).await?;
+            self.shell(same, "keeps", r#"cat "$CLAUDE_CONFIG_DIR/mark""#, "kept-yes")
+                .await?;
+            let stranger = PrincipalId::from_uuid(Uuid::new_v4());
+            self.perform(other, Command::Create(self.spec_for(stranger)))
+                .await?;
+            self.boot(other).await?;
+            self.shell(
+                other,
+                "keeps",
+                r#"test -e "$CLAUDE_CONFIG_DIR/mark" || echo mi''ssing"#,
+                "missing",
+            )
+            .await
+        }
+        .await;
+        let cleaned = [
+            self.perform(same, Command::Delete).await,
+            self.perform(other, Command::Delete).await,
+        ];
+        cleaned
+            .into_iter()
+            .try_for_each(|done| done.map(|_| ()))
+            .and(result)
     }
 
     async fn deliver(
