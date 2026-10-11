@@ -41,7 +41,7 @@ function Welcome() {
         </li>
         <li>
           <b>Start a workspace</b>
-          <span>Say what to work on, and an agent starts on it.</span>
+          <span>A branch to work on, with terminals; start agents in it from its + menu.</span>
         </li>
       </ol>
     </div>
@@ -71,7 +71,7 @@ export function Overview() {
       {workspaces.value.length === 0 ? (
         <div class="first-ws">
           <p>
-            <b>Ready.</b> Start a workspace: name what to work on, and an agent starts on it.
+            <b>Ready.</b> Start a workspace: a branch to work on, with terminals and the agents you start in it.
           </p>
           <button type="button" class="btn primary" onClick={() => (overlay.value = "new")}>
             New workspace
