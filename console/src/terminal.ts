@@ -184,9 +184,10 @@ export class TerminalPane implements Pane {
       // clipboard (OSC 52), so programs like nvim copy through it.
       primaryAttributes: "\x1b[?62;22;52c",
       onSearchChange: (state) => (this.found.value = state.query ? state : null),
-      // Every pane tells its session its own size when that changes, focused
-      // or not. zmx applies the most recent size from any client, so a
-      // browser in the background stays quiet, and focusing claims the size.
+      // Every pane tells its client its own size when that changes, focused
+      // or not, and again on focus. zmx sizes the session to the client that
+      // last typed in it, asking it for its size then, so the browser typing
+      // sets the size and one in the background stays quiet.
       onResize: (cols, rows) => {
         if (document.visibilityState === "visible") this.sendResize(cols, rows);
       },
