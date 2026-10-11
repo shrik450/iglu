@@ -142,15 +142,25 @@ export async function create(body: CreateWorkspace): Promise<void> {
   } else say(`${called(ws)} is being made; it's in the list.`);
 }
 
-/** Publishes a port; throws what iglu refused, for a form to show. */
+/** Publishes a port; throws what iglu refused, for a form to show. Says so
+ * if nothing listens there yet, which would otherwise look like a broken
+ * link, and asks what's listening again so the header shows the preview at
+ * once rather than at the next poll. */
 export async function publish(ws: WorkspaceView, port: number): Promise<void> {
   const route = await api.publish(ws.id, port);
-  say(`Published :${route.port} at ${route.url}`);
   settle(ws, "port");
+  const listening = inside.value[ws.id]?.listeners.some((l) => l.port === route.port) ?? true;
+  say(
+    listening
+      ? `Published :${route.port} as ${route.name}; its link is beside the name.`
+      : `Published :${route.port} as ${route.name}. Nothing listens there yet; it opens once something does.`,
+  );
+  await loadLive(ws);
 }
 
 export async function unpublish(ws: WorkspaceView, route: RouteView): Promise<void> {
   await attempt(() => api.unpublish(ws.id, route.id));
+  await loadLive(ws);
 }
 
 /** Makes the workspace's columns how new workspaces in its project open. */
