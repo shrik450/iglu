@@ -1386,6 +1386,31 @@ def opening_gives_keyboard(page: Page, name: str) -> Any:
     return {"opened": name}
 
 
+def loads_quietly(page: Page, name: str) -> Any:
+    """A page loaded straight at a workspace waits for iglu's first word
+    rather than saying there's no such workspace, then shows it: it said
+    "No workspace called" until the list came."""
+    # iglu's first word is held back a moment, so the page has time to say
+    # the wrong thing if it would.
+    held = []
+    page.route("**/v1/events", lambda route: held.append(route))
+    page.goto(f"{CONSOLE}/w/{name}", wait_until="commit")
+    seen = []
+    released = time.monotonic() + 1.5
+    deadline = time.monotonic() + 15
+    while not page.locator(".term-host").count():
+        assert time.monotonic() < deadline, f"{name} never showed: {seen[-3:]}"
+        if time.monotonic() > released:
+            while held:
+                held.pop().continue_()
+        text = page.locator("main").inner_text() if page.locator("main").count() else ""
+        seen.append(text[:80])
+        assert "No workspace called" not in text, seen
+        time.sleep(0.05)
+    page.unroute("**/v1/events")
+    return {"polls": len(seen)}
+
+
 def labels(page: Page, name: str, project: str) -> Any:
     """What a workspace is called shows in place of its name, which stays
     its address; the new workspace form starts in the project being looked
@@ -1560,6 +1585,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "approve-cli": approve_cli,
     "create": create,
     "labels": labels,
+    "loads-quietly": loads_quietly,
     "opening-gives-keyboard": opening_gives_keyboard,
     "refused-environment": refused_environment,
     "terminal": terminal,

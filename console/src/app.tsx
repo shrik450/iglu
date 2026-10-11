@@ -13,7 +13,7 @@ import { PreviewsView } from "./views/Previews.tsx";
 import { ProjectPage } from "./views/Project.tsx";
 import { Settings } from "./views/Settings.tsx";
 import { Workspace } from "./views/Workspace.tsx";
-import { current, flash, live, me, navigate, outdated, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
+import { current, flash, live, loaded, me, navigate, outdated, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
 
 function Topbar() {
   const view = route.value.view;
@@ -154,7 +154,7 @@ function Flash() {
 
 export function App() {
   const r = route.value;
-  const loading = me.value === null;
+  const loading = me.value === null || !loaded.value;
   return (
     <>
       <a class="skip" href="#stage">
@@ -174,9 +174,9 @@ export function App() {
           <Settings />
         ) : r.view === "project" ? (
           <ProjectPage />
-        ) : workspaces.value ? (
+        ) : (
           <Overview />
-        ) : null}
+        )}
       </main>
       {overlay.value === "palette" ? <Palette /> : null}
       {overlay.value === "new" ? <NewWorkspace /> : null}
