@@ -19,6 +19,7 @@ use iglu_api::{
     ListenerView, LiveView, Me, PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace,
     RouteView, SecretView, SendInput, SetDesiredState, Snapshot, WorkspaceView,
 };
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::auth::{Action, Grant, Permission};
 use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
 use iglu_domain::download::DownloadName;
@@ -470,7 +471,7 @@ fn insert_requested(
         tx,
         Some(fresh.id),
         Some(db::By::person(owner)),
-        "requested",
+        ActivityKind::Requested,
         &what,
         now(),
     )?;
@@ -515,7 +516,7 @@ fn publish_in(
                     tx,
                     Some(workspace),
                     actor,
-                    "published",
+                    ActivityKind::Published,
                     &format!("port {} as {}", route.port, route.name),
                     now(),
                 )?;
@@ -613,30 +614,30 @@ async fn set_desired_state(
     allow_transition(ws.phase(), request.state)
         .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
     let by = actor.by();
-    let updated = app
+    let (asked, updated) = app
         .db
         .call(move |tx| {
-            let revision = db::set_desired(tx, id, request.state, request.expected_revision)?;
-            if revision.is_some() {
+            let asked = db::ask_desired(tx, id, request.state)?;
+            if asked == db::Asked::Changed {
                 db::add_activity(
                     tx,
                     Some(id),
                     Some(by),
-                    "requested",
-                    &format!("set to {}", request.state),
+                    ActivityKind::StateSet,
+                    &request.state.to_string(),
                     now(),
                 )?;
             }
-            revision
-                .and_then(|_| db::workspace(tx, id).transpose())
-                .transpose()
+            Ok((asked, db::workspace(tx, id)?))
         })
-        .await?
-        .ok_or_else(|| ApiError::Conflict("the workspace changed; reload and retry".into()))?;
-    tracing::info!(workspace = %id, state = %request.state, by = %by.person, via = ?by.via, "workspace state requested");
+        .await?;
+    let updated = updated.ok_or(ApiError::NotFound)?;
     app.usage.used(id);
-    app.kick();
-    app.changed();
+    if asked == db::Asked::Changed {
+        tracing::info!(workspace = %id, state = %request.state, by = %by.person, via = ?by.via, "workspace state requested");
+        app.kick();
+        app.changed();
+    }
     Ok(Json(actor.shown(view(&app, updated).await?)))
 }
 
@@ -658,7 +659,7 @@ async fn rename_workspace(
                     tx,
                     Some(id),
                     Some(by),
-                    "renamed",
+                    ActivityKind::Renamed,
                     &format!("{} to {}", ws.name, request.name),
                     now(),
                 )?;
@@ -706,7 +707,7 @@ async fn label_workspace(
                     tx,
                     Some(id),
                     Some(by),
-                    "renamed",
+                    ActivityKind::Renamed,
                     &format!("to {to}"),
                     now(),
                 )?;
@@ -810,9 +811,9 @@ async fn list_columns(
 
 /// A change to a workspace's columns, for its history when a workspace made
 /// it: the owner sees what their workspaces did, not what they did themselves.
-struct Noted(Option<(db::By, &'static str, String)>);
+struct Noted(Option<(db::By, ActivityKind, String)>);
 
-fn noted(actor: &Actor, kind: &'static str, detail: String) -> Noted {
+fn noted(actor: &Actor, kind: ActivityKind, detail: String) -> Noted {
     Noted(match actor {
         Actor::Person(_) => None,
         Actor::Workspace(_) => Some((actor.by(), kind, detail)),
@@ -823,7 +824,7 @@ impl Noted {
     fn add(&self, tx: &rusqlite::Connection, id: WorkspaceId) -> Result<(), db::DbError> {
         match &self.0 {
             Some((by, kind, detail)) => {
-                db::add_activity(tx, Some(id), Some(*by), kind, detail, now())
+                db::add_activity(tx, Some(id), Some(*by), *kind, detail, now())
             }
             None => Ok(()),
         }
@@ -902,7 +903,7 @@ async fn add_column(
     // Read again: other changes may have landed while the session opened.
     let added = spec.clone();
     let after = request.after;
-    let noted = noted(&actor, "column-added", spec.name.to_string());
+    let noted = noted(&actor, ActivityKind::ColumnAdded, spec.name.to_string());
     app.db
         .call(move |tx| {
             noted.add(tx, id)?;
@@ -988,7 +989,7 @@ async fn restart_column(
         .open_terminal(id, &session)
         .await
         .map_err(host_error)?;
-    let noted = noted(&actor, "column-restarted", name.to_string());
+    let noted = noted(&actor, ActivityKind::ColumnRestarted, name.to_string());
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1006,7 +1007,7 @@ async fn close_column(
     if open.iter().any(|t| t.name == name) {
         host.close_terminal(id, &name).await.map_err(host_error)?;
     }
-    let noted = noted(&actor, "column-closed", name.to_string());
+    let noted = noted(&actor, ActivityKind::ColumnClosed, name.to_string());
     app.db
         .call(move |tx| {
             noted.add(tx, id)?;
@@ -1071,7 +1072,7 @@ async fn send_input(
             .map_err(host_error)?;
     }
     app.usage.used(id);
-    let noted = noted(&actor, "typed", format!("into {session}"));
+    let noted = noted(&actor, ActivityKind::Typed, format!("into {session}"));
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1112,7 +1113,7 @@ async fn keep_file(
         .await
         .map_err(host_error)?;
     app.usage.used(id);
-    let noted = noted(&actor, "file-kept", path.to_string());
+    let noted = noted(&actor, ActivityKind::FileKept, path.to_string());
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(Json(KeptFile { path }))
 }
@@ -1153,7 +1154,7 @@ async fn put_access(
                 tx,
                 Some(id),
                 Some(db::By::person(owner)),
-                "access-changed",
+                ActivityKind::AccessChanged,
                 "",
                 now(),
             )?;
@@ -1318,9 +1319,23 @@ async fn unpublish_route(
     Path((id, route)): Path<(WorkspaceId, RouteId)>,
 ) -> Result<StatusCode, ApiError> {
     workspace_for(&app, &actor, id, Action::PublishRoute).await?;
+    let by = actor.by();
     let removed = app
         .db
-        .call(move |tx| db::delete_route(tx, id, route))
+        .call(move |tx| {
+            let removed = db::delete_route(tx, id, route)?;
+            if let Some(route) = &removed {
+                db::add_activity(
+                    tx,
+                    Some(id),
+                    Some(by),
+                    ActivityKind::Unpublished,
+                    &format!("port {} as {}", route.port, route.name),
+                    now(),
+                )?;
+            }
+            Ok(removed.is_some())
+        })
         .await?;
     app.changed();
     if removed {
@@ -1482,7 +1497,7 @@ async fn put_secret(
                 tx,
                 None,
                 Some(db::By::person(owner)),
-                "secret-updated",
+                ActivityKind::SecretUpdated,
                 sealed.name.as_str(),
                 now(),
             )?;
@@ -1533,7 +1548,11 @@ async fn events(
                 Ok(snapshot) => match serde_json::to_string(&snapshot) {
                     Ok(data) if data == sent => {}
                     Ok(data) => {
-                        if sender.send(Event::default().data(data.clone())).await.is_err() {
+                        if sender
+                            .send(Event::default().data(data.clone()))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                         sent = data;

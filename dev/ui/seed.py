@@ -135,7 +135,7 @@ def main() -> None:
         for name, state, phase in (("notes-frozen", "frozen", "frozen"), ("notes-stopped", "stopped", "stopped")):
             ws = api.workspace(name)
             if ws["phase"] != phase:
-                api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": state, "expected_revision": ws["revision"]})
+                api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": state})
                 api.wait(name, phase)
 
         if not any(s["name"] == "github-token" for s in api.get("/v1/secrets")):

@@ -56,7 +56,7 @@ def main() -> None:
                     continue
                 inside = lambda: [ws for ws in api.get("/v1/workspaces") if ws["project"] == project["id"]]  # noqa: E731
                 for ws in inside():
-                    api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted", "expected_revision": ws["revision"]})
+                    api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted"})
                 deadline = time.monotonic() + 120
                 while inside():
                     if time.monotonic() > deadline:
@@ -119,7 +119,7 @@ def main() -> None:
             assert result == {"read": "blocked", "socket": "refused"}, result
             step("visit", browser.visit, page, published["url"])
             # Leave nothing behind for a tour to show.
-            api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted", "expected_revision": api.workspace(NAME)["revision"]})
+            api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted"})
             project = next(p for p in api.get("/v1/projects") if p["name"] == PROJECT)
             deadline = time.monotonic() + 120
             while any(w["project"] == project["id"] for w in api.get("/v1/workspaces")):

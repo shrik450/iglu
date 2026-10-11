@@ -7,6 +7,7 @@
 
 pub mod browser;
 
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::attention::{AttentionState, Seen, Summary, ThreadKey};
 use iglu_domain::auth::{DisplayName, Email, Permission};
 use iglu_domain::capacity::{Bytes, Capacity};
@@ -291,7 +292,7 @@ pub struct SecretView {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ActivityEntry {
-    pub kind: String,
+    pub kind: ActivityKind,
     pub detail: String,
     pub at: Timestamp,
     /// The workspace it was done from, when a workspace did it.
@@ -487,9 +488,6 @@ pub struct CreateWorkspace {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct SetDesiredState {
     pub state: DesiredState,
-    /// Refuses the change if the workspace moved on since this revision, so
-    /// it applies only to what the caller saw.
-    pub expected_revision: Revision,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

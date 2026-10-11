@@ -74,7 +74,6 @@ pub async fn run(
                 ws.id,
                 &SetDesiredState {
                     state: DesiredState::Running,
-                    expected_revision: ws.revision,
                 },
             )
             .await?;

@@ -380,13 +380,7 @@ async fn transition(
 ) -> anyhow::Result<()> {
     let ws = client.resolve(reference).await?;
     let updated = client
-        .set_desired_state(
-            ws.id,
-            &SetDesiredState {
-                state,
-                expected_revision: ws.revision,
-            },
-        )
+        .set_desired_state(ws.id, &SetDesiredState { state })
         .await?;
     let ws = if wait {
         wait_for(client, ws.id, state).await?
@@ -534,7 +528,9 @@ async fn workspace(
             let ws = client.resolve(&workspace).await?;
             let log = client.activity(ws.id).await?;
             print(json_mode, log.as_slice(), |log| {
-                lines(log, |entry| format!("{:<18} {}", entry.kind, entry.detail))
+                lines(log, |entry| {
+                    format!("{:<18} {}", entry.kind.as_str(), entry.detail)
+                })
             });
         }
     }

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::capacity::Room;
 use iglu_domain::column;
 use iglu_domain::id::WorkspaceId;
@@ -360,7 +361,7 @@ async fn act(
                         tx,
                         Some(id),
                         None,
-                        "deleted",
+                        ActivityKind::Deleted,
                         "the workspace was deleted",
                         now(),
                     )
@@ -401,7 +402,7 @@ async fn act(
                 .call(move |tx| {
                     let changed = db::set_desired(tx, id, state, seen)?.is_some();
                     if changed {
-                        db::add_activity(tx, Some(id), None, "adopted", detail, now())?;
+                        db::add_activity(tx, Some(id), None, ActivityKind::Adopted, detail, now())?;
                     }
                     Ok(changed)
                 })
@@ -441,17 +442,32 @@ async fn set_condition(
     Ok(true)
 }
 
-const fn effect_name(effect: Effect) -> &'static str {
+/// What doing `effect` is called, in a failure's history entry.
+const fn effect_doing(effect: Effect) -> &'static str {
     match effect {
-        Effect::Create => "created",
-        Effect::Start => "started",
-        Effect::DeliverSecrets => "secrets-delivered",
-        Effect::Provision => "provisioned",
-        Effect::OpenColumns => "columns-opened",
-        Effect::Freeze => "frozen",
-        Effect::Thaw => "thawed",
-        Effect::Stop => "stopped",
-        Effect::Delete => "removed",
+        Effect::Create => "creating it",
+        Effect::Start => "starting it",
+        Effect::DeliverSecrets => "delivering its secrets",
+        Effect::Provision => "setting it up",
+        Effect::OpenColumns => "opening its columns",
+        Effect::Freeze => "freezing it",
+        Effect::Thaw => "thawing it",
+        Effect::Stop => "stopping it",
+        Effect::Delete => "removing it from its host",
+    }
+}
+
+const fn effect_kind(effect: Effect) -> ActivityKind {
+    match effect {
+        Effect::Create => ActivityKind::Created,
+        Effect::Start => ActivityKind::Started,
+        Effect::DeliverSecrets => ActivityKind::SecretsDelivered,
+        Effect::Provision => ActivityKind::Provisioned,
+        Effect::OpenColumns => ActivityKind::ColumnsOpened,
+        Effect::Freeze => ActivityKind::Frozen,
+        Effect::Thaw => ActivityKind::Thawed,
+        Effect::Stop => ActivityKind::Stopped,
+        Effect::Delete => ActivityKind::Removed,
     }
 }
 
@@ -483,11 +499,11 @@ async fn perform(
                     db::record_observation(tx, id, instance, None, now())?;
                     db::set_condition(tx, id, None)?;
                     if !matches!(effect, Effect::DeliverSecrets) {
-                        db::add_activity(tx, Some(id), None, effect_name(effect), "", now())?;
+                        db::add_activity(tx, Some(id), None, effect_kind(effect), "", now())?;
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(workspace = %id, effect = effect_name(effect), error = %error.message, "a step failed");
+                    tracing::warn!(workspace = %id, effect = effect_kind(effect).as_str(), error = %error.message, "a step failed");
                     let condition = Condition::Error {
                         code: error.code,
                         message: error.message.clone(),
@@ -498,8 +514,8 @@ async fn perform(
                         tx,
                         Some(id),
                         None,
-                        "error",
-                        &format!("{}: {}", effect_name(effect), error.message),
+                        ActivityKind::Error,
+                        &format!("{}: {}", effect_doing(effect), error.message),
                         now(),
                     )?;
                 }

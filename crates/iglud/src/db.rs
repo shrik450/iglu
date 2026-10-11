@@ -10,6 +10,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::{Grant, VerifiedIdentity};
 use iglu_domain::capacity::Bytes;
@@ -58,6 +59,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0009_access.sql")),
     Migration::Sql(include_str!("migrations/0010_workspace_labels.sql")),
     Migration::Sql(include_str!("migrations/0011_shells_and_browsers.sql")),
+    Migration::Sql(include_str!("migrations/0012_activity_kinds.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -1166,7 +1168,43 @@ pub fn is_deleted(tx: &Connection, id: WorkspaceId) -> Result<bool, DbError> {
         .is_some())
 }
 
-/// Sets the desired state if the revision still matches `expected`.
+/// What asking a workspace to be in a state did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    Changed,
+    /// It was already asked to be in that state.
+    Already,
+    /// It's deleted, or never was.
+    Gone,
+}
+
+/// Sets the state a person asked for, whatever was asked before: the last
+/// to ask decides, so asking again or after a change isn't refused.
+pub fn ask_desired(
+    tx: &Connection,
+    id: WorkspaceId,
+    desired: DesiredState,
+) -> Result<Asked, DbError> {
+    let current: Option<(String, i64)> = tx
+        .query_row(
+            "SELECT desired, revision FROM workspace WHERE id = ?1 AND deleted_at IS NULL",
+            [id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((was, revision)) = current else {
+        return Ok(Asked::Gone);
+    };
+    if was == desired.as_str() {
+        return Ok(Asked::Already);
+    }
+    let revision = Revision::from_u64(u64::try_from(revision).map_err(|e| conversion(1, e))?);
+    write_desired(tx, id, desired, revision.next())?;
+    Ok(Asked::Changed)
+}
+
+/// Sets the desired state if the revision still matches `expected`, for
+/// changes iglu makes itself, which never undo one a person made since.
 /// Returns the new revision, or `None` on a revision conflict.
 pub fn set_desired(
     tx: &Connection,
@@ -1191,11 +1229,25 @@ pub fn set_desired(
         return Ok(None);
     }
     let next = current.next();
+    write_desired(tx, id, desired, next)?;
+    Ok(Some(next))
+}
+
+/// A new desired state ends what was in the way of the last one; whether
+/// the host answers is still so.
+fn write_desired(
+    tx: &Connection,
+    id: WorkspaceId,
+    desired: DesiredState,
+    next: Revision,
+) -> Result<(), DbError> {
     tx.execute(
-        "UPDATE workspace SET desired = ?2, revision = ?3, condition = NULL WHERE id = ?1",
+        "UPDATE workspace SET desired = ?2, revision = ?3,
+             condition = CASE WHEN json_extract(condition, '$.kind') = 'host_offline' THEN condition END
+         WHERE id = ?1",
         params![id.to_string(), desired.as_str(), i64_of(next.get())],
     )?;
-    Ok(Some(next))
+    Ok(())
 }
 
 /// Records what the host reported at `at`, unless something newer is already
@@ -1535,12 +1587,20 @@ pub fn route_by_name(tx: &Connection, name: &RouteName) -> Result<Option<RouteRe
         .optional()?)
 }
 
-pub fn delete_route(tx: &Connection, workspace: WorkspaceId, id: RouteId) -> Result<bool, DbError> {
-    let deleted = tx.execute(
-        "DELETE FROM route WHERE id = ?1 AND workspace_id = ?2",
-        params![id.to_string(), workspace.to_string()],
-    )?;
-    Ok(deleted > 0)
+/// The route deleted, if the workspace had it.
+pub fn delete_route(
+    tx: &Connection,
+    workspace: WorkspaceId,
+    id: RouteId,
+) -> Result<Option<RouteRecord>, DbError> {
+    Ok(tx
+        .query_row(
+            "DELETE FROM route WHERE id = ?1 AND workspace_id = ?2
+             RETURNING id, workspace_id, name, port",
+            params![id.to_string(), workspace.to_string()],
+            route_row,
+        )
+        .optional()?)
 }
 
 // ---- secrets ----
@@ -1697,7 +1757,7 @@ pub fn add_activity(
     tx: &Connection,
     workspace: Option<WorkspaceId>,
     by: Option<By>,
-    kind: &str,
+    kind: ActivityKind,
     detail: &str,
     now: Timestamp,
 ) -> Result<(), DbError> {
@@ -1708,7 +1768,7 @@ pub fn add_activity(
             workspace.map(|w| w.to_string()),
             by.map(|b| b.person.to_string()),
             by.and_then(|b| b.via).map(|w| w.to_string()),
-            kind,
+            kind.as_str(),
             detail,
             now.unix_millis()
         ],
@@ -1732,7 +1792,7 @@ pub fn activity(
         .query_map(params![workspace.to_string(), limit], |row| {
             Ok((
                 ActivityEntry {
-                    kind: row.get(0)?,
+                    kind: text(row, 0)?,
                     detail: row.get(1)?,
                     at: timestamp(row, 2)?,
                     via: opt_text(row, 3)?,
@@ -1938,7 +1998,7 @@ mod tests {
             &conn,
             Some(one.id),
             Some(By::person(alice)),
-            "renamed",
+            ActivityKind::Renamed,
             "",
             at,
         )
@@ -1950,7 +2010,7 @@ mod tests {
                 person: alice,
                 via: Some(two.id),
             }),
-            "typed",
+            ActivityKind::Typed,
             "into shell",
             Timestamp::from_unix_millis(2),
         )
@@ -2041,6 +2101,48 @@ mod tests {
     }
 
     #[test]
+    fn a_person_asking_for_a_state_gets_it_whatever_was_asked_before() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        set_condition(&conn, ws.id, Some(&Condition::RuntimeFailed)).expect("a failure");
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Frozen).expect("query"),
+            Asked::Changed
+        );
+        let frozen = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(
+            (frozen.desired, frozen.revision),
+            (DesiredState::Frozen, ws.revision.next())
+        );
+        assert_eq!(
+            frozen.condition, None,
+            "a new state ends the old one's failure"
+        );
+        // Asking again changes nothing, and isn't refused.
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Frozen).expect("query"),
+            Asked::Already
+        );
+        let again = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(again.revision, frozen.revision);
+        // An offline host is still offline.
+        let offline = Condition::HostOffline { last_seen: None };
+        set_condition(&conn, ws.id, Some(&offline)).expect("offline");
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Running).expect("query"),
+            Asked::Changed
+        );
+        let running = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(running.condition, Some(offline));
+        mark_deleted(&conn, ws.id, Timestamp::from_unix_millis(9)).expect("deleted");
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Running).expect("query"),
+            Asked::Gone
+        );
+    }
+
+    #[test]
     fn desired_state_changes_only_from_the_expected_revision() {
         let conn = conn();
         let owner = principal(&conn, "alice");
@@ -2083,7 +2185,8 @@ mod tests {
             create_route(&conn, RouteId::from_uuid(Uuid::new_v4()), ws.id, owner, &name, port, at(2)),
             Ok(NewRoute::Exists(route)) if route.id == created.id
         ));
-        assert!(delete_route(&conn, ws.id, created.id).expect("delete"));
+        let deleted = delete_route(&conn, ws.id, created.id).expect("delete");
+        assert_eq!(deleted.map(|route| route.id), Some(created.id));
 
         let other = workspace_record(owner, ws.env_revision, ws.project, "other");
         insert_workspace(&conn, &other, None, "hash").expect("workspace");
@@ -2297,6 +2400,42 @@ mod tests {
         assert_eq!(
             (renamed.name.as_str(), renamed.revision),
             ("notes", general.revision.next())
+        );
+    }
+
+    #[test]
+    fn asking_for_a_state_becomes_its_own_kind_of_history() {
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate_until(&mut conn, 11).expect("the schema before");
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        for (at, detail) in [
+            (1, "main on https://example.test/app.git"),
+            (2, "set to frozen"),
+        ] {
+            conn.execute(
+                "INSERT INTO activity (workspace_id, kind, detail, at) VALUES (?1, 'requested', ?2, ?3)",
+                params![ws.id.to_string(), detail, at],
+            )
+            .expect("an entry");
+        }
+        migrate(&mut conn).expect("the rest apply");
+        let log: Vec<(ActivityKind, String)> = activity(&conn, ws.id, 10)
+            .expect("read")
+            .into_iter()
+            .map(|(entry, _)| (entry.kind, entry.detail))
+            .collect();
+        assert_eq!(
+            log,
+            [
+                (ActivityKind::StateSet, "frozen".into()),
+                (
+                    ActivityKind::Requested,
+                    "main on https://example.test/app.git".into()
+                ),
+            ]
         );
     }
 

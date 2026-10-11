@@ -448,6 +448,12 @@ try:
         assert https["phase"] == "running", https
         https_instance = "iglu-" + https["id"].replace("-", "")
         assert "init" in guest_of(https_instance)("git -C ~/app log --oneline")
+        # Unpublishing it is in its history, as publishing it is.
+        route = https["routes"][0]
+        client.succeed(f"{api} -X DELETE {CONSOLE}/v1/workspaces/{https['id']}/routes/{route['id']}")
+        history = [(entry["kind"], entry["detail"]) for entry in iglu("log over-https")]
+        said = f"port 3000 as {route['name']}"
+        assert ("published", said) in history and ("unpublished", said) in history, history
 
     with subtest("a workspace without a repository opens a shell, named for what it's called"):
         scratch = iglu("new general --label 'Fix the login bug' --wait")

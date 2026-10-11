@@ -48,6 +48,7 @@ import {
 } from "../components/bits.tsx";
 import type { AccessGrant } from "../generated/AccessGrant.ts";
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
+import type { ActivityKind } from "../generated/ActivityKind.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
@@ -1084,6 +1085,37 @@ function Access({ ws }: { ws: WorkspaceView }) {
 
 const stamp = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
+/** Each kind of history entry in words; its detail follows. */
+const HAPPENED: Record<ActivityKind, string> = {
+  requested: "Asked for",
+  "state-set": "Set to",
+  created: "Created",
+  started: "Started",
+  "secrets-delivered": "Secrets delivered",
+  provisioned: "Set up",
+  "columns-opened": "Columns opened",
+  frozen: "Frozen",
+  thawed: "Thawed",
+  stopped: "Stopped",
+  removed: "Removed from its host",
+  deleted: "Deleted",
+  error: "Failed",
+  renamed: "Renamed",
+  typed: "Typed",
+  "thawed-on-open": "Thawed when opened",
+  "idle-froze": "Frozen while idle",
+  "idle-stopped": "Stopped while idle",
+  "secret-updated": "Secret updated",
+  published: "Published",
+  unpublished: "Unpublished",
+  "file-kept": "Kept a file",
+  adopted: "Changed by its host",
+  "access-changed": "Access changed",
+  "column-added": "Added a column",
+  "column-restarted": "Restarted a column",
+  "column-closed": "Closed a column",
+};
+
 /** What happened to the workspace, newest first. Loaded when shown, and again when it changes. */
 function History({ ws }: { ws: WorkspaceView }) {
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
@@ -1106,7 +1138,7 @@ function History({ ws }: { ws: WorkspaceView }) {
           <li key={`${entry.at}-${i}`}>
             <time dateTime={new Date(entry.at).toISOString()}>{stamp.format(entry.at)}</time>
             <span class="k">
-              {entry.kind}
+              {HAPPENED[entry.kind]}
               {entry.via === ws.name ? (
                 " from this workspace"
               ) : entry.via ? (

@@ -114,7 +114,7 @@ export const api = {
   create: (body: CreateWorkspace) =>
     request<WorkspaceView>("POST", "/v1/workspaces", body, { "idempotency-key": crypto.randomUUID() }),
   setState: (ws: WorkspaceView, state: DesiredState) =>
-    request<WorkspaceView>("PUT", `/v1/workspaces/${ws.id}/desired-state`, { state, expected_revision: ws.revision } satisfies SetDesiredState),
+    request<WorkspaceView>("PUT", `/v1/workspaces/${ws.id}/desired-state`, { state } satisfies SetDesiredState),
   rename: (id: WorkspaceId, name: WorkspaceName) => request<WorkspaceView>("PUT", `/v1/workspaces/${id}/name`, { name } satisfies RenameWorkspace),
   label: (id: WorkspaceId, label: string | null) => request<WorkspaceView>("PUT", `/v1/workspaces/${id}/label`, { label } satisfies LabelWorkspace),
   seen: (id: WorkspaceId) => request<void>("POST", `/v1/workspaces/${id}/seen`),

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::idle::{self, Busy, IdleStep};
 use iglu_domain::lifecycle::{DesiredState, Phase};
@@ -72,8 +73,8 @@ pub async fn apply(app: &App, ws: &WorkspaceRecord, busy: Busy) -> Result<bool, 
         return Ok(false);
     };
     let (desired, kind) = match step {
-        IdleStep::Freeze => (DesiredState::Frozen, "idle-froze"),
-        IdleStep::Stop => (DesiredState::Stopped, "idle-stopped"),
+        IdleStep::Freeze => (DesiredState::Frozen, ActivityKind::IdleFroze),
+        IdleStep::Stop => (DesiredState::Stopped, ActivityKind::IdleStopped),
     };
     let (id, revision) = (ws.id, ws.revision);
     app.db
@@ -101,7 +102,7 @@ pub async fn thaw(app: &App, ws: &WorkspaceRecord, bound: Duration) -> bool {
             .call(move |tx| {
                 let set = db::set_desired(tx, id, desired, revision)?.is_some();
                 if set {
-                    db::add_activity(tx, Some(id), None, "thawed-on-open", "", now())?;
+                    db::add_activity(tx, Some(id), None, ActivityKind::ThawedOnOpen, "", now())?;
                 }
                 Ok(set)
             })
