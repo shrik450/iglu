@@ -162,7 +162,9 @@ iglu env add default github:you/iglu-env#default
 ```
 
 `iglu env build default` rebuilds it after you change the flake. New
-workspaces use the newest image; existing ones keep theirs.
+workspaces use the newest image; existing ones keep theirs. A build also
+unpacks the image onto the host's storage, so the first workspace made from
+it starts as quickly as the rest.
 
 An environment's flake pins its own iglu, whose guest tools hosts drive.
 Each image records the version of that interface, and a host refuses

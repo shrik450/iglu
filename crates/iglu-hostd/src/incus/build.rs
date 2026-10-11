@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use super::client::Incus;
+use super::client::{Incus, IncusError};
 use crate::config;
 
 /// `iglu.json` in the image output, written by the workspace module.
@@ -79,6 +79,13 @@ pub async fn build(
     let fingerprint = fingerprint(&metadata, &rootfs).await?;
     import(incus, settings, &fingerprint, &metadata, &rootfs).await?;
     record_interface(incus, &fingerprint, timeout).await?;
+    warm(
+        incus,
+        settings,
+        &fingerprint,
+        Duration::from_secs(build.timeout_secs),
+    )
+    .await?;
     Ok(BuiltImage {
         fingerprint,
         arch: manifest.arch,
@@ -212,6 +219,47 @@ async fn import(
                 "imported, but not under the expected fingerprint: {e}"
             ))
         })
+}
+
+/// Unpacks the image onto the workspaces' storage pool now, so the first
+/// workspace made from it doesn't wait for it: on a slow disk that takes
+/// minutes. Incus unpacks an image when the first instance is made from it
+/// and keeps the result for later ones, and that's the only way to ask for
+/// it, so a stopped instance is made and deleted. Its name isn't a
+/// workspace's, so nothing claims it.
+async fn warm(
+    incus: &Incus,
+    settings: &config::Incus,
+    fingerprint: &ImageFingerprint,
+    timeout: Duration,
+) -> Result<(), BuildError> {
+    let id = fingerprint.to_string();
+    let name = format!("iglu-warm-{}", &id[..16]);
+    let path = format!("/1.0/instances/{name}");
+    let failed = |e: IncusError| BuildError::Import(format!("unpacking the image: {e}"));
+    // One a build cut short left behind.
+    match incus.run(Method::DELETE, &path, None, timeout).await {
+        Ok(_) => {}
+        Err(error) if error.is_not_found() => {}
+        Err(error) => return Err(failed(error)),
+    }
+    let body = serde_json::json!({
+        "name": name,
+        "type": "container",
+        "source": { "type": "image", "fingerprint": id },
+        // The workspaces' profile, for their root disk's pool.
+        "profiles": [settings.profile],
+        "start": false,
+    });
+    incus
+        .run(Method::POST, "/1.0/instances", Some(&body), timeout)
+        .await
+        .map_err(failed)?;
+    incus
+        .run(Method::DELETE, &path, None, timeout)
+        .await
+        .map_err(failed)?;
+    Ok(())
 }
 
 /// The image property recording which guest-tools interface an image's

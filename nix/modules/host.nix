@@ -211,6 +211,11 @@ in
       script = ''
         incus storage show iglu >/dev/null 2>&1 ||
           incus storage create iglu btrfs source=${lib.escapeShellArg cfg.storage.source}
+        # Compressed, an unpacked image and the files workspaces write take
+        # about half the writes and the space, which on a slow disk is most
+        # of the time a first workspace from a new image waits. zstd's lowest
+        # level costs little CPU. Only what's written after it is compressed.
+        incus storage set iglu btrfs.mount_options=user_subvol_rm_allowed,compress=zstd:1
       '';
     };
 
