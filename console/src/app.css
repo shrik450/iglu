@@ -585,8 +585,9 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
    value, like the prefix, still shows: a tablet can have a keyboard. */
 @media (hover: none) and (pointer: coarse) {
   .search kbd, .pitem .h { display: none; }
-  /* A finger needs more than a mouse does to pick one column control. */
-  .col-ctl { gap: 4px; }
+  /* A finger needs more than a mouse does to pick one column control, and
+     can't hover to show one: hidden, it could still be tapped. */
+  .col-ctl { gap: 4px; opacity: 1; }
   .col-ctl button, .col-find button { min-width: 34px; min-height: 32px; display: inline-grid; place-items: center; }
 }
 @media (prefers-reduced-motion: reduce) {
