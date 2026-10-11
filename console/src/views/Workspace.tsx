@@ -165,7 +165,7 @@ function Main({ ws }: { ws: WorkspaceView }) {
   return (
     <div class="main">
       <Header ws={ws} />
-      {running ? <Strip ws={ws} /> : <div />}
+      {running ? <Strip ws={ws} /> : null}
       <div class="w-body">
         {running ? <Columns ws={ws} /> : <Resting ws={ws} />}
         {details.value ? <Details ws={ws} /> : null}

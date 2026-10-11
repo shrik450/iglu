@@ -245,7 +245,8 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .t-ws[aria-current="page"] .n { font-weight: 600; }
 .t-ws.needs .n { color: var(--waiting); }
 .t-ws.asleep .n { color: var(--muted); }
-.main { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; min-width: 0; min-height: 0; }
+/* A column of rows, as many as there are: the columns take what the rest leave. */
+.main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
 .keyrow { display: flex; gap: 5px; padding-bottom: env(safe-area-inset-bottom); }
 .keyrow button { flex: 1 1 0; min-width: 0; padding: 0; min-height: 42px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 600 13px/1 var(--mono); box-shadow: var(--lift); }
 .keyrow button:active { transform: translateY(1px); box-shadow: none; background: var(--sunk); }
@@ -294,7 +295,7 @@ form.add-menu { display: flex; flex-wrap: wrap; gap: 6px; width: 300px; }
 form.add-menu > :not(input, button) { flex-basis: 100%; margin: 0; }
 form.add-menu .about { font-size: 12px; line-height: 1.4; color: var(--muted); }
 form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; font: 13px/1.2 var(--mono); }
-.w-body { position: relative; min-height: 0; display: grid; }
+.w-body { position: relative; flex: 1 1 0; min-height: 0; display: grid; }
 .w-cols { position: relative; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; min-height: 0; overscroll-behavior-x: contain; padding-bottom: 6px; }
 /* Terminals are dark in both looks, so what's said on them uses Polar night's hues. */
 .col { --waiting: #ffc46b; --done: #7eedbd; --working: #8fd8ff; --error: #ff8f8f; --accent: #8fd8ff; --muted: var(--term-dim); --ink: var(--term-ink); --cw: .5; flex: 0 0 calc((100% + 10px) * var(--cw) - 10px); min-width: 0; display: flex; flex-direction: column; background: var(--term-bg); border: 1px solid var(--term-line); border-radius: 8px; overflow: hidden; scroll-snap-align: start; transition: border-color .15s; }
