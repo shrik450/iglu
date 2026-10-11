@@ -102,21 +102,28 @@ pub fn title(event: &HookEvent) -> Option<Summary> {
     }
 }
 
-/// What an event means for the session's attention state, or `None` when it
+/// What an event does to its conversation's thread.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Change {
+    Set(AttentionState, Summary),
+    /// The conversation is over, so its thread goes.
+    Ended,
+}
+
+/// What an event means for its conversation's thread, or `None` when it
 /// changes nothing.
 #[must_use]
-pub fn attention(event: &HookEvent) -> Option<(AttentionState, Summary)> {
+pub fn attention(event: &HookEvent) -> Option<Change> {
+    let set = |state, summary: &str| Some(Change::Set(state, Summary::sanitize(summary)));
     match event {
-        HookEvent::SessionStart => Some((AttentionState::Idle, Summary::sanitize(""))),
-        HookEvent::UserPromptSubmit { prompt } => {
-            Some((AttentionState::Working, Summary::sanitize(prompt)))
-        }
+        HookEvent::SessionStart => set(AttentionState::Idle, ""),
+        HookEvent::UserPromptSubmit { prompt } => set(AttentionState::Working, prompt),
         HookEvent::PreToolUse(tool) | HookEvent::PostToolUse(tool) => {
             let summary = match &tool.tool_input.description {
                 Some(description) => format!("{}: {description}", tool.tool_name),
                 None => tool.tool_name.clone(),
             };
-            Some((AttentionState::Working, Summary::sanitize(&summary)))
+            set(AttentionState::Working, &summary)
         }
         HookEvent::Notification {
             message,
@@ -130,17 +137,14 @@ pub fn attention(event: &HookEvent) -> Option<(AttentionState, Summary)> {
                 } else {
                     message
                 };
-                Some((AttentionState::Waiting, Summary::sanitize(message)))
+                set(AttentionState::Waiting, message)
             }
             NotificationType::IdlePrompt | NotificationType::AuthSuccess => None,
         },
         HookEvent::Stop {
             last_assistant_message,
-        } => Some((
-            AttentionState::Done,
-            Summary::sanitize(last_assistant_message),
-        )),
-        HookEvent::SessionEnd => Some((AttentionState::Exited, Summary::sanitize(""))),
+        } => set(AttentionState::Done, last_assistant_message),
+        HookEvent::SessionEnd => Some(Change::Ended),
         HookEvent::Other => None,
     }
 }
@@ -162,11 +166,14 @@ mod tests {
 
     fn state_of(input: &str) -> Option<(AttentionState, String)> {
         let event = parse(input).expect("a real payload parses");
-        attention(&event).map(|(state, summary)| (state, summary.as_str().to_owned()))
+        match attention(&event)? {
+            Change::Set(state, summary) => Some((state, summary.as_str().to_owned())),
+            Change::Ended => None,
+        }
     }
 
     #[test]
-    fn a_turn_goes_idle_working_done_exited() {
+    fn a_turn_goes_idle_working_done_and_ends() {
         assert_eq!(
             state_of(SESSION_START),
             Some((AttentionState::Idle, String::new()))
@@ -188,10 +195,8 @@ mod tests {
                 "The command ran and printed probe.".into()
             ))
         );
-        assert_eq!(
-            state_of(SESSION_END),
-            Some((AttentionState::Exited, String::new()))
-        );
+        let end = parse(SESSION_END).expect("a real payload parses");
+        assert_eq!(attention(&end), Some(Change::Ended));
     }
 
     #[test]

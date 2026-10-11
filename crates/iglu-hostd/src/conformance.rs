@@ -10,7 +10,7 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use iglu_domain::attention::AttentionState;
+use iglu_domain::attention::{AttentionState, SessionStatus};
 use iglu_domain::capacity;
 use iglu_domain::column::{Arg, Argv};
 use iglu_domain::env::{BuiltImage, EnvSource, ImageFingerprint};
@@ -137,7 +137,10 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     );
     outcomes.push(
         suite
-            .check("attention reaches the inventory", Suite::attention)
+            .check(
+                "threads reach the inventory, go with their session and outlast a freeze",
+                Suite::attention,
+            )
             .await,
     );
     outcomes.push(
@@ -983,6 +986,8 @@ impl<'a, R: Runtime> Suite<'a, R> {
         }
     }
 
+    /// A thread shows in the inventory; closing its session drops it, and a
+    /// session opened again under the name starts with none.
     async fn attention(&self, workspace: WorkspaceId) -> Checked {
         self.running_workspace(workspace).await?;
         self.shell(
@@ -993,23 +998,74 @@ impl<'a, R: Runtime> Suite<'a, R> {
         )
         .await?;
         let session: SessionName = "agent".parse().expect("a valid session name");
+        self.until_reported(workspace, "the waiting thread", |statuses| {
+            statuses.iter().any(|status| {
+                status.session == session
+                    && status.state == AttentionState::Waiting
+                    && status.summary.as_str() == "conformance-question"
+            })
+        })
+        .await?;
+        self.host
+            .close_terminal(workspace, &session)
+            .await
+            .map_err(|e| e.to_string())?;
+        let gone = |statuses: &[SessionStatus]| statuses.iter().all(|s| s.session != session);
+        self.until_reported(workspace, "no thread after closing", gone)
+            .await?;
+        self.shell(workspace, "agent", "echo again-$((6*7))", "again-42")
+            .await?;
+        self.until_reported(workspace, "no thread in the new session", gone)
+            .await?;
+        // A frozen guest can't be read, which isn't the same as having no
+        // threads: they're there again once it thaws.
+        self.shell(
+            workspace,
+            "agent",
+            "iglu-status set done held-over && echo held-$((6*7))",
+            "held-42",
+        )
+        .await?;
+        let held = |statuses: &[SessionStatus]| {
+            statuses
+                .iter()
+                .any(|s| s.session == session && s.summary.as_str() == "held-over")
+        };
+        self.until_reported(workspace, "the done thread", held)
+            .await?;
+        self.perform(workspace, Command::Freeze).await?;
+        let inventory = self.host.inventory().await.map_err(|e| e.to_string())?;
+        let frozen = inventory
+            .iter()
+            .find(|report| report.workspace == workspace);
+        ensure(
+            frozen.is_some_and(|report| report.sessions.is_none()),
+            || format!("a frozen guest's threads read as known: {frozen:?}"),
+        )?;
+        self.perform(workspace, Command::Thaw).await?;
+        self.until_reported(workspace, "the done thread after thawing", held)
+            .await
+    }
+
+    /// Waits until the host reads the workspace's threads and they pass.
+    async fn until_reported(
+        &self,
+        workspace: WorkspaceId,
+        what: &str,
+        passes: impl Fn(&[SessionStatus]) -> bool,
+    ) -> Checked {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let inventory = self.host.inventory().await.map_err(|e| e.to_string())?;
-            let reported = inventory
+            let read = inventory
                 .iter()
-                .filter(|report| report.workspace == workspace)
-                .flat_map(|report| &report.sessions)
-                .any(|status| {
-                    status.session == session
-                        && status.state == AttentionState::Waiting
-                        && status.summary.as_str() == "conformance-question"
-                });
-            if reported {
+                .find(|report| report.workspace == workspace)
+                .and_then(|report| report.sessions.as_deref());
+            if read.is_some_and(&passes) {
                 return Ok(());
             }
             if Instant::now() > deadline {
-                return Err(format!("the inventory never showed it: {inventory:?}"));
+                return Err(format!("never {what}: {inventory:?}"));
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -1031,7 +1087,8 @@ impl<'a, R: Runtime> Suite<'a, R> {
             inventory
                 .iter()
                 .filter(|report| report.workspace == workspace)
-                .flat_map(|report| &report.sessions)
+                .filter_map(|report| report.sessions.as_ref())
+                .flatten()
                 .any(|status| {
                     status.session == session
                         && status.state == AttentionState::Working

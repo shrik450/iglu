@@ -120,8 +120,10 @@ pub struct InstanceReport {
     pub instance: Instance,
     /// Resident memory, when the instance is running or frozen.
     pub memory: Option<Bytes>,
-    /// Latest status per terminal session, as the guest reported it.
-    pub sessions: Vec<SessionStatus>,
+    /// Latest status per terminal session, as the guest reported it; `None`
+    /// when the host couldn't read them, as from a guest frozen or stopped,
+    /// which says nothing about whether they changed.
+    pub sessions: Option<Vec<SessionStatus>>,
 }
 
 /// Limits applied to a workspace's instance.

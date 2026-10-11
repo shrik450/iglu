@@ -228,7 +228,8 @@ async fn reconcile_host(
         let busy = idle::busy(
             report
                 .into_iter()
-                .flat_map(|r| &r.sessions)
+                .filter_map(|r| r.sessions.as_ref())
+                .flatten()
                 .map(|s| s.state),
         );
         if crate::idle::apply(app, &ws, busy).await? {
@@ -309,7 +310,8 @@ async fn observe(
     asked_at: Timestamp,
 ) -> anyhow::Result<(Option<PrincipalRecord>, bool)> {
     let memory = report.and_then(|r| r.memory);
-    let sessions = report.map(|r| r.sessions.clone()).unwrap_or_default();
+    // Threads the host couldn't read are left as they were.
+    let sessions = report.and_then(|r| r.sessions.clone());
     let owner = ws.owner;
     let id = ws.id;
     let observed_changed = ws.observed != Some(instance) || ws.memory != memory;
@@ -324,7 +326,10 @@ async fn observe(
             if clear_offline {
                 db::set_condition(tx, id, None)?;
             }
-            let attention_changed = db::sync_attention(tx, id, &sessions)?;
+            let attention_changed = match &sessions {
+                Some(sessions) => db::sync_attention(tx, id, sessions)?,
+                None => false,
+            };
             Ok((db::principal(tx, owner)?, attention_changed))
         })
         .await?;

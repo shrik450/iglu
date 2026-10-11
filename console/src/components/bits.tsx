@@ -9,7 +9,7 @@ import type { Phase } from "../generated/Phase.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { unreachable } from "../state/unsaved.ts";
 
-type GlyphKind = "waiting" | "done" | "working" | "idle" | "exited" | "frozen" | "asleep" | "build" | "trouble";
+type GlyphKind = "waiting" | "done" | "working" | "idle" | "frozen" | "asleep" | "build" | "trouble";
 
 // A spinner turns about its own centre; a text glyph's box isn't centred on its ink, so it wobbles.
 const SPINNER = (
@@ -24,7 +24,6 @@ const GLYPH: Record<GlyphKind, ComponentChildren> = {
   done: "✓",
   working: SPINNER,
   idle: "○",
-  exited: "·",
   frozen: "❄",
   asleep: "■",
   build: "△",
@@ -146,8 +145,6 @@ export function attentionText(attention: AttentionView): { tone: string; text: s
       return { tone: "s-working", text: "working" };
     case "idle":
       return { tone: "", text: "idle" };
-    case "exited":
-      return { tone: "", text: "exited" };
   }
 }
 

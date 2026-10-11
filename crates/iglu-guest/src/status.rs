@@ -190,22 +190,4 @@ mod tests {
         let statuses = update(statuses, shell.clone(), two, Report::Clear);
         assert!(statuses.is_empty(), "a session without threads goes");
     }
-
-    #[test]
-    fn old_exited_threads_are_pruned() {
-        let shell: SessionName = "claude".parse().expect("valid");
-        let statuses = (0..9).fold(Statuses::new(), |statuses, n| {
-            let thread: ThreadKey = format!("t{n}").parse().expect("valid");
-            update(
-                statuses,
-                shell.clone(),
-                thread,
-                set(AttentionState::Exited, "", n),
-            )
-        });
-        assert_eq!(
-            statuses.get(&shell).map(BTreeMap::len),
-            Some(attention::KEPT_EXITED)
-        );
-    }
 }

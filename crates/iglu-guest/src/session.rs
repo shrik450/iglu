@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::Dirs;
 use crate::provision::WorkspaceRecord;
-use crate::status::write_atomic;
+use crate::status::{self, write_atomic};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Info {
@@ -94,10 +94,21 @@ pub fn list(dirs: &Dirs) -> std::io::Result<Vec<Info>> {
 /// When zmx can't run or reports a failure.
 pub fn close(dirs: &Dirs, name: &SessionName) -> std::io::Result<()> {
     let status = zmx(dirs).arg("kill").arg(name.as_str()).status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other("zmx kill failed"))
+    if !status.success() {
+        return Err(std::io::Error::other("zmx kill failed"));
+    }
+    forget(dirs, name);
+    Ok(())
+}
+
+/// Drops what a session's threads reported: it's gone, and a session opened
+/// later under its name is another one.
+fn forget(dirs: &Dirs, name: &SessionName) {
+    if let Err(error) = status::modify(dirs, |mut statuses| {
+        statuses.remove(name);
+        statuses
+    }) {
+        eprintln!("forgetting {name}'s threads: {error}");
     }
 }
 
@@ -280,6 +291,7 @@ fn start(dirs: &Dirs, spec: &OpenSpec) -> std::io::Result<()> {
     const CLEARED: &[u8] = b"\x1b[2J\x1b[H";
     const DETACH_KEY: u8 = 0x1c;
 
+    forget(dirs, &spec.name);
     let controller = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
     grantpt(&controller)?;
     unlockpt(&controller)?;

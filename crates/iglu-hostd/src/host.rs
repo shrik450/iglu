@@ -308,12 +308,14 @@ impl<R: Runtime> Host<R> {
 
     async fn report(&self, observed: &Observed) -> InstanceReport {
         let instance = rules::instance(observed, self.facts(observed).await);
+        // A running guest without the file has reported nothing this boot.
         let sessions = match rules::running(observed) {
             Some(guest) => match self.runtime.read(&guest, GuestFile::Status).await {
-                Ok(Some(bytes)) => guest::parse_statuses(&bytes),
-                Ok(None) | Err(_) => Vec::new(),
+                Ok(Some(bytes)) => Some(guest::parse_statuses(&bytes)),
+                Ok(None) => Some(Vec::new()),
+                Err(_) => None,
             },
-            None => Vec::new(),
+            None => None,
         };
         InstanceReport {
             workspace: observed.name.workspace(),

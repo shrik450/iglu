@@ -74,7 +74,7 @@ pub enum Busy {
 pub fn busy(threads: impl IntoIterator<Item = AttentionState>) -> Busy {
     let pressing = threads.into_iter().any(|state| match state {
         AttentionState::Working | AttentionState::Waiting => true,
-        AttentionState::Done | AttentionState::Idle | AttentionState::Exited => false,
+        AttentionState::Done | AttentionState::Idle => false,
     });
     if pressing { Busy::Yes } else { Busy::No }
 }
@@ -187,14 +187,7 @@ mod tests {
             Busy::Yes
         );
         assert_eq!(busy([AttentionState::Working]), Busy::Yes);
-        assert_eq!(
-            busy([
-                AttentionState::Done,
-                AttentionState::Idle,
-                AttentionState::Exited
-            ]),
-            Busy::No
-        );
+        assert_eq!(busy([AttentionState::Done, AttentionState::Idle]), Busy::No);
         assert_eq!(busy([]), Busy::No);
     }
 

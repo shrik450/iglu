@@ -96,7 +96,7 @@ def stops() -> list[Stop]:
         ("fix-login-redirect", "an agent waiting for you"),
         ("refactor-billing-and-invoice-generation-pipeline", "a working agent and a long name"),
         ("docs-typos", "an agent that's done"),
-        ("agent-crashed", "an agent that exited with an error"),
+        ("agent-crashed", "an agent that failed, its thread gone and its error in the shell"),
         ("unsaved-work", "uncommitted and unpushed work"),
         ("preview-server", "a dev server in a shell, published as a preview"),
         ("notes-frozen", "frozen"),

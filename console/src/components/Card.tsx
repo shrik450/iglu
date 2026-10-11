@@ -29,7 +29,7 @@ function Threads({ ws }: { ws: WorkspaceView }) {
         return (
           <div class="tl" key={`${a.session}/${a.thread}`}>
             <Glyph kind={attentionGlyph(a)} />
-            <span>{a.summary || a.title || a.session}</span>
+            <span>{a.summary || a.title || `in ${a.session}`}</span>
             <span class={`state ${state.tone}`}>{state.text}</span>
           </div>
         );
