@@ -38,7 +38,7 @@ function Topbar() {
         </a>
         {count ? (
           <button type="button" class="needs-badge" title={`Next workspace that needs you (${keysFor("next-waiting")})`} aria-label={`${count} ${needYou(count)}; go to the next`} onClick={nextWaiting}>
-            <span aria-hidden="true">●</span>
+            <Glyph kind="waiting" />
             <span>
               {count}
               <span class="wide"> {needYou(count)}</span>

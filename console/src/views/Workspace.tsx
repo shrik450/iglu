@@ -110,7 +110,15 @@ function Tree({ current }: { current: WorkspaceView | null }) {
                   <span class="label" translate={false}>
                     {group.label}
                   </span>
-                  <span class={`cnt${need ? " hot" : ""}`}>{need ? `● ${need}` : group.workspaces.length}</span>
+                  <span class={`cnt${need ? " hot" : ""}`}>
+                    {need ? (
+                      <>
+                        <Glyph kind="waiting" /> {need}
+                      </>
+                    ) : (
+                      group.workspaces.length
+                    )}
+                  </span>
                 </div>
                 {/* A folded project still shows the open workspace, and a phone, with no
                     projects to unfold, shows them all. */}
@@ -282,7 +290,7 @@ function Header({ ws }: { ws: WorkspaceView }) {
         <div class="w-actions">
           {ws.phase === "running" ? (
             <button type="button" class="btn icon" aria-label="Freeze" title={`Freeze (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
-              ❄
+              <Icon name="snow" />
             </button>
           ) : ws.phase === "frozen" ? (
             <button type="button" class="btn" title={`Thaw (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
