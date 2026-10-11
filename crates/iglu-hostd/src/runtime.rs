@@ -23,7 +23,7 @@ use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_domain::time::Timestamp;
-use iglu_proto::CreateSpec;
+use iglu_proto::{CreateSpec, RebuildSpec};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
@@ -83,8 +83,18 @@ pub trait Runtime: Send + Sync + 'static {
     fn stop(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
     /// Removes a stopped instance and everything the runtime keeps for it,
-    /// but for its owner's kept directory.
+    /// its home included, but for its owner's kept directory.
     fn delete(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
+
+    /// Replaces a stopped instance's root with `spec.image`, keeping its
+    /// home, and records the image's interface on it. Done already when its
+    /// root is from that image. Refused when the image's account isn't the
+    /// instance's, or the instance has no home of its own to keep.
+    fn rebuild(
+        &self,
+        name: InstanceName,
+        spec: &RebuildSpec,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
     /// Records on the instance that its repository is in place, so the
     /// record survives every iglu process restarting.
@@ -182,6 +192,8 @@ pub struct Observed {
     /// The guest-tools interface recorded on the instance when it was
     /// created, if any: an instance from before it was recorded says nothing.
     pub guest_interface: Option<Interface>,
+    /// The image its root is from, when the runtime records it.
+    pub image: Option<ImageFingerprint>,
     /// Resident memory, when the runtime measures it.
     pub memory: Option<capacity::Bytes>,
 }
@@ -303,6 +315,9 @@ pub enum RuntimeError {
     ImageMissing,
     #[error(transparent)]
     ImageIncompatible(#[from] iglu_domain::guest::Incompatible),
+    /// The runtime won't do it, for a reason the owner can act on.
+    #[error("{0}")]
+    Refused(String),
     #[error("{0}")]
     Failed(String),
 }

@@ -35,7 +35,7 @@ use iglu_hostd::runtime::{
     BuildFailure, Claim, Guest, GuestFile, MAX_GUEST_FILE, Observed, Output, Ownership, Runtime,
     RuntimeError, StoredImage, Terminal, TerminalInput,
 };
-use iglu_proto::CreateSpec;
+use iglu_proto::{CreateSpec, RebuildSpec};
 use rustix::process::Signal;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -145,9 +145,11 @@ fn system_gitconfig(tools: &Path, localhost_ca: Option<&Path>) -> String {
     }
 }
 
-/// A local environment's fingerprint: the same source is the same image.
+/// A local environment's fingerprint: the same source with the same guest
+/// tools is the same image, and a build after the tools' interface changed
+/// is a new one, which workspaces update to.
 fn fingerprint(source: &EnvSource) -> ImageFingerprint {
-    let digest = Sha256::digest(format!("iglu-devhost:{source}"));
+    let digest = Sha256::digest(format!("iglu-devhost:{}:{source}", guest_tools::INTERFACE));
     hex::encode(digest)
         .parse()
         .expect("a SHA-256 in hex is a fingerprint")
@@ -425,6 +427,7 @@ impl LocalRuntime {
             },
             state: store::state(boots, self.machine, remains),
             guest_interface: record.guest_interface,
+            image: Some(record.image),
             memory: None,
         })
     }
@@ -729,6 +732,34 @@ impl Runtime for LocalRuntime {
         self.ensure_exists(name).await?;
         let mut record = self.record(name).await?;
         record.provisioned = true;
+        store::write_json(&self.layout.record(name), &record)
+            .await
+            .map_err(RuntimeError::failed)
+    }
+
+    /// A local workspace's home is a directory of its own and its tools are
+    /// the machine's, so moving it to another image is only a new record.
+    async fn rebuild(&self, name: InstanceName, spec: &RebuildSpec) -> Result<(), RuntimeError> {
+        self.ensure_exists(name).await?;
+        let image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
+            Ok(image) => image,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(RuntimeError::ImageMissing);
+            }
+            Err(error) => return Err(RuntimeError::failed(error)),
+        };
+        guest_tools::compatible(image.guest_interface)?;
+        let mut record = self.record(name).await?;
+        // Its home is rewritten to its own directory; the account is the rest.
+        if (&record.user.name, record.user.uid, record.user.gid)
+            != (&spec.user.name, spec.user.uid, spec.user.gid)
+        {
+            return Err(RuntimeError::Refused(
+                "the environment's newest build has another account than this workspace; recreate it to use the build".into(),
+            ));
+        }
+        record.image = spec.image.clone();
+        record.guest_interface = image.guest_interface;
         store::write_json(&self.layout.record(name), &record)
             .await
             .map_err(RuntimeError::failed)

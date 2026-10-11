@@ -163,7 +163,16 @@ iglu env add default github:you/iglu-env#default
 ```
 
 `iglu env build default` rebuilds it after you change the flake. New
-workspaces use the newest image; existing ones keep theirs. Hosts remove
+workspaces use the newest image; existing ones keep theirs until you update
+them, with `iglu update <workspace>` or from the console, which offers it
+once a newer image is ready. Updating stops the workspace, rebuilds its
+system from the new image, and starts it again. Its home directory is a
+volume of its own, `iglu-home-<workspace id>` in the `iglu` pool, and stays,
+with your kept directory; what was running ends, and files outside the home,
+such as `/tmp`, `/var` and anything installed by hand, start over. An image
+whose account (its name, uid, gid or home) differs can't be updated to: the
+home's files would be someone else's. Deleting a workspace deletes its home.
+Hosts remove
 an image once no environment's newest build and no workspace uses it, and
 it's more than an hour old. A build also
 unpacks the image onto the host's storage, so the first workspace made from
@@ -173,8 +182,8 @@ An environment's flake pins its own iglu, whose guest tools hosts drive.
 Each image records the version of that interface, and a host refuses
 images, and workspaces created from them, that speak another one. After
 upgrading your hosts, run `nix flake update iglu` in each environment's
-flake, push it, and rebuild the environment; recreate workspaces made from
-the old image. They can still be stopped and deleted, but not started.
+flake, push it, rebuild the environment, and update its workspaces. Until
+then they can be stopped, deleted and updated, but not started.
 
 The flake can be private. Builds use your Git credential secrets (see
 [Using it](#using-it)) as Nix access tokens, so the token that lets a

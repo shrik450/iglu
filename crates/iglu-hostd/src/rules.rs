@@ -8,7 +8,7 @@ use iglu_domain::guest as guest_tools;
 use iglu_domain::lifecycle::{
     Columns, Instance, Present, Readiness, Running, Runtime, SecretsGeneration,
 };
-use iglu_proto::{CommandError, CreateSpec, ErrorCode};
+use iglu_proto::{CommandError, CreateSpec, ErrorCode, RebuildSpec};
 
 use crate::runtime::{Claim, Guest, Observed, Ownership, State, StoredImage};
 use iglu_domain::env::ImageFingerprint;
@@ -25,6 +25,7 @@ pub enum Step<'a> {
     /// Ends every process, whether the instance is running or frozen.
     Stop,
     Delete,
+    Rebuild(&'a RebuildSpec),
 }
 
 fn not_ours(ownership: &Ownership) -> CommandError {
@@ -56,7 +57,9 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
             return match command {
                 Step::Create(_) => Ok(vec![command]),
                 Step::Delete => Ok(vec![]),
-                Step::Start | Step::Freeze | Step::Thaw | Step::Stop => Err(missing()),
+                Step::Start | Step::Freeze | Step::Thaw | Step::Stop | Step::Rebuild(_) => {
+                    Err(missing())
+                }
             };
         }
         Some(Err(ownership)) => return Err(not_ours(ownership)),
@@ -96,6 +99,12 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
             State::Stopped => Ok(vec![Step::Delete]),
             State::Running { .. } | State::Frozen | State::Transitioning | State::Failed => {
                 Ok(vec![Step::Stop, Step::Delete])
+            }
+        },
+        Step::Rebuild(spec) => match state {
+            State::Stopped => Ok(vec![Step::Rebuild(spec)]),
+            State::Running { .. } | State::Frozen | State::Transitioning | State::Failed => {
+                Ok(vec![Step::Stop, Step::Rebuild(spec)])
             }
         },
     }
@@ -140,7 +149,7 @@ fn speaks_this_hosts_interface(observed: &Observed) -> Result<(), CommandError> 
             ErrorCode::ImageIncompatible,
             format!(
                 "this workspace's image was built with a different iglu ({}) than this host's \
-                 (interface {}): rebuild its environment and recreate the workspace",
+                 (interface {}): rebuild its environment with this iglu, then update the workspace, which keeps its home",
                 incompatible.found,
                 guest_tools::INTERFACE
             ),
@@ -292,6 +301,7 @@ mod tests {
             .expect("valid user"),
             provisioning: Provisioning::Pending,
             guest_interface: Some(guest_tools::INTERFACE),
+            image: None,
             state,
             memory: None,
         }
@@ -378,6 +388,29 @@ mod tests {
     }
 
     #[test]
+    fn a_rebuild_stops_first_and_needs_an_instance() {
+        let spec = RebuildSpec {
+            image: "a".repeat(64).parse().expect("a fingerprint"),
+            user: observed(State::Stopped).user,
+        };
+        assert_eq!(
+            steps(Step::Rebuild(&spec), State::Stopped),
+            Ok(vec![Step::Rebuild(&spec)])
+        );
+        for state in [RUNNING, State::Frozen, State::Transitioning, State::Failed] {
+            assert_eq!(
+                steps(Step::Rebuild(&spec), state),
+                Ok(vec![Step::Stop, Step::Rebuild(&spec)]),
+                "{state:?}"
+            );
+        }
+        assert_eq!(
+            decide(Step::Rebuild(&spec), None).map_err(|e| e.code),
+            Err(ErrorCode::NotFound)
+        );
+    }
+
+    #[test]
     fn nothing_acts_on_missing_or_foreign_instances() {
         for command in [Step::Start, Step::Freeze, Step::Thaw, Step::Stop] {
             assert_eq!(
@@ -412,7 +445,7 @@ mod tests {
     fn an_instance_from_another_iglu_can_be_stopped_but_not_started_or_used() {
         let older = guest_tools::Interface::new(guest_tools::INTERFACE.get() - 1);
         let refused = |result: Result<(), CommandError>| {
-            result.map_err(|e| (e.code, e.message.contains("recreate")))
+            result.map_err(|e| (e.code, e.message.contains("update the workspace")))
         };
         for recorded in [Some(older), None] {
             let instance = |state| {
@@ -424,6 +457,16 @@ mod tests {
             assert_eq!(
                 refused(decide(Step::Start, Some(&instance(State::Stopped))).map(|_| ())),
                 Err((ErrorCode::ImageIncompatible, true)),
+                "{recorded:?}"
+            );
+            // Updating is how it gets tools this host speaks.
+            let spec = RebuildSpec {
+                image: "a".repeat(64).parse().expect("a fingerprint"),
+                user: observed(State::Stopped).user,
+            };
+            assert_eq!(
+                decide(Step::Rebuild(&spec), Some(&instance(State::Stopped))),
+                Ok(vec![Step::Rebuild(&spec)]),
                 "{recorded:?}"
             );
             assert_eq!(

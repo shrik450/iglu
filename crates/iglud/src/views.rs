@@ -46,7 +46,11 @@ pub fn workspace_view(
     let columns = db::columns(tx, ws.id)?;
     let access = access(&db::grants(tx, ws.id)?);
     let image = db::revision_image(tx, ws.env_revision)?;
-    let browser = image.is_some_and(|image| image.browser);
+    let browser = image.as_ref().is_some_and(|image| image.browser);
+    let newer_build = match (&image, db::newest_image_like(tx, ws.env_revision)?) {
+        (Some(on), Some(newest)) => on.fingerprint != newest.fingerprint,
+        _ => false,
+    };
     let environment = db::environment_name_of_revision(tx, ws.env_revision)?.unwrap_or_else(|| {
         "unknown"
             .parse::<EnvName>()
@@ -98,6 +102,7 @@ pub fn workspace_view(
         },
         columns,
         browser,
+        newer_build,
         routes: routes
             .iter()
             .map(|route| route_view(config, route))

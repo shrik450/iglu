@@ -58,7 +58,12 @@ columns: Array<ColumnSpec>,
 /**
  * Whether its image has a browser, for a browser column.
  */
-browser: boolean, routes: Array<RouteView>, 
+browser: boolean, 
+/**
+ * Whether its environment's newest build is of another image than the
+ * one it's on, which updating moves it to, keeping its home.
+ */
+newer_build: boolean, routes: Array<RouteView>, 
 /**
  * What it may do from inside, through the `iglu` command, to itself
  * and to its owner's other workspaces.

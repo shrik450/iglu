@@ -50,10 +50,14 @@ pub enum ActivityKind {
     ColumnAdded,
     ColumnRestarted,
     ColumnClosed,
+    /// Asked to move to its environment's newest build; the detail names it.
+    UpdateAsked,
+    /// Its root disk was rebuilt from its new image, its home kept.
+    Rebuilt,
 }
 
 impl ActivityKind {
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 29] = [
         Self::Requested,
         Self::StateSet,
         Self::Created,
@@ -81,6 +85,8 @@ impl ActivityKind {
         Self::ColumnAdded,
         Self::ColumnRestarted,
         Self::ColumnClosed,
+        Self::UpdateAsked,
+        Self::Rebuilt,
     ];
 
     #[must_use]
@@ -113,6 +119,8 @@ impl ActivityKind {
             Self::ColumnAdded => "column-added",
             Self::ColumnRestarted => "column-restarted",
             Self::ColumnClosed => "column-closed",
+            Self::UpdateAsked => "update-asked",
+            Self::Rebuilt => "rebuilt",
         }
     }
 }

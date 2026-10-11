@@ -31,12 +31,14 @@ fn report(outcomes: &[Outcome]) -> bool {
 #[tokio::main]
 async fn main() -> anyhow::Result<ExitCode> {
     tracing_subscriber::fmt().init();
-    let usage = "usage: iglu-hostd-conformance --config <path> --source <flake>#<attr>";
+    let usage = "usage: iglu-hostd-conformance --config <path> --source <flake>#<attr> --next <flake>#<attr>";
     let config: Config =
         iglu_hostd::config::load(&PathBuf::from(flag("--config").context(usage)?))?;
     let source: EnvSource = flag("--source").context(usage)?.parse()?;
+    let next: EnvSource = flag("--next").context(usage)?.parse()?;
     let fixture = Fixture {
         source,
+        next,
         boot_timeout: Duration::from_secs(300),
     };
 

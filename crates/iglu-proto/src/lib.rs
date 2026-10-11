@@ -118,6 +118,8 @@ pub struct InstanceReport {
     /// The owner recorded on the instance when it was created.
     pub owner: PrincipalId,
     pub instance: Instance,
+    /// The image its root disk is from, when the runtime says.
+    pub image: Option<ImageFingerprint>,
     /// Resident memory, when the instance is running or frozen.
     pub memory: Option<Bytes>,
     /// Latest status per terminal session, as the guest reported it; `None`
@@ -177,6 +179,16 @@ pub enum Command {
     Thaw,
     Stop,
     Delete,
+    /// Replaces the stopped instance's root disk with `image`, keeping its
+    /// home. Refused when the image's account isn't the instance's, which
+    /// would leave its home's files someone else's.
+    Rebuild(RebuildSpec),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebuildSpec {
+    pub image: ImageFingerprint,
+    pub user: GuestUser,
 }
 
 /// A failed command, classified so the control plane can decide what to do.

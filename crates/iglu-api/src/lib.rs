@@ -77,6 +77,9 @@ pub struct WorkspaceView {
     pub columns: Vec<ColumnSpec>,
     /// Whether its image has a browser, for a browser column.
     pub browser: bool,
+    /// Whether its environment's newest build is of another image than the
+    /// one it's on, which updating moves it to, keeping its home.
+    pub newer_build: bool,
     pub routes: Vec<RouteView>,
     /// What it may do from inside, through the `iglu` command, to itself
     /// and to its owner's other workspaces.

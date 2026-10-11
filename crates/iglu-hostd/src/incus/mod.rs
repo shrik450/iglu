@@ -31,7 +31,7 @@ use iglu_domain::id::{InstanceName, PrincipalId};
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
-use iglu_proto::CreateSpec;
+use iglu_proto::{CreateSpec, RebuildSpec};
 use serde_json::{Value, json};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
@@ -47,6 +47,15 @@ const CHANNEL_DEVICE: &str = "iglu-channel";
 
 /// The disk device that is the owner's kept directory.
 const KEPT_DEVICE: &str = "iglu-kept";
+
+/// The disk device that is the workspace account's home: a volume of its
+/// own, so rebuilding the root from a newer image keeps it.
+const HOME_DEVICE: &str = "iglu-home";
+
+/// The volume that holds a workspace's home.
+fn home_volume(name: InstanceName) -> String {
+    format!("iglu-home-{}", name.workspace().as_uuid().simple())
+}
 
 /// The volume that holds a person's kept directory on this host. Its files
 /// belong to the workspace account's uid, so an environment whose account
@@ -127,11 +136,16 @@ impl IncusRuntime {
         })
     }
 
-    /// Makes the person's kept volume unless it's there. It's shifted, so
-    /// every one of their instances, each with an idmap of its own, sees its
-    /// files as the workspace account's. hostd never removes one.
+    fn volumes(&self) -> String {
+        format!("/1.0/storage-pools/{}/volumes/custom", self.settings.pool)
+    }
+
+    /// Makes a volume for the workspace account's files unless it's there.
+    /// It's shifted, so every instance it's attached to, each with an idmap
+    /// of its own, sees its files as the account's. A person's kept volume
+    /// is never removed; a workspace's home goes with the workspace.
     async fn keep(&self, volume: &str, user: &GuestUser) -> Result<(), RuntimeError> {
-        let volumes = format!("/1.0/storage-pools/{}/volumes/custom", self.settings.pool);
+        let volumes = self.volumes();
         let path = format!("{volumes}/{volume}");
         match self.incus.get::<Value>(&path).await {
             Ok(_) => return Ok(()),
@@ -159,7 +173,8 @@ impl IncusRuntime {
             .await
         {
             Ok(_) => Ok(()),
-            // Another of the person's workspaces made it first.
+            // Another of the person's workspaces made it first, or an
+            // earlier try at this one did.
             Err(_) if self.incus.get::<Value>(&path).await.is_ok() => Ok(()),
             Err(error) => Err(failed(error)),
         }
@@ -225,6 +240,8 @@ impl Runtime for IncusRuntime {
         let guest_user = serde_json::to_string(&spec.user).map_err(RuntimeError::failed)?;
         let kept = kept_volume(spec.owner, &spec.user);
         self.keep(&kept, &spec.user).await?;
+        let home = home_volume(name);
+        self.keep(&home, &spec.user).await?;
         // The instance's end of its channel, which only the workspace user
         // can open; the host's end is hostd's listener for this instance.
         let channel = json!({
@@ -263,6 +280,12 @@ impl Runtime for IncusRuntime {
                     "pool": self.settings.pool,
                     "source": kept,
                     "path": guest_tools::INSTANCE_KEPT,
+                },
+                HOME_DEVICE: {
+                    "type": "disk",
+                    "pool": self.settings.pool,
+                    "source": home,
+                    "path": spec.user.home.to_string(),
                 },
             },
         });
@@ -317,7 +340,32 @@ impl Runtime for IncusRuntime {
         Ok(())
     }
 
+    /// Detaches and removes the home first: a volume can't go while it's
+    /// attached, and the instance staying until last means a delete cut
+    /// short is tried again, never leaving a home with nothing to own it.
     async fn delete(&self, name: InstanceName) -> Result<(), RuntimeError> {
+        self.incus
+            .update_instance(
+                name,
+                |instance| {
+                    if let Some(devices) = instance["devices"].as_object_mut() {
+                        devices.remove(HOME_DEVICE);
+                    }
+                },
+                self.timeouts.operation(),
+            )
+            .await
+            .map_err(failed)?;
+        let home = format!("{}/{}", self.volumes(), home_volume(name));
+        match self
+            .incus
+            .run(Method::DELETE, &home, None, self.timeouts.operation())
+            .await
+        {
+            Ok(_) => {}
+            Err(error) if error.is_not_found() => {}
+            Err(error) => return Err(failed(error)),
+        }
         self.incus
             .run(
                 Method::DELETE,
@@ -329,6 +377,64 @@ impl Runtime for IncusRuntime {
             .map_err(failed)?;
         tunnel::remove_sockets(&self.sockets, name).await;
         Ok(())
+    }
+
+    async fn rebuild(&self, name: InstanceName, spec: &RebuildSpec) -> Result<(), RuntimeError> {
+        let interface = match self
+            .incus
+            .get::<Value>(&format!("/1.0/images/{}", spec.image))
+            .await
+        {
+            Ok(image) => build::recorded_interface(&image),
+            Err(error) if error.is_not_found() => return Err(RuntimeError::ImageMissing),
+            Err(error) => return Err(failed(error)),
+        };
+        guest_tools::compatible(interface)?;
+        let instance: Value = self
+            .incus
+            .get(&format!("/1.0/instances/{name}"))
+            .await
+            .map_err(failed)?;
+        let config = &instance["config"];
+        let user: Option<GuestUser> = config[keys::GUEST_USER]
+            .as_str()
+            .and_then(|v| serde_json::from_str(v).ok());
+        // Its home's files are the account's, mounted where its home is.
+        if user.as_ref() != Some(&spec.user) {
+            return Err(RuntimeError::Refused(
+                "the environment's newest build has another account than this workspace; recreate it to use the build".into(),
+            ));
+        }
+        if instance["devices"][HOME_DEVICE].is_null() {
+            return Err(RuntimeError::Refused(
+                "this workspace keeps its files on the disk an update replaces; recreate it to use the newest build".into(),
+            ));
+        }
+        if config[keys::BASE_IMAGE].as_str() != Some(&spec.image.to_string()) {
+            let body =
+                json!({ "source": { "type": "image", "fingerprint": spec.image.to_string() } });
+            self.incus
+                .run(
+                    Method::POST,
+                    &format!("/1.0/instances/{name}/rebuild"),
+                    Some(&body),
+                    self.timeouts.operation(),
+                )
+                .await
+                .map_err(failed)?;
+        }
+        // The new root's tools were just checked to speak this host's interface.
+        self.incus
+            .update_instance(
+                name,
+                |instance| {
+                    instance["config"][keys::GUEST_INTERFACE] =
+                        json!(guest_tools::INTERFACE.to_string());
+                },
+                self.timeouts.operation(),
+            )
+            .await
+            .map_err(failed)
     }
 
     async fn mark_provisioned(&self, name: InstanceName) -> Result<(), RuntimeError> {

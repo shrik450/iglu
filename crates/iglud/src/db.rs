@@ -607,6 +607,105 @@ pub fn revision_image(tx: &Connection, id: EnvRevisionId) -> Result<Option<Built
         .transpose()
 }
 
+/// The image each live workspace is on, for the reconciler to compare with
+/// the image the host says its root is from.
+pub fn workspace_images(
+    tx: &Connection,
+) -> Result<HashMap<WorkspaceId, ImageFingerprint>, DbError> {
+    let mut statement = tx.prepare(
+        "SELECT w.id, r.built FROM workspace w JOIN env_revision r ON r.id = w.env_revision_id
+         WHERE w.deleted_at IS NULL AND r.status = 'ready'",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                text::<WorkspaceId>(row, 0)?,
+                opt_json::<BuiltImage>(row, 1)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, image)| image.map(|image| (id, image.fingerprint)))
+        .collect())
+}
+
+/// The image of the newest ready build of the environment `revision` is a
+/// build of.
+pub fn newest_image_like(
+    tx: &Connection,
+    revision: EnvRevisionId,
+) -> Result<Option<BuiltImage>, DbError> {
+    Ok(tx
+        .query_row(
+            "SELECT n.built FROM env_revision r JOIN env_revision n ON n.environment_id = r.environment_id
+             WHERE r.id = ?1 AND n.status = 'ready'
+             ORDER BY n.created_at DESC, n.rowid DESC LIMIT 1",
+            [revision.to_string()],
+            |row| opt_json::<BuiltImage>(row, 0),
+        )
+        .optional()?
+        .flatten())
+}
+
+/// What asking a workspace to move to its environment's newest build did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Updated {
+    /// It's on the newest build now; the reconciler rebuilds its root.
+    Moved(EnvRevisionId),
+    /// It was on it already.
+    Already,
+    /// Its environment has no build ready.
+    NoBuild,
+    /// The newest build's account isn't the workspace's: its home's files
+    /// would be someone else's.
+    OtherAccount,
+    Gone,
+}
+
+/// Moves a workspace to its environment's newest ready build. A frozen one
+/// is asked to run: its memory goes with the old root, and it would
+/// otherwise read as having lost it. A failure of the old build is over;
+/// an offline host still is.
+pub fn update_to_newest(tx: &Connection, id: WorkspaceId) -> Result<Updated, DbError> {
+    let current: Option<(EnvRevisionId, String, i64)> = tx
+        .query_row(
+            "SELECT w.env_revision_id, r.environment_id, w.revision FROM workspace w
+             JOIN env_revision r ON r.id = w.env_revision_id
+             WHERE w.id = ?1 AND w.deleted_at IS NULL",
+            [id.to_string()],
+            |row| Ok((text(row, 0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((on, environment, revision)) = current else {
+        return Ok(Updated::Gone);
+    };
+    let environment = Uuid::parse_str(&environment).map_err(|e| conversion(1, e))?;
+    let Some((newest, image)) = latest_ready_revision(tx, environment)? else {
+        return Ok(Updated::NoBuild);
+    };
+    let was = revision_image(tx, on)?;
+    // A build of the same image is no update, though a newer build.
+    if newest == on
+        || was
+            .as_ref()
+            .is_some_and(|was| was.fingerprint == image.fingerprint)
+    {
+        return Ok(Updated::Already);
+    }
+    if was.is_some_and(|was| was.user != image.user) {
+        return Ok(Updated::OtherAccount);
+    }
+    tx.execute(
+        "UPDATE workspace SET env_revision_id = ?2, revision = ?3,
+             desired = CASE desired WHEN 'frozen' THEN 'running' ELSE desired END,
+             condition = CASE WHEN json_extract(condition, '$.kind') = 'host_offline' THEN condition END
+         WHERE id = ?1",
+        params![id.to_string(), newest.to_string(), revision.saturating_add(1)],
+    )?;
+    Ok(Updated::Moved(newest))
+}
+
 /// The images still needed: each environment's newest ready one, which new
 /// workspaces are made from, and each one a workspace not deleted was made
 /// from, which its instance is made from again should it be lost.
@@ -2576,6 +2675,90 @@ mod tests {
         )
         .expect("deleted");
         assert_eq!(kept(&conn), [image(3).fingerprint]);
+    }
+
+    #[test]
+    fn a_workspace_updates_to_its_environments_newest_build_of_the_same_account() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let env: String = conn
+            .query_row(
+                "SELECT environment_id FROM env_revision WHERE id = ?1",
+                [ws.env_revision.to_string()],
+                |row| row.get(0),
+            )
+            .expect("its environment");
+        let env = Uuid::parse_str(&env).expect("a UUID");
+        let image = |n: u8, uid: u32| -> BuiltImage {
+            serde_json::from_str(&format!(
+                r#"{{"fingerprint":"{n:064x}","arch":"x86_64","user":{{"name":"dev","uid":{uid},"gid":100,"home":"/home/dev"}},"browser":false,"store_path":"/nix/store/x"}}"#
+            ))
+            .expect("an image")
+        };
+        let build = |created: i64, n: u8, uid: u32| {
+            let id = EnvRevisionId::from_uuid(Uuid::new_v4());
+            insert_revision(&conn, id, env, at(created)).expect("revision");
+            finish_revision(&conn, id, Ok(&image(n, uid)), at(created)).expect("ready");
+            id
+        };
+        finish_revision(&conn, ws.env_revision, Ok(&image(1, 1000)), at(1)).expect("ready");
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Already
+        );
+        let images = |conn: &Connection| workspace_images(conn).expect("images")[&ws.id].clone();
+        assert_eq!(images(&conn), image(1, 1000).fingerprint);
+
+        // A frozen workspace that failed is asked to run, and its failure is over.
+        conn.execute(
+            r#"UPDATE workspace SET desired = 'frozen', condition = '{"kind":"runtime_failed"}' WHERE id = ?1"#,
+            [ws.id.to_string()],
+        )
+        .expect("frozen and failed");
+        let newer = build(2, 2, 1000);
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Moved(newer)
+        );
+        let moved = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(
+            (
+                moved.env_revision,
+                moved.desired,
+                moved.condition,
+                moved.revision
+            ),
+            (newer, DesiredState::Running, None, ws.revision.next())
+        );
+        assert_eq!(images(&conn), image(2, 1000).fingerprint);
+
+        // Building the same image again is nothing to update to.
+        build(3, 2, 1000);
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Already
+        );
+
+        // A build for another account would leave the home's files someone else's.
+        build(4, 3, 1001);
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::OtherAccount
+        );
+        assert_eq!(
+            workspace(&conn, ws.id)
+                .expect("query")
+                .expect("live")
+                .env_revision,
+            newer
+        );
+
+        mark_deleted(&conn, ws.id, at(9)).expect("deleted");
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Gone
+        );
     }
 
     #[test]

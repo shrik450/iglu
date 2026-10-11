@@ -16,6 +16,7 @@ import {
   restartColumn,
   setState,
   toggleFreeze,
+  update,
   toggleZoom,
   zoomedIn,
 } from "../actions.ts";
@@ -100,6 +101,7 @@ function items(): Item[] {
     if (ws.phase === "frozen") list.push({ label: `Thaw ${called(ws)}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
     if (ws.phase === "running" || ws.phase === "frozen") list.push({ label: `Stop ${called(ws)}`, sub: "Its files stay; starting it runs it again", run: () => void setState(ws, "stopped") });
     if (ws.phase === "stopped") list.push({ label: `Start ${called(ws)}`, run: () => void setState(ws, "running") });
+    if (ws.newer_build) list.push({ label: `Update ${called(ws)}`, sub: `To the newest build of ${ws.environment}; its home stays`, run: () => void update(ws) });
     list.push({
       label: `Delete ${called(ws)}…`,
       sub: "Asks first",

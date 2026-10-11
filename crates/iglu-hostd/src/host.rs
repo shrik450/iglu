@@ -35,6 +35,7 @@ impl From<RuntimeError> for CommandError {
             RuntimeError::NotFound => ErrorCode::NotFound,
             RuntimeError::ImageMissing => ErrorCode::ImageMissing,
             RuntimeError::ImageIncompatible(_) => ErrorCode::ImageIncompatible,
+            RuntimeError::Refused(_) => ErrorCode::InvalidState,
             RuntimeError::Failed(_) => ErrorCode::Runtime,
         };
         Self::new(code, error.to_string())
@@ -83,6 +84,7 @@ impl<R: Runtime> Host<R> {
             Command::Thaw => self.lifecycle(name, Step::Thaw).await,
             Command::Stop => self.lifecycle(name, Step::Stop).await,
             Command::Delete => self.lifecycle(name, Step::Delete).await,
+            Command::Rebuild(spec) => self.lifecycle(name, Step::Rebuild(spec)).await,
         };
         match result {
             Ok(()) => match self.observe(name).await {
@@ -112,6 +114,7 @@ impl<R: Runtime> Host<R> {
                     self.runtime.delete(name).await?;
                     self.boots.forget(name);
                 }
+                Step::Rebuild(spec) => self.runtime.rebuild(name, spec).await?,
             }
         }
         Ok(())
@@ -321,6 +324,7 @@ impl<R: Runtime> Host<R> {
             workspace: observed.name.workspace(),
             owner: observed.owner,
             instance,
+            image: observed.image.clone(),
             memory: observed.memory,
             sessions,
         }

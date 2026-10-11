@@ -52,6 +52,20 @@
         ];
       };
 
+      # The same environment, built again with a change: what the tests
+      # update a workspace to.
+      nixosConfigurations.example-next = lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          self.nixosModules.workspace
+          {
+            iglu.user = "dev";
+            system.stateVersion = "26.05";
+            environment.etc."iglu-example".text = "next";
+          }
+        ];
+      };
+
       templates.workspace = {
         path = ./templates/workspace;
         description = "An iglu environment: a NixOS workspace for coding agents";

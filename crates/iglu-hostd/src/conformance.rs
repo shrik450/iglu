@@ -13,7 +13,7 @@ use bytes::Bytes;
 use iglu_domain::attention::{AttentionState, SessionStatus};
 use iglu_domain::capacity;
 use iglu_domain::column::{Arg, Argv};
-use iglu_domain::env::{BuiltImage, EnvSource, ImageFingerprint};
+use iglu_domain::env::{BuiltImage, EnvSource, ImageFingerprint, Uid};
 use iglu_domain::guest as guest_tools;
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::{
@@ -27,7 +27,7 @@ use iglu_domain::terminal::{OutputLines, SessionName, TerminalSize};
 use iglu_domain::time::Millis;
 use iglu_proto::{
     BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Limits,
-    ProvisionSpec, PruneImages, SessionSpec,
+    ProvisionSpec, PruneImages, RebuildSpec, SessionSpec,
 };
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -40,6 +40,8 @@ use crate::runtime::{Guest, GuestFile, Runtime, TerminalInput};
 pub struct Fixture {
     /// An environment the runtime can build here.
     pub source: EnvSource,
+    /// Another, with the same account, that workspaces update to.
+    pub next: EnvSource,
     /// How long a started workspace may take to finish booting.
     pub boot_timeout: Duration,
 }
@@ -169,6 +171,14 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
             .check(
                 "a failed clone leaves provisioning pending",
                 Suite::failed_clone,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
+                "updating rebuilds the root from the next image and keeps the home, which goes with the workspace",
+                |suite, workspace| suite.updates(workspace, &fixture.next),
             )
             .await,
     );
@@ -627,6 +637,82 @@ impl<'a, R: Runtime> Suite<'a, R> {
     /// What one of a person's workspaces keeps, their others see, live;
     /// another person's don't. The words the checks wait for are split in
     /// what's typed, so only the output has them whole.
+    async fn image_of(&self, workspace: WorkspaceId) -> Result<Option<ImageFingerprint>, String> {
+        let reports = self.host.inventory().await.map_err(|e| e.to_string())?;
+        Ok(reports
+            .into_iter()
+            .find(|r| r.workspace == workspace)
+            .and_then(|r| r.image))
+    }
+
+    async fn updates(&self, workspace: WorkspaceId, next: &EnvSource) -> Checked {
+        let next = match self.host.build(next, &FetchTokens::default()).await {
+            BuildOutcome::Built(image) => image,
+            BuildOutcome::Failed { log_tail } => {
+                return Err(format!("building the next environment: {log_tail}"));
+            }
+        };
+        ensure(next.fingerprint != self.image.fingerprint, || {
+            "the next environment is the same image".into()
+        })?;
+        self.running_workspace(workspace).await?;
+        self.shell(
+            workspace,
+            "home",
+            "echo here > ~/update-mark && echo wr''ote",
+            "wrote",
+        )
+        .await?;
+        let first = self.image_of(workspace).await?;
+        ensure(
+            first
+                .as_ref()
+                .is_none_or(|first| *first == self.image.fingerprint),
+            || format!("created from {first:?}, not {}", self.image.fingerprint),
+        )?;
+        // Another account would leave the home's files someone else's.
+        let mut stranger = next.user.clone();
+        stranger.uid = Uid::try_from(stranger.uid.get() + 1).map_err(|e| e.to_string())?;
+        self.refused(
+            workspace,
+            Command::Rebuild(RebuildSpec {
+                image: next.fingerprint.clone(),
+                user: stranger,
+            }),
+            ErrorCode::InvalidState,
+        )
+        .await?;
+        // Running, it's stopped first; asked again, it's done already.
+        let rebuild = Command::Rebuild(RebuildSpec {
+            image: next.fingerprint.clone(),
+            user: next.user.clone(),
+        });
+        for _ in 0..2 {
+            let instance = self.perform(workspace, rebuild.clone()).await?;
+            ensure(status(instance) == Some(Status::Stopped), || {
+                format!("not stopped after rebuilding: {instance:?}")
+            })?;
+        }
+        let now = self.image_of(workspace).await?;
+        ensure(now.as_ref() == Some(&next.fingerprint), || {
+            format!("its root is from {now:?}, not {}", next.fingerprint)
+        })?;
+        self.perform(workspace, Command::Start).await?;
+        self.boot(workspace).await?;
+        self.shell(workspace, "home", "cat ~/update-mark", "here")
+            .await?;
+        // Its home goes with it: a workspace made again under its name starts empty.
+        self.perform(workspace, Command::Delete).await?;
+        self.running_workspace(workspace).await?;
+        self.shell(
+            workspace,
+            "home",
+            "test -e ~/update-mark || echo go''ne",
+            "gone",
+        )
+        .await
+    }
+
     async fn keeps_per_person(&self, workspace: WorkspaceId) -> Checked {
         let same = WorkspaceId::from_uuid(Uuid::new_v4());
         let other = WorkspaceId::from_uuid(Uuid::new_v4());

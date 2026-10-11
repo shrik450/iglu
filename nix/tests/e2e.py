@@ -171,7 +171,7 @@ try:
 
     with subtest("Incus passes the runtime conformance suite and its isolation checks"):
         # Its own workspaces, beside iglud's; iglud leaves instances it never made alone.
-        print(host.succeed(f"iglu-hostd-conformance --config {HOSTD_CONFIG} --source 'path:{SELF}#example' 2>&1"))
+        print(host.succeed(f"iglu-hostd-conformance --config {HOSTD_CONFIG} --source 'path:{SELF}#example' --next 'path:{SELF}#example-next' 2>&1"))
 
     with subtest("a private environment can't be fetched without its owner's Git credential"):
         iglu(f"env add private 'github:alice/env?host={GIT_ADDRESS}#private'")
@@ -467,6 +467,41 @@ try:
         client.fail(f"{IGLU} new general --name branchy --branch main")
         client.fail(f"{IGLU} project rm general")
         iglu(f"rm {scratch['name']} --wait")
+
+    with subtest("a workspace updates to its environment's newest build, keeping its home and nothing else"):
+        host.succeed(f"cp -r {CHANGING_ENV} /var/lib/changing-env && chmod -R a+rX,u+w /var/lib/changing-env")
+        iglu("env add changing 'path:/var/lib/changing-env#changing'")
+        ready = "jq -e '.[] | select(.name == \"changing\") | .latest.status == \"ready\"'"
+        client.wait_until_succeeds(f"{IGLU} --json env ls | {ready}", timeout=600)
+        iglu("project add changing --env changing")
+        updating = iglu("new changing --name updating --wait")
+        assert not updating["newer_build"], updating
+        updating_instance = "iglu-" + updating["id"].replace("-", "")
+        inside = guest_of(updating_instance)
+        inside("echo kept > ~/mark && echo gone > /var/tmp/mark")
+        assert inside("cat /etc/iglu-example 2>&1 || true").strip() != "next"
+        before = json.loads(host.succeed(f"incus query /1.0/instances/{updating_instance}"))["config"]["volatile.base_image"]
+        # Its environment is built again, with a change.
+        host.succeed("touch /var/lib/changing-env/next")
+        iglu("env build changing")
+        client.wait_until_succeeds(f"{IGLU} --json env ls | {ready}", timeout=600)
+        client.wait_until_succeeds(f"{IGLU} --json show updating | jq -e .newer_build", timeout=30)
+        iglu("update updating --wait")
+        updated = iglu("show updating")
+        assert updated["phase"] == "running" and not updated["newer_build"], updated
+        after = json.loads(host.succeed(f"incus query /1.0/instances/{updating_instance}"))["config"]["volatile.base_image"]
+        assert after != before, (before, after)
+        inside = guest_of(updating_instance)
+        assert inside("cat /etc/iglu-example").strip() == "next"
+        assert inside("cat ~/mark").strip() == "kept"
+        inside("test ! -e /var/tmp/mark")
+        history = [entry["kind"] for entry in iglu("log updating")]
+        assert "update-asked" in history and "rebuilt" in history, history
+        # Its home goes with it.
+        iglu("rm updating --wait --force")
+        home = "iglu-home-" + updating["id"].replace("-", "")
+        host.fail(f"incus storage volume show iglu custom/{home}")
+        iglu("project rm changing")
 
     with subtest("workspaces can't reach each other"):
         neighbour = guest_of(https_instance)

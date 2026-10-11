@@ -4,4 +4,4 @@
  * The kinds of thing a workspace's history records. Stored and sent by
  * name; the console says each in words.
  */
-export type ActivityKind = "requested" | "state-set" | "created" | "started" | "secrets-delivered" | "provisioned" | "columns-opened" | "frozen" | "thawed" | "stopped" | "removed" | "deleted" | "error" | "renamed" | "typed" | "thawed-on-open" | "idle-froze" | "idle-stopped" | "secret-updated" | "published" | "unpublished" | "file-kept" | "adopted" | "access-changed" | "column-added" | "column-restarted" | "column-closed";
+export type ActivityKind = "requested" | "state-set" | "created" | "started" | "secrets-delivered" | "provisioned" | "columns-opened" | "frozen" | "thawed" | "stopped" | "removed" | "deleted" | "error" | "renamed" | "typed" | "thawed-on-open" | "idle-froze" | "idle-stopped" | "secret-updated" | "published" | "unpublished" | "file-kept" | "adopted" | "access-changed" | "column-added" | "column-restarted" | "column-closed" | "update-asked" | "rebuilt";

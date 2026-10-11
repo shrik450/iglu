@@ -56,6 +56,9 @@ async fn the_local_runtime_conforms() {
     let host = Host::new(runtime, TIMEOUTS);
     let fixture = Fixture {
         source: "path:/nonexistent#local".parse().expect("valid source"),
+        next: "path:/nonexistent#local-next"
+            .parse()
+            .expect("valid source"),
         boot_timeout: Duration::from_secs(10),
     };
     let outcomes = conformance::run(&host, &fixture).await;

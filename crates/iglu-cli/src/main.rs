@@ -20,6 +20,7 @@ use iglu_api::{
     LabelWorkspace, ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace,
     RevisionStatus, RouteView, SendInput, SetDesiredState, WorkspaceView,
 };
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::auth::Permission;
 use iglu_domain::column::ColumnKind;
 use iglu_domain::env::{EnvName, EnvSource};
@@ -139,6 +140,13 @@ enum WorkspaceCommand {
     },
     /// Stop a workspace. Files stay; processes end.
     Stop {
+        workspace: String,
+        #[arg(long)]
+        wait: bool,
+    },
+    /// Move a workspace to its environment's newest build. Its home and kept
+    /// files stay; what's running ends, and files outside its home start over.
+    Update {
         workspace: String,
         #[arg(long)]
         wait: bool,
@@ -370,6 +378,57 @@ async fn wait_for(
     }
 }
 
+/// Moves a workspace to its environment's newest build, and prints it, with
+/// `wait` once it's rebuilt and back as it was asked to be.
+async fn update(
+    client: &Client,
+    json_mode: bool,
+    reference: &str,
+    wait: bool,
+) -> anyhow::Result<()> {
+    let ws = client.resolve(reference).await?;
+    let updated = client.update(ws.id).await?;
+    let ws = if wait {
+        wait_for_rebuild(client, ws.id).await?;
+        wait_for(client, ws.id, updated.desired).await?
+    } else {
+        Some(updated)
+    };
+    print(json_mode, &ws, |ws| {
+        ws.as_ref().map_or_else(|| "deleted".into(), describe)
+    });
+    Ok(())
+}
+
+/// Waits for the workspace's root to be rebuilt since it was last asked to
+/// update, which its history records.
+async fn wait_for_rebuild(client: &Client, id: WorkspaceId) -> anyhow::Result<()> {
+    let started = Instant::now();
+    loop {
+        let log = client.activity(id).await?;
+        let asked = log
+            .iter()
+            .find(|e| e.kind == ActivityKind::UpdateAsked)
+            .map(|e| e.at);
+        if log
+            .iter()
+            .any(|e| e.kind == ActivityKind::Rebuilt && asked.is_none_or(|asked| e.at >= asked))
+        {
+            return Ok(());
+        }
+        if let Some(ws) = client.workspace(id).await?
+            && let Some(condition @ (Condition::Error { .. } | Condition::RuntimeFailed)) =
+                &ws.condition
+        {
+            bail!("{}", condition_text(condition));
+        }
+        if started.elapsed() > Duration::from_secs(1800) {
+            bail!("timed out waiting for the workspace to update");
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 /// Requests `state` and prints the workspace, with `wait` once it gets there.
 async fn transition(
     client: &Client,
@@ -500,6 +559,9 @@ async fn workspace(
         }
         WorkspaceCommand::Stop { workspace, wait } => {
             transition(client, json_mode, &workspace, DesiredState::Stopped, wait).await?;
+        }
+        WorkspaceCommand::Update { workspace, wait } => {
+            update(client, json_mode, &workspace, wait).await?;
         }
         WorkspaceCommand::Rm {
             workspace,

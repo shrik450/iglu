@@ -11,13 +11,13 @@ use iglu_domain::column;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::idle;
 use iglu_domain::lifecycle::{
-    AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
+    AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Root, Wait, plan_within,
 };
 use iglu_domain::secret::bundle;
 use iglu_domain::time::{Millis, Timestamp};
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
-    Limits, ProvisionSpec, PruneImages, SessionSpec,
+    Limits, ProvisionSpec, PruneImages, RebuildSpec, SessionSpec,
 };
 
 use crate::app::{App, now, open_secrets};
@@ -213,6 +213,7 @@ async fn reconcile_host(
 
     let workspaces: Vec<WorkspaceRecord> =
         live.into_iter().filter(|ws| ws.host == host.id).collect();
+    let images = app.db.call(|tx| db::workspace_images(tx)).await?;
     let mut room = Room::new(
         inventory.host.memory_available,
         app.config.workspaces.reservation,
@@ -242,6 +243,7 @@ async fn reconcile_host(
         let desired = Desired {
             state: ws.desired,
             secrets: principal.secrets_generation,
+            root: Root::of(report.and_then(|r| r.image.as_ref()), images.get(&ws.id)),
         };
         let next = plan_within(desired, instance, &mut room);
         changed |= act(app, reconciler, host, ws, principal, next).await?;
@@ -454,6 +456,7 @@ const fn effect_doing(effect: Effect) -> &'static str {
         Effect::Thaw => "thawing it",
         Effect::Stop => "stopping it",
         Effect::Delete => "removing it from its host",
+        Effect::Rebuild => "rebuilding it from the newest build",
     }
 }
 
@@ -468,6 +471,7 @@ const fn effect_kind(effect: Effect) -> ActivityKind {
         Effect::Thaw => ActivityKind::Thawed,
         Effect::Stop => ActivityKind::Stopped,
         Effect::Delete => ActivityKind::Removed,
+        Effect::Rebuild => ActivityKind::Rebuilt,
     }
 }
 
@@ -553,20 +557,22 @@ async fn command_for(
     effect: Effect,
 ) -> Result<Command, CommandError> {
     let internal = |e: db::DbError| CommandError::new(ErrorCode::Runtime, e.to_string());
+    let image = || async {
+        let revision = ws.env_revision;
+        app.db
+            .call(move |tx| db::revision_image(tx, revision))
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| {
+                CommandError::new(
+                    ErrorCode::ImageMissing,
+                    "the environment revision has no image",
+                )
+            })
+    };
     Ok(match effect {
         Effect::Create => {
-            let revision = ws.env_revision;
-            let image = app
-                .db
-                .call(move |tx| db::revision_image(tx, revision))
-                .await
-                .map_err(internal)?
-                .ok_or_else(|| {
-                    CommandError::new(
-                        ErrorCode::ImageMissing,
-                        "the environment revision has no image",
-                    )
-                })?;
+            let image = image().await?;
             let defaults = &app.config.workspaces;
             Command::Create(CreateSpec {
                 owner: ws.owner,
@@ -599,5 +605,12 @@ async fn command_for(
         Effect::Thaw => Command::Thaw,
         Effect::Stop => Command::Stop,
         Effect::Delete => Command::Delete,
+        Effect::Rebuild => {
+            let image = image().await?;
+            Command::Rebuild(RebuildSpec {
+                image: image.fingerprint,
+                user: image.user,
+            })
+        }
     })
 }

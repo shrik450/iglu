@@ -16,6 +16,9 @@ pub mod keys {
     pub const GUEST_USER: &str = "user.iglu.guest-user";
     pub const PROVISIONED: &str = "user.iglu.provisioned";
     pub const GUEST_INTERFACE: &str = "user.iglu.guest-interface";
+    /// Incus's own record of the image the instance's root is from, which
+    /// a rebuild changes once the new root is in place.
+    pub const BASE_IMAGE: &str = "volatile.base_image";
 }
 
 /// Accepts an instance only if both its name and its recorded workspace say
@@ -54,6 +57,10 @@ pub fn claim(instance: &InstanceFull) -> Claim {
             .get(keys::GUEST_INTERFACE)
             .and_then(|v| v.parse().ok())
             .map(Interface::new),
+        image: instance
+            .config
+            .get(keys::BASE_IMAGE)
+            .and_then(|v| v.parse().ok()),
         state: instance.state.as_ref().map_or(State::Transitioning, state),
         memory: instance
             .state

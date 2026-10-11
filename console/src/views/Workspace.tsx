@@ -28,6 +28,7 @@ import {
   toggleFreeze,
   toggleZoom,
   unpublish,
+  update,
   zoomedIn,
 } from "../actions.ts";
 import { api, failure } from "../api/client.ts";
@@ -903,6 +904,12 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
             </p>
           ) : null}
           <div class="acts">
+            {/* A failure of the build it's on, such as one an older iglu made, may be over on the newest. */}
+            {ws.newer_build ? (
+              <button type="button" class="btn primary" onClick={() => void update(ws)}>
+                Update to the newest build
+              </button>
+            ) : null}
             {cloning && project ? (
               <a class="btn" href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
                 Open {project.name}
@@ -1003,6 +1010,15 @@ function Details({ ws }: { ws: WorkspaceView }) {
           </button>
         ) : null}
       </div>
+      {ws.newer_build ? (
+        <div class="update">
+          <h2>A newer build of {ws.environment}</h2>
+          <p class="muted">Updating runs this workspace from it. Its home and kept files stay; what's running ends, and files outside its home start over.</p>
+          <button type="button" class="btn primary" onClick={() => void update(ws)}>
+            Update
+          </button>
+        </div>
+      ) : null}
       <Access ws={ws} />
       <History ws={ws} />
       {ws.routes.length ? (
@@ -1142,6 +1158,8 @@ const HAPPENED: Record<ActivityKind, string> = {
   "column-added": "Added a column",
   "column-restarted": "Restarted a column",
   "column-closed": "Closed a column",
+  "update-asked": "Asked to update",
+  rebuilt: "Updated, its home kept",
 };
 
 /** What happened to the workspace, newest first. Loaded when shown, and again when it changes. */

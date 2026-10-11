@@ -142,7 +142,8 @@ impl HostClient {
             | Command::Freeze
             | Command::Thaw
             | Command::Stop
-            | Command::Delete => Duration::from_secs(300),
+            | Command::Delete
+            | Command::Rebuild(_) => Duration::from_secs(300),
         };
         self.json(
             self.http

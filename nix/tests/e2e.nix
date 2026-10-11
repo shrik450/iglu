@@ -107,6 +107,32 @@ let
         tar -czf $out alice-env-${privateEnvRev}
       '';
 
+  # An environment that changes: the example until a file named `next` is
+  # beside its flake, then the example built again with a change. The test
+  # updates a workspace from one to the other. Its lock is the private
+  # environment's, so it evaluates offline.
+  changingEnv =
+    pkgs.runCommand "iglu-e2e-changing-env"
+      {
+        flake = pkgs.writeText "flake.nix" ''
+          {
+            inputs.iglu.url = "path:${self}";
+            outputs = { iglu, ... }: {
+              nixosConfigurations.changing =
+                if builtins.pathExists ./next
+                then iglu.nixosConfigurations.example-next
+                else iglu.nixosConfigurations.example;
+            };
+          }
+        '';
+        lock = pkgs.writeText "flake.lock" privateEnvLock;
+      }
+      ''
+        mkdir $out
+        cp $flake $out/flake.nix
+        cp $lock $out/flake.lock
+      '';
+
   # Playwright's Chromium, trusting the test CA (see the test script) and
   # resolving the console and every preview to the control box.
   browser =
@@ -446,6 +472,7 @@ in
     ''
       PKI = "${pki}"
       SELF = "${self}"
+      CHANGING_ENV = "${changingEnv}"
       GIT_ADDRESS = "${gitAddress}"
       HOST_IP = "${nodes.host.networking.primaryIPAddress}"
       CONTROL_IP = "${nodes.control.networking.primaryIPAddress}"

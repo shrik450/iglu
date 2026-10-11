@@ -66,6 +66,7 @@ pub fn router() -> Router<Arc<App>> {
         )
         .route("/v1/workspaces/{id}", get(get_workspace))
         .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
+        .route("/v1/workspaces/{id}/update", post(update_workspace))
         .route("/v1/workspaces/{id}/name", put(rename_workspace))
         .route("/v1/workspaces/{id}/label", put(label_workspace))
         .route("/v1/workspaces/{id}/seen", post(mark_seen))
@@ -136,6 +137,7 @@ pub fn guest_router() -> Router<Arc<App>> {
         .route("/v1/workspaces", get(list_workspaces))
         .route("/v1/workspaces/{id}", get(get_workspace))
         .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
+        .route("/v1/workspaces/{id}/update", post(update_workspace))
         .route("/v1/workspaces/{id}/name", put(rename_workspace))
         .route("/v1/workspaces/{id}/label", put(label_workspace))
         .route("/v1/workspaces/{id}/activity", get(activity))
@@ -641,6 +643,59 @@ async fn set_desired_state(
     Ok(Json(actor.shown(view(&app, updated).await?)))
 }
 
+/// Moves a workspace to its environment's newest build: the reconciler
+/// stops it, rebuilds its root from the build, keeping its home, and brings
+/// it back as it was asked to be.
+async fn update_workspace(
+    actor: Actor,
+    State(app): State<Arc<App>>,
+    Path(id): Path<WorkspaceId>,
+) -> Result<Json<WorkspaceView>, ApiError> {
+    workspace_for(&app, &actor, id, Action::OperateWorkspace).await?;
+    let by = actor.by();
+    let (updated, ws) = app
+        .db
+        .call(move |tx| {
+            let updated = db::update_to_newest(tx, id)?;
+            if let db::Updated::Moved(revision) = &updated {
+                let detail = db::environment_name_of_revision(tx, *revision)?
+                    .map(|name| format!("{name}'s newest build"))
+                    .unwrap_or_default();
+                db::add_activity(
+                    tx,
+                    Some(id),
+                    Some(by),
+                    ActivityKind::UpdateAsked,
+                    &detail,
+                    now(),
+                )?;
+            }
+            Ok((updated, db::workspace(tx, id)?))
+        })
+        .await?;
+    match updated {
+        db::Updated::Moved(revision) => {
+            tracing::info!(workspace = %id, %revision, by = %by.person, via = ?by.via, "workspace update requested");
+            app.kick();
+            app.changed();
+        }
+        db::Updated::Already => {}
+        db::Updated::NoBuild => {
+            return Err(ApiError::Conflict(
+                "its environment has no build ready to update to".into(),
+            ));
+        }
+        db::Updated::OtherAccount => {
+            return Err(ApiError::Conflict(
+                "the environment's newest build has another account than this workspace, whose files would be someone else's; recreate it to use the build".into(),
+            ));
+        }
+        db::Updated::Gone => return Err(ApiError::NotFound),
+    }
+    let ws = ws.ok_or(ApiError::NotFound)?;
+    Ok(Json(actor.shown(view(&app, ws).await?)))
+}
+
 async fn rename_workspace(
     actor: Actor,
     State(app): State<Arc<App>>,
@@ -846,7 +901,7 @@ async fn session_for(
         if !image.is_some_and(|image| image.browser) {
             return Err(ApiError::Conflict(
                 "this workspace's image has no browser: rebuild its environment with \
-                 iglu.browser.enable, and recreate the workspace"
+                 iglu.browser.enable, then update the workspace"
                     .into(),
             ));
         }

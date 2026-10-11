@@ -413,6 +413,7 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .info h2 { margin: 0 0 6px; font: 600 13px/1.2 var(--ui); }
 .info-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -8px -8px 0 0; }
 .info-head h2 { margin: 0; }
+.info .update p { margin: 0 0 8px; font-size: 12.5px; }
 .info dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
 .info dt { color: var(--muted); }
 .info dd { margin: 0; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }

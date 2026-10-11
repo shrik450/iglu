@@ -187,6 +187,11 @@ impl Client {
         self.json(self.http.put(url).json(request)).await
     }
 
+    pub async fn update(&self, id: WorkspaceId) -> anyhow::Result<WorkspaceView> {
+        let url = self.url(&format!("/v1/workspaces/{id}/update"))?;
+        self.json(self.http.post(url)).await
+    }
+
     pub async fn rename(
         &self,
         id: WorkspaceId,
