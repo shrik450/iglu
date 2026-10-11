@@ -646,6 +646,17 @@ PAGE = (
 )
 
 
+def filled(screen: Locator) -> None:
+    """Waits for the browser's image to fill its screen again: a dialog
+    above it takes room while it's open, and a click lands only on the
+    image, which takes a moment to come back at the new size."""
+    deadline = time.monotonic() + 10
+    fit = "c => Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1"
+    while not screen.evaluate(fit):
+        assert time.monotonic() < deadline, screen.evaluate("c => [c.width, c.height, c.clientWidth, c.clientHeight]")
+        time.sleep(0.1)
+
+
 def browses(page: Page, name: str) -> Any:
     """A browser column shows the workspace's browser: what's typed and
     clicked reaches the page, and a dialog it opens is answered from the
@@ -704,6 +715,7 @@ def browses(page: Page, name: str) -> Any:
     expect(title).to_have_text("file note.txt from here", timeout=10_000)
     expect(asking).to_have_count(0)
     # A download lands in the workspace's Downloads, and is saved from there.
+    filled(screen)
     screen.click(position={"x": 20, "y": 440})
     done = browser.get_by_role("status", name="Downloaded")
     expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)

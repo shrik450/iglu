@@ -764,7 +764,9 @@ impl Screen {
     }
 
     /// Lays the shown page out at the console's size and screencasts it at
-    /// as many pixels as the console shows. Starting again changes the size.
+    /// as many pixels as the console shows. The browser refuses to start a
+    /// screencast that's already going, which would keep sending images of
+    /// the old size, so one going is stopped first.
     fn cast(&mut self, session: &str) -> Vec<Out> {
         let BrowserSize {
             width,
@@ -791,6 +793,7 @@ impl Screen {
                 Some(session),
                 None,
             ),
+            self.call("Page.stopScreencast", json!({}), Some(session), None),
             self.call("Page.startScreencast", cast, Some(session), None),
         ]
     }
@@ -1446,6 +1449,7 @@ mod tests {
                 "Runtime.addBinding",
                 "Runtime.enable",
                 "Emulation.setDeviceMetricsOverride",
+                "Page.stopScreencast",
                 "Page.startScreencast"
             ]
         );
@@ -1457,7 +1461,29 @@ mod tests {
         let source = cast[2]["params"]["source"].as_str().expect("a script");
         assert!(source.ends_with(r#"("igluChoose1")"#), "{source}");
         assert_eq!(cast[5]["params"]["width"], 800);
-        assert_eq!(cast[6]["params"]["maxWidth"], 1600);
+        assert_eq!(cast[7]["params"]["maxWidth"], 1600);
+    }
+
+    #[test]
+    fn a_resize_lays_the_page_out_again_and_screencasts_it_at_the_new_size() {
+        let mut screen = showing();
+        let out = screen.input(BrowserInput::Resize(BrowserSize {
+            width: 500,
+            height: 480,
+            scale: 1.0,
+        }));
+        assert_eq!(
+            methods(&out),
+            [
+                "Emulation.setDeviceMetricsOverride",
+                "Page.stopScreencast",
+                "Page.startScreencast"
+            ]
+        );
+        let cast = sent(&out);
+        assert!(cast.iter().all(|m| m["sessionId"] == "s1"));
+        assert_eq!(cast[0]["params"]["height"], 480);
+        assert_eq!(cast[2]["params"]["maxHeight"], 480);
     }
 
     fn opened_menu(screen: &mut Screen, context: i64) -> Vec<Out> {
