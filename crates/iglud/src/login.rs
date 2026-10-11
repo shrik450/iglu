@@ -1,5 +1,6 @@
 //! Sign-in for the console, the preview gateway and the CLI.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -367,9 +368,10 @@ async fn cli_confirm(
         .email
         .as_ref()
         .map_or_else(|| principal.id.to_string(), ToString::to_string);
+    let stylesheet = stylesheet(&app).await?;
     let page = format!(
         r#"<!doctype html><meta charset="utf-8"><title>Sign in the iglu CLI</title>
-<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="{stylesheet}">
 <main class="dialog"><h1>Sign in the iglu CLI?</h1>
 <p>A program on this computer asked to act as <strong>{who}</strong>. Only continue if you just ran <code>iglu login</code>.</p>
 <form method="post" action="/auth/cli">
@@ -381,8 +383,29 @@ async fn cli_confirm(
         challenge = escape(&request.challenge),
         state = escape(&request.state),
         csrf = escape(&row.csrf),
+        stylesheet = escape(&stylesheet),
     );
     Ok(Html(page).into_response())
+}
+
+/// Where the console's build put its stylesheet, which iglud's own pages
+/// share. Read each time, like the console's page, so rebuilds show.
+async fn stylesheet(app: &App) -> Result<String, ApiError> {
+    let manifest = app.config.console_assets.join("assets.json");
+    let read = async {
+        let text = tokio::fs::read_to_string(&manifest)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut paths: HashMap<String, String> =
+            serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        paths
+            .remove("app.css")
+            .ok_or_else(|| "it names no app.css".to_owned())
+    };
+    read.await.map_err(|error| {
+        tracing::error!(%error, path = %manifest.display(), "couldn't read the console's assets");
+        ApiError::Internal
+    })
 }
 
 #[derive(Deserialize)]

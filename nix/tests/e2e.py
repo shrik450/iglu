@@ -128,6 +128,15 @@ try:
         )
         assert status == "403", status
 
+    with subtest("browsers check the console's page on every load and keep its assets, named for their contents"):
+        page = client.succeed(f"curl -sS -i -H 'Cookie: __Host-iglu={cookie['value']}' {CONSOLE}/")
+        assert "cache-control: no-cache" in page.lower(), page
+        script = found(r'<script type="module" src="(/assets/app-\w+\.js)"', page)
+        asset = client.succeed(f"curl -sS -D - -o /dev/null {CONSOLE}{script}").lower()
+        assert "cache-control: public, max-age=31536000, immutable" in asset, asset
+        missing = client.succeed(f"curl -sS -D - -o /dev/null -w '%{{http_code}}' {CONSOLE}/assets/app-missing.js").lower()
+        assert missing.endswith("404") and "immutable" not in missing, missing
+
     with subtest("a sign-in finishes only in the browser that started it"):
         authorize = client.succeed(f"curl -sS -o /dev/null -w '%{{redirect_url}}' {CONSOLE}/auth/login")
         state = found(r"[?&]state=([^&]+)", authorize)

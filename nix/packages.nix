@@ -105,7 +105,6 @@ in
         ../console/build.mjs
         ../console/tsconfig.json
         ../console/src
-        ../console/public
         ../console/vendor
       ];
     };

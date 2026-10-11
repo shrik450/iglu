@@ -125,9 +125,10 @@ new does.
 
 `just dev` builds iglud, the devhost and the guest tools, starts the
 console's watcher and the devhost, and runs iglud in the foreground. Stop
-them all with Ctrl-C. Edit anything under `console/src` or `console/public`
-and refresh the page; the bundle is unminified and has a source map. A change
-to iglud or hostd needs a restart.
+them all with Ctrl-C. Edit anything under `console/src` and refresh the
+page; the bundle is unminified and has a source map. The page,
+`console/src/index.html`, is rewritten on each rebuild, so a change to it alone
+shows after the next one. A change to iglud or hostd needs a restart.
 
 ### Where things are
 

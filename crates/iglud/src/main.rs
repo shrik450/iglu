@@ -65,16 +65,30 @@ async fn dispatch(State(app): State<Arc<App>>, request: Request, next: Next) -> 
     }
 }
 
-/// Every route iglud serves. The console's files are public; its page, for
-/// every path the console routes, asks for a session first.
+/// Lets browsers keep an asset without asking again: a new build names a
+/// changed asset differently.
+async fn keep_for_good(mut response: Response) -> Response {
+    if response.status().is_success() {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    response
+}
+
+/// Every route iglud serves. The console's assets are public, and named for
+/// what's in them, so browsers may keep them for good; its page, for every
+/// other path, asks for a session first and is checked on every load.
 fn router(app: Arc<App>, assets: &std::path::Path) -> Router {
-    let console_app = ServeDir::new(assets)
-        .append_index_html_on_directories(false)
-        .fallback(axum::routing::get(login::console_page).with_state(app.clone()));
+    let kept = Router::new()
+        .nest_service("/assets", ServeDir::new(assets.join("assets")))
+        .layer(middleware::map_response(keep_for_good));
     Router::new()
         .merge(api::router())
         .merge(login::console_router())
-        .fallback_service(console_app)
+        .merge(kept)
+        .fallback(login::console_page)
         .layer(middleware::from_fn_with_state(app.clone(), dispatch))
         .with_state(app)
 }

@@ -7,6 +7,7 @@ import { signal } from "@preact/signals";
 import type { TerminalThemeColors } from "@wterm/core";
 import { type SearchState, WTerm } from "@wterm/dom";
 import { GhosttyCore } from "@wterm/ghostty";
+import WASM from "@wterm/ghostty/ghostty-vt.wasm";
 
 import { api, failure } from "./api/client.ts";
 import { withCtrl } from "./state/keys.ts";
@@ -17,7 +18,6 @@ import { say } from "./state/store.ts";
 import { type Colors, XTERM } from "./state/themes.ts";
 import { styleApplied } from "./termstyle.ts";
 
-const WASM = "/ghostty-vt.wasm";
 /** Each terminal's history, in bytes: ghostty keeps it in pages, so the rows
  * it holds depend on the width. */
 const SCROLLBACK = 10_000_000;

@@ -1,8 +1,8 @@
 /* iglu's console. Polar night is the dark look and Snowfield the light one; the page follows the
    system unless the look is set. Tokens first, then layout, then components. */
-@font-face { font-family: "Unbounded"; src: url("/fonts/unbounded.woff2") format("woff2"); font-weight: 200 900; font-display: swap; }
-@font-face { font-family: "Geist"; src: url("/fonts/geist.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-@font-face { font-family: "JetBrains Mono"; src: url("/fonts/jetbrains-mono.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+@font-face { font-family: "Unbounded"; src: url("@fontsource-variable/unbounded/files/unbounded-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
 @property --f { syntax: '<number>'; inherits: false; initial-value: 0; }
 
 :root {
