@@ -78,6 +78,8 @@ def main() -> None:
             step("keeps-history", browser.keeps_history, page, NAME)
             step("inserts-text", browser.inserts_text, page, NAME)
             step("opens-links", browser.opens_links, page, NAME)
+            step("copies-from-programs", browser.copies_from_programs, page, NAME)
+            step("opens-from-programs", browser.opens_from_programs, page, NAME)
             step("copies-history", browser.copies_history, page, NAME)
             step("mac-keys", browser.mac_keys, page, NAME)
             step("selected-keys", browser.selected_keys, page, NAME)

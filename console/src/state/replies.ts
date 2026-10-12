@@ -6,6 +6,9 @@
 // that programs ask for: the secondary device attributes, which nvim and
 // tmux send, the terminal's name and version, which fish and tmux send, and
 // the cursor's colour. The console answers those.
+//
+// Programs also ask, through iglu's `xdg-open`, for an address to be offered
+// to the person to open, with iglu's own OSC (`iglu_guest::open::OSC`).
 
 /** A reply, due once the terminal has been given `chunk[0..end)`. */
 export interface Reply {
@@ -15,6 +18,8 @@ export interface Reply {
 
 export interface Scan {
   replies: Reply[];
+  /** The addresses programs asked to open, as they sent them. */
+  opens: string[];
   /** The start of a query that the next chunk may finish. */
   carry: Uint8Array;
 }
@@ -24,6 +29,13 @@ const BEL = 0x07;
 const ST = 0x5c; // `\`, which ends `ESC \`
 /** Queries are short; a longer sequence is something else, and isn't carried. */
 const LONGEST = 32;
+
+/** `xdg-open`'s OSC, up to its address. */
+const OPEN = "4458;";
+/** The longest address `xdg-open` sends (`iglu_guest::open::MAX_BYTES`). */
+const OPEN_BYTES = 16 * 1024;
+/** An unfinished offer: `ESC ]`, the prefix, the address, and the start of `ESC \`. */
+const LONGEST_OPEN = 2 + OPEN.length + OPEN_BYTES + 1;
 
 const CURSOR_QUERY = "12;?";
 /** xterm's form: type 1, firmware version 10, no ROM cartridge. */
@@ -48,10 +60,15 @@ export function scan(carry: Uint8Array, chunk: Uint8Array, cursor: string): Scan
   bytes.set(carry);
   bytes.set(chunk, carry.length);
   const replies: Reply[] = [];
+  const opens: string[] = [];
   const reply = (after: number, answer: string | null) => {
     if (answer) replies.push({ end: after - carry.length, text: answer });
   };
-  const unfinished = (start: number): Scan => ({ replies, carry: bytes.length - start <= LONGEST ? bytes.slice(start) : new Uint8Array() });
+  const unfinished = (start: number, longest = LONGEST): Scan => ({
+    replies,
+    opens,
+    carry: bytes.length - start <= longest ? bytes.slice(start) : new Uint8Array(),
+  });
 
   let i = 0;
   while (i < bytes.length) {
@@ -78,16 +95,21 @@ export function scan(carry: Uint8Array, chunk: Uint8Array, cursor: string): Scan
       // OSC, ended by BEL or by ST, which is answered in kind.
       let j = i + 2;
       while (j < bytes.length && bytes[j] !== BEL && !(bytes[j] === ESC && bytes[j + 1] === ST)) j += 1;
-      if (j >= bytes.length || (bytes[j] === ESC && j + 1 >= bytes.length)) return unfinished(start);
+      // An offer to open is carried whole, however the output was split. So
+      // far, it may be no longer than the start of its prefix.
+      const opening = OPEN.startsWith(text(bytes, i + 2, Math.min(j, i + 2 + OPEN.length)));
+      if (j >= bytes.length || (bytes[j] === ESC && j + 1 >= bytes.length)) return unfinished(start, opening ? LONGEST_OPEN : LONGEST);
       const end = bytes[j] === BEL ? "\x07" : "\x1b\\";
       const after = j + end.length;
       // Only a body as short as the query is read: copies can run to megabytes.
       const colour = j - (i + 2) === CURSOR_QUERY.length && text(bytes, i + 2, j) === CURSOR_QUERY ? xcolour(cursor) : null;
       if (colour) reply(after, `\x1b]12;${colour}${end}`);
+      const body = j - (i + 2);
+      if (opening && body > OPEN.length && body <= OPEN.length + OPEN_BYTES) opens.push(text(bytes, i + 2 + OPEN.length, j));
       i = after;
     } else {
       i += 2;
     }
   }
-  return { replies, carry: new Uint8Array() };
+  return { replies, opens, carry: new Uint8Array() };
 }

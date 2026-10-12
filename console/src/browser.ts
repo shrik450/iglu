@@ -12,7 +12,7 @@ import type { BrowserTab } from "./generated/BrowserTab.ts";
 import type { DialogKind } from "./generated/DialogKind.ts";
 import type { MenuOption } from "./generated/MenuOption.ts";
 import type { MouseAction } from "./generated/MouseAction.ts";
-import { buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, type Press, screenRect, tabName, wheelPixels } from "./state/browser.ts";
+import { buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, openingOf, pagePoint, type Press, screenRect, tabName, wheelPixels } from "./state/browser.ts";
 import { api, failure } from "./api/client.ts";
 import { keyboardFree } from "./focus.ts";
 import { MAX_FILE_BYTES } from "./state/paste.ts";
@@ -34,6 +34,17 @@ export interface Menu {
   height: number;
   selected: number | null;
   options: MenuOption[];
+}
+
+/** Addresses to open in a workspace's browser, by workspace, from before its
+ * column's pane was there to take them. */
+const opening = new Map<string, string>();
+
+/** Opens `address` in the workspace's browser once its column shows; null
+ * forgets what was to be opened. */
+export function openOnceShown(workspace: string, address: string | null): void {
+  if (address === null) opening.delete(workspace);
+  else opening.set(workspace, address);
 }
 
 export class BrowserPane {
@@ -78,6 +89,8 @@ export class BrowserPane {
   private moveFrame = 0;
   /** Where a finger went down, while it may yet scroll. */
   private touch: { id: number; x: number; y: number; scrolling: boolean } | null = null;
+  /** An address to open once the browser's tabs are known. */
+  private wanted: string | null = null;
 
   constructor(options: {
     container: HTMLElement;
@@ -122,6 +135,8 @@ export class BrowserPane {
     });
     this.sizes.observe(container);
     panes.set(this.key, this);
+    this.wanted = opening.get(workspace) ?? null;
+    opening.delete(workspace);
     if (options.wantsFocus() && keyboardFree()) this.focus();
     this.connect();
   }
@@ -151,6 +166,20 @@ export class BrowserPane {
   navigate(address: string): void {
     this.send({ type: "navigate", address });
     this.focus();
+  }
+
+  /** Opens `address`, once the browser's tabs are known. */
+  open(address: string): void {
+    this.wanted = address;
+    this.openWanted();
+    this.focus();
+  }
+
+  private openWanted(): void {
+    // A browser reconnecting tells its tabs again, and it's opened then.
+    if (this.wanted === null || this.shown.value === null || this.socket?.readyState !== WebSocket.OPEN) return;
+    this.send(openingOf(this.tabs.value, this.wanted));
+    this.wanted = null;
   }
 
   act(input: BrowserInput): void {
@@ -261,6 +290,7 @@ export class BrowserPane {
         this.shown.value = event.shown;
         const tab = event.tabs.find((t) => t.id === event.shown);
         setTitle(this.key, tab ? tabName(tab) : "");
+        this.openWanted();
         break;
       }
       case "viewport":

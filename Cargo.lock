@@ -1323,6 +1323,7 @@ dependencies = [
 name = "iglu-guest"
 version = "0.2.0"
 dependencies = [
+ "base64 0.23.1",
  "iglu-domain",
  "rustix",
  "serde",

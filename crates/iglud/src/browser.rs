@@ -304,9 +304,9 @@ impl Screen {
                 out.extend(self.show(tab));
             }
             BrowserInput::Show { .. } => out.push(self.tabs_event()),
-            BrowserInput::Open => out.push(self.call(
+            BrowserInput::Open { address: typed } => out.push(self.call(
                 "Target.createTarget",
-                json!({ "url": "about:blank" }),
+                json!({ "url": typed.as_deref().map_or_else(|| "about:blank".to_owned(), address) }),
                 None,
                 Some(Pending::Opened),
             )),
@@ -1704,6 +1704,24 @@ mod tests {
             json!({ "id": create["id"], "result": { "targetId": "t9" } }),
         ));
         assert!(methods(&out).contains(&"Target.attachToTarget".to_owned()));
+    }
+
+    #[test]
+    fn a_new_tab_opens_blank_or_where_its_asked_to_and_comes_to_the_front() {
+        let mut screen = showing();
+        let blank = screen.input(BrowserInput::Open { address: None });
+        assert_eq!(sent(&blank)[0]["params"]["url"], "about:blank");
+        let asked = screen.input(BrowserInput::Open {
+            address: Some("localhost:8085/callback?code=x".into()),
+        });
+        let create = sent(&asked).remove(0);
+        assert_eq!(create["method"], "Target.createTarget");
+        assert_eq!(
+            create["params"]["url"],
+            "http://localhost:8085/callback?code=x"
+        );
+        let out = answer(&mut screen, &create, json!({ "targetId": "t9" }));
+        assert!(attaches(&out, "t9").is_some());
     }
 
     #[test]

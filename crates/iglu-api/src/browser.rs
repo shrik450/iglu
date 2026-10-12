@@ -51,8 +51,12 @@ pub enum BrowserInput {
     Show {
         tab: String,
     },
-    /// Opens a new, blank tab and shows it.
-    Open,
+    /// Opens a new tab and shows it: at an address as typed, or blank.
+    Open {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts", ts(optional))]
+        address: Option<String>,
+    },
     Close {
         tab: String,
     },

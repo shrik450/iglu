@@ -133,9 +133,14 @@ in
       environment.variables.IGLU_SOCKET = "/var/lib/iglu-api.sock";
 
       # The host's tools: `iglu`, which acts as the workspace from inside it
-      # through its channel, `iglu-status` and `caffeinate` for agents, and
-      # zmx and `iglu-guest`, which hostd drives.
+      # through its channel, `iglu-status` and `caffeinate` for agents,
+      # `xclip`, `xsel` and `xdg-open`, which copy and open through the
+      # console, and zmx and `iglu-guest`, which hostd drives.
       environment.profiles = [ tools ];
+      # Programs that look for a browser without a display, such as
+      # Python's, find it here. By its path: xdg-utils' own xdg-open, if an
+      # environment has it, opens $BROWSER, and would find itself by name.
+      environment.variables.BROWSER = "${tools}/bin/xdg-open";
       environment.systemPackages = [ pkgs.git ];
 
       # hostd treats the workspace as booted once this marker exists: the

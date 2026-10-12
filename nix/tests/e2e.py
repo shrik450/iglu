@@ -321,6 +321,14 @@ try:
         assert "DevTools" in refused, refused
         client.succeed(f"{IGLU} column close browser -w demo")
 
+    with subtest("programs copy and open through the console, as on a desktop"):
+        # Programs that look for a browser without a display find iglu's.
+        assert guest("echo $BROWSER").strip() == "/var/lib/iglu/tools/bin/xdg-open"
+        browser("copies-from-programs", "demo")
+        browser("opens-from-programs", "demo")
+        browser("opens-in-workspace", "demo")
+        client.succeed(f"{IGLU} column close browser -w demo")
+
     token = json.loads(client.succeed("cat /root/.config/iglu/credentials.json"))["token"]
     api = f"curl -sS --fail-with-body -H 'Authorization: Bearer {token}'"
 
