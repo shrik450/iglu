@@ -103,7 +103,11 @@ pub struct PutAccess {
 /// Who's asking: a person, or a workspace through its channel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, tag = "kind", rename_all = "snake_case")
+)]
 pub enum Identity {
     Person {
         id: PrincipalId,

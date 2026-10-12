@@ -8,4 +8,4 @@ import type { WorkspaceName } from "./WorkspaceName";
 /**
  * Who's asking: a person, or a workspace through its channel.
  */
-export type Identity = { "Person": { id: PrincipalId, name: DisplayName | null, email: Email | null, } } | { "Workspace": { id: WorkspaceId, name: WorkspaceName, } };
+export type Identity = { "kind": "person", id: PrincipalId, name: DisplayName | null, email: Email | null, } | { "kind": "workspace", id: WorkspaceId, name: WorkspaceName, };
