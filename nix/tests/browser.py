@@ -650,11 +650,8 @@ def filled(screen: Locator) -> None:
     """Waits for the browser's image to fill its screen again: a dialog
     above it takes room while it's open, and a click lands only on the
     image, which takes a moment to come back at the new size."""
-    deadline = time.monotonic() + 10
     fit = "c => Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1"
-    while not screen.evaluate(fit):
-        assert time.monotonic() < deadline, screen.evaluate("c => [c.width, c.height, c.clientWidth, c.clientHeight]")
-        time.sleep(0.1)
+    screen.page.wait_for_function(fit, arg=screen.element_handle(), timeout=10_000)
 
 
 def browses(page: Page, name: str) -> Any:
