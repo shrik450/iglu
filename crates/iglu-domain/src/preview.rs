@@ -156,20 +156,12 @@ pub enum ConsoleOrigin {
     Other,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CsrfToken {
-    Valid,
-    MissingOrWrong,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ConsoleRejection {
     #[error("cross-origin WebSocket")]
     CrossOriginWebSocket,
     #[error("state-changing request from another origin")]
     CrossOriginMutation,
-    #[error("missing or wrong CSRF token")]
-    Csrf,
 }
 
 /// Whether the console accepts a request. Without these checks, a preview
@@ -184,7 +176,6 @@ pub fn console_access(
     transport: Transport,
     fetch: FetchMetadata,
     origin: ConsoleOrigin,
-    csrf: CsrfToken,
 ) -> Result<(), ConsoleRejection> {
     match credential {
         Credential::Bearer => return Ok(()),
@@ -199,16 +190,16 @@ pub fn console_access(
         },
         Transport::Http(MethodClass::Safe) => Ok(()),
         Transport::Http(MethodClass::Unsafe) => {
+            // What a browser says about where a request came from, which a
+            // page can't forge, and what a cross-site form can't send.
             match (fetch.site, origin) {
-                (Some(FetchSite::SameOrigin), ConsoleOrigin::Exact | ConsoleOrigin::Absent) => {}
+                (Some(FetchSite::SameOrigin), ConsoleOrigin::Exact | ConsoleOrigin::Absent) => {
+                    Ok(())
+                }
                 (Some(FetchSite::SameOrigin), ConsoleOrigin::Other)
                 | (None | Some(FetchSite::SameSite | FetchSite::CrossSite | FetchSite::None), _) => {
-                    return Err(ConsoleRejection::CrossOriginMutation);
+                    Err(ConsoleRejection::CrossOriginMutation)
                 }
-            }
-            match csrf {
-                CsrfToken::Valid => Ok(()),
-                CsrfToken::MissingOrWrong => Err(ConsoleRejection::Csrf),
             }
         }
     }
@@ -370,46 +361,23 @@ mod tests {
                 Credential::Cookie,
                 Transport::WebSocket,
                 SAME,
-                ConsoleOrigin::Exact,
-                CsrfToken::MissingOrWrong
+                ConsoleOrigin::Exact
             ),
             Ok(())
         );
         for origin in [ConsoleOrigin::Absent, ConsoleOrigin::Other] {
             assert_eq!(
-                console_access(
-                    Credential::Cookie,
-                    Transport::WebSocket,
-                    SAME,
-                    origin,
-                    CsrfToken::Valid
-                ),
+                console_access(Credential::Cookie, Transport::WebSocket, SAME, origin),
                 Err(ConsoleRejection::CrossOriginWebSocket)
             );
         }
     }
 
     #[test]
-    fn console_mutations_need_same_origin_and_csrf() {
+    fn console_mutations_need_the_same_origin() {
         assert_eq!(
-            console_access(
-                Credential::Cookie,
-                POST,
-                SAME,
-                ConsoleOrigin::Exact,
-                CsrfToken::Valid
-            ),
+            console_access(Credential::Cookie, POST, SAME, ConsoleOrigin::Exact),
             Ok(())
-        );
-        assert_eq!(
-            console_access(
-                Credential::Cookie,
-                POST,
-                SAME,
-                ConsoleOrigin::Exact,
-                CsrfToken::MissingOrWrong
-            ),
-            Err(ConsoleRejection::Csrf)
         );
         for site in [
             None,
@@ -422,33 +390,25 @@ mod tests {
                     Credential::Cookie,
                     POST,
                     meta(site, None),
-                    ConsoleOrigin::Exact,
-                    CsrfToken::Valid
+                    ConsoleOrigin::Exact
                 ),
                 Err(ConsoleRejection::CrossOriginMutation)
             );
         }
         assert_eq!(
-            console_access(
-                Credential::Cookie,
-                POST,
-                SAME,
-                ConsoleOrigin::Other,
-                CsrfToken::Valid
-            ),
+            console_access(Credential::Cookie, POST, SAME, ConsoleOrigin::Other),
             Err(ConsoleRejection::CrossOriginMutation)
         );
     }
 
     #[test]
-    fn bearer_requests_are_not_csrf_able() {
+    fn bearer_requests_skip_the_origin_checks() {
         assert_eq!(
             console_access(
                 Credential::Bearer,
                 POST,
                 meta(None, None),
-                ConsoleOrigin::Absent,
-                CsrfToken::MissingOrWrong
+                ConsoleOrigin::Absent
             ),
             Ok(())
         );

@@ -7,13 +7,13 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use hyper::Method;
-use iglu_domain::agent::{AgentSpec, MAX_AGENTS};
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
-use iglu_domain::guest::{self, INTERFACE, Incompatible, Interface};
 use iglu_domain::secret::FetchTokens;
+use iglu_domain::time::Timestamp;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
@@ -28,14 +28,6 @@ use crate::config;
 struct ImageManifest {
     arch: Arch,
     user: GuestUser,
-    /// The guest-tools interface the image's tools speak. Images from
-    /// before it was recorded don't say.
-    #[serde(default)]
-    guest_interface: Option<Interface>,
-    /// The agents the environment declares. Parsed, so a malformed one
-    /// fails the build with a message instead of reaching a workspace.
-    #[serde(default)]
-    agents: Vec<AgentSpec>,
     /// Whether the environment has the browser, `iglu.browser.enable`.
     #[serde(default)]
     browser: bool,
@@ -47,8 +39,6 @@ pub enum BuildError {
     Failed(String),
     #[error("the build produced an unusable image: {0}")]
     BadOutput(String),
-    #[error(transparent)]
-    Incompatible(#[from] Incompatible),
     #[error("importing the image failed: {0}")]
     Import(String),
 }
@@ -61,24 +51,40 @@ pub async fn build(
     tokens: &FetchTokens,
     timeout: Duration,
 ) -> Result<BuiltImage, BuildError> {
-    let store_path = nix_build(build, source, tokens).await?;
+    // The build's output link keeps it from the host's store's collection
+    // until its image keeps it, or it fails.
+    static BUILDS: AtomicU64 = AtomicU64::new(0);
+    let link = build.home.join(format!(
+        "iglu-build-{}",
+        BUILDS.fetch_add(1, Ordering::Relaxed)
+    ));
+    let store_path = nix_build(build, source, tokens, &link).await?;
+    let imported = import_output(incus, settings, build, &store_path, timeout).await;
+    let _ = tokio::fs::remove_file(&link).await;
+    imported
+}
+
+async fn import_output(
+    incus: &Incus,
+    settings: &config::Incus,
+    build: &config::Build,
+    store_path: &Path,
+    timeout: Duration,
+) -> Result<BuiltImage, BuildError> {
     let manifest_bytes = tokio::fs::read(store_path.join("iglu.json"))
         .await
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
     let manifest: ImageManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
-    guest::compatible(manifest.guest_interface)?;
-    if manifest.agents.len() > MAX_AGENTS {
-        return Err(BuildError::BadOutput(format!(
-            "iglu.json declares {} agents; at most {MAX_AGENTS} are allowed",
-            manifest.agents.len()
-        )));
-    }
     let metadata = store_path.join("metadata.tar.xz");
     let rootfs = store_path.join("rootfs.squashfs");
     let fingerprint = fingerprint(&metadata, &rootfs).await?;
+    let system = tokio::fs::read_link(store_path.join("system"))
+        .await
+        .map_err(|e| BuildError::BadOutput(format!("system: {e}")))?;
     import(incus, settings, &fingerprint, &metadata, &rootfs).await?;
-    record_interface(incus, &fingerprint, timeout).await?;
+    keep(&fingerprint, store_path).await?;
+    record(incus, &fingerprint, &system, timeout).await?;
     warm(
         incus,
         settings,
@@ -90,7 +96,6 @@ pub async fn build(
         fingerprint,
         arch: manifest.arch,
         user: manifest.user,
-        agents: manifest.agents,
         browser: manifest.browser,
         store_path: store_path.display().to_string(),
     })
@@ -100,6 +105,7 @@ async fn nix_build(
     build: &config::Build,
     source: &EnvSource,
     tokens: &FetchTokens,
+    link: &Path,
 ) -> Result<PathBuf, BuildError> {
     let mut command = Command::new(&build.nix);
     command
@@ -107,9 +113,10 @@ async fn nix_build(
             "--extra-experimental-features",
             "nix-command flakes",
             "build",
-            "--no-link",
             "--print-out-paths",
+            "--out-link",
         ])
+        .arg(link)
         .arg(source.image_installable())
         .env_clear()
         .env("HOME", &build.home)
@@ -262,24 +269,63 @@ async fn warm(
     Ok(())
 }
 
-/// The image property recording which guest-tools interface an image's
-/// tools speak, so creating from an image can check it.
-pub const INTERFACE_PROPERTY: &str = "iglu.guest-interface";
+/// The image property recording the NixOS system the image is of, which a
+/// workspace from an older build upgrades to in place.
+pub const SYSTEM_PROPERTY: &str = "iglu.system";
 
-/// The interface an imported image records, if it records one.
-pub fn recorded_interface(image: &serde_json::Value) -> Option<Interface> {
-    image["properties"][INTERFACE_PROPERTY]
+/// Where hostd keeps each image's build alive in the host's store, so its
+/// system is there to copy into workspaces while the image is: Nix's own
+/// record, not hostd's.
+const ROOTS: &str = "/nix/var/nix/gcroots/iglu";
+
+fn root_of(fingerprint: &ImageFingerprint) -> PathBuf {
+    Path::new(ROOTS).join(fingerprint.as_str())
+}
+
+/// Lets the host's store collect an image's build, once the image is gone.
+pub async fn release(fingerprint: &ImageFingerprint) {
+    let _ = tokio::fs::remove_file(root_of(fingerprint)).await;
+}
+
+/// The system an imported image records, if it records one.
+pub fn recorded_system(image: &serde_json::Value) -> Option<String> {
+    image["properties"][SYSTEM_PROPERTY]
+        .as_str()
+        .filter(|path| path.starts_with("/nix/store/"))
+        .map(str::to_owned)
+}
+
+/// The image property recording when hostd built the image, in milliseconds
+/// since the Unix epoch.
+pub const BUILT_PROPERTY: &str = "iglu.built-at";
+
+/// When an imported image was built, if it records it.
+pub fn recorded_build(image: &serde_json::Value) -> Option<Timestamp> {
+    image["properties"][BUILT_PROPERTY]
         .as_str()?
         .parse()
         .ok()
-        .map(Interface::new)
+        .map(Timestamp::from_unix_millis)
 }
 
-/// Records on the image that its tools speak this host's interface, which
-/// the build just checked.
-async fn record_interface(
+/// Keeps the build in the host's store while its image is on the host.
+async fn keep(fingerprint: &ImageFingerprint, store_path: &Path) -> Result<(), BuildError> {
+    let root = root_of(fingerprint);
+    tokio::fs::create_dir_all(ROOTS)
+        .await
+        .map_err(|e| BuildError::Import(format!("keeping the build: {e}")))?;
+    let _ = tokio::fs::remove_file(&root).await;
+    tokio::fs::symlink(store_path, &root)
+        .await
+        .map_err(|e| BuildError::Import(format!("keeping the build: {e}")))
+}
+
+/// Records on the image when it was built, which also marks it as hostd's,
+/// and the system it is of.
+async fn record(
     incus: &Incus,
     fingerprint: &ImageFingerprint,
+    system: &Path,
     timeout: Duration,
 ) -> Result<(), BuildError> {
     let path = format!("/1.0/images/{fingerprint}");
@@ -287,7 +333,11 @@ async fn record_interface(
         .get(&path)
         .await
         .map_err(|e| BuildError::Import(e.to_string()))?;
-    image["properties"][INTERFACE_PROPERTY] = serde_json::json!(INTERFACE.to_string());
+    let built = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    image["properties"][BUILT_PROPERTY] = serde_json::json!(built.to_string());
+    image["properties"][SYSTEM_PROPERTY] = serde_json::json!(system.display().to_string());
     let put = serde_json::json!({
         "auto_update": image["auto_update"],
         "expires_at": image["expires_at"],

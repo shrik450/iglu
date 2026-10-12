@@ -11,13 +11,10 @@ test("ports parse from a loose list", () => {
   assert.deepEqual(parsePorts("70000"), { ports: [70000] });
 });
 
-test("a new workspace opens its project's columns and agent", () => {
+test("a new workspace opens its project's columns, by name or kind", () => {
   const shell = { kind: { kind: "shell" as const }, width: "half" as const };
   const notes = { name: "notes", kind: { kind: "shell" as const }, width: "half" as const };
-  const scripted = { kind: { kind: "agent" as const, agent: "scripted" }, width: "half" as const };
-  assert.deepEqual(opensWith({ agent: null, opening: [shell, notes] }), ["Shell", "notes"]);
-  assert.deepEqual(opensWith({ agent: "haiku", opening: [scripted] }), ["scripted", "haiku"]);
-  // An agent the opening already has isn't started twice.
-  assert.deepEqual(opensWith({ agent: "scripted", opening: [shell, scripted] }), ["Shell", "scripted"]);
-  assert.deepEqual(opensWith({ agent: null, opening: [] }), []);
+  const browser = { kind: { kind: "browser" as const }, width: "half" as const };
+  assert.deepEqual(opensWith({ opening: [shell, notes, browser] }), ["Shell", "notes", "Browser"]);
+  assert.deepEqual(opensWith({ opening: [] }), []);
 });

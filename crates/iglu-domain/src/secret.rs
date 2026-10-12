@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
 use crate::lifecycle::SecretsGeneration;
-use crate::parse::{is_printable, text_type};
+use crate::parse::{display_inner, is_printable};
 use crate::repo::GitHost;
 
 /// A secret's name, chosen by its owner.
@@ -177,17 +177,6 @@ impl FromStr for GitUsername {
             ))
         }
     }
-}
-
-macro_rules! display_inner {
-    ($($name:ident),*) => {$(
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-        text_type!($name);
-    )*};
 }
 
 display_inner!(SecretName, EnvVarName, HomePath, GitUsername);

@@ -10,11 +10,10 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use iglu_domain::attention::AttentionState;
+use iglu_domain::attention::{AttentionState, SessionStatus};
 use iglu_domain::capacity;
 use iglu_domain::column::{Arg, Argv};
-use iglu_domain::env::{BuiltImage, EnvSource};
-use iglu_domain::guest as guest_tools;
+use iglu_domain::env::{BuiltImage, EnvSource, ImageFingerprint, Uid};
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::{
     Columns, Instance, Present, Provisioning, Readiness, Running, Runtime as Status,
@@ -24,9 +23,10 @@ use iglu_domain::port::GuestPort;
 use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretTarget, SecretValue, bundle};
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalSize};
+use iglu_domain::time::Millis;
 use iglu_proto::{
     BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Limits,
-    ProvisionSpec, SessionSpec,
+    ProvisionSpec, PruneImages, SessionSpec, UpgradeSpec,
 };
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -39,6 +39,8 @@ use crate::runtime::{Guest, GuestFile, Runtime, TerminalInput};
 pub struct Fixture {
     /// An environment the runtime can build here.
     pub source: EnvSource,
+    /// Another, with the same account, that workspaces update to.
+    pub next: EnvSource,
     /// How long a started workspace may take to finish booting.
     pub boot_timeout: Duration,
 }
@@ -67,7 +69,7 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check(
-                "creating is idempotent and records the interface",
+                "creating is idempotent and lists the instance with its owner",
                 Suite::creates,
             )
             .await,
@@ -136,7 +138,10 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     );
     outcomes.push(
         suite
-            .check("attention reaches the inventory", Suite::attention)
+            .check(
+                "threads reach the inventory, go with their session and outlast a freeze",
+                Suite::attention,
+            )
             .await,
     );
     outcomes.push(
@@ -155,8 +160,33 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check(
+                "agents keep their configuration for every workspace of the person's, and no one else's",
+                Suite::keeps_per_person,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
                 "a failed clone leaves provisioning pending",
                 Suite::failed_clone,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
+                "updating upgrades it in place to the next image from any settled state, keeping its files",
+                |suite, workspace| suite.updates(workspace, &fixture.next),
+            )
+            .await,
+    );
+    // Last: it removes the image the other checks use.
+    outcomes.push(
+        suite
+            .check(
+                "an image goes once nothing keeps it and it isn't new",
+                Suite::prunes_images,
             )
             .await,
     );
@@ -206,6 +236,9 @@ struct Suite<'a, R> {
     host: &'a Host<R>,
     image: BuiltImage,
     boot_timeout: Duration,
+    /// Who owns the workspaces the checks make, one person for the run, so
+    /// the run makes one kept directory.
+    owner: PrincipalId,
 }
 
 fn ensure(condition: bool, what: impl FnOnce() -> String) -> Checked {
@@ -236,6 +269,7 @@ impl<'a, R: Runtime> Suite<'a, R> {
                 host,
                 image,
                 boot_timeout: fixture.boot_timeout,
+                owner: PrincipalId::from_uuid(Uuid::new_v4()),
             }),
             BuildOutcome::Failed { log_tail } => Err(Outcome {
                 check: "builds the environment",
@@ -261,8 +295,12 @@ impl<'a, R: Runtime> Suite<'a, R> {
     }
 
     fn spec(&self) -> CreateSpec {
+        self.spec_for(self.owner)
+    }
+
+    fn spec_for(&self, owner: PrincipalId) -> CreateSpec {
         CreateSpec {
-            owner: PrincipalId::from_uuid(Uuid::new_v4()),
+            owner,
             image: self.image.fingerprint.clone(),
             user: self.image.user.clone(),
             limits: Limits {
@@ -349,18 +387,6 @@ impl<'a, R: Runtime> Suite<'a, R> {
                 || format!("created: {instance:?}"),
             )?;
         }
-        let recorded = match self
-            .host
-            .runtime()
-            .instance(workspace.instance_name())
-            .await
-        {
-            Ok(Some(Ok(observed))) => observed.guest_interface,
-            other => return Err(format!("the created instance: {other:?}")),
-        };
-        ensure(recorded == Some(guest_tools::INTERFACE), || {
-            format!("the instance records interface {recorded:?}")
-        })?;
         let inventory = self.host.inventory().await.map_err(|e| e.to_string())?;
         ensure(
             inventory
@@ -561,6 +587,147 @@ impl<'a, R: Runtime> Suite<'a, R> {
         self.perform(workspace, Command::Create(self.spec()))
             .await?;
         self.boot(workspace).await.map(|_| ())
+    }
+
+    async fn prunes_images(&self, workspace: WorkspaceId) -> Checked {
+        let image = self.image.fingerprint.clone();
+        let prune = |keep: Vec<ImageFingerprint>, older_than: Millis| {
+            let request = PruneImages { keep, older_than };
+            async move {
+                self.host
+                    .prune_images(&request)
+                    .await
+                    .map(|pruned| pruned.removed)
+                    .map_err(|e| e.to_string())
+            }
+        };
+        let removed = prune(Vec::new(), Millis::from_secs(3600)).await?;
+        ensure(!removed.contains(&image), || {
+            format!("a new image was removed: {removed:?}")
+        })?;
+        let removed = prune(vec![image.clone()], Millis::from_secs(0)).await?;
+        ensure(!removed.contains(&image), || {
+            format!("a kept image was removed: {removed:?}")
+        })?;
+        let removed = prune(Vec::new(), Millis::from_secs(0)).await?;
+        ensure(removed.contains(&image), || {
+            format!("the image wasn't removed: {removed:?}")
+        })?;
+        self.refused(
+            workspace,
+            Command::Create(self.spec()),
+            ErrorCode::ImageMissing,
+        )
+        .await
+    }
+
+    async fn image_of(&self, workspace: WorkspaceId) -> Result<Option<ImageFingerprint>, String> {
+        let reports = self.host.inventory().await.map_err(|e| e.to_string())?;
+        Ok(reports
+            .into_iter()
+            .find(|r| r.workspace == workspace)
+            .and_then(|r| r.image))
+    }
+
+    async fn updates(&self, workspace: WorkspaceId, next: &EnvSource) -> Checked {
+        let next = match self.host.build(next, &FetchTokens::default()).await {
+            BuildOutcome::Built(image) => image,
+            BuildOutcome::Failed { log_tail } => {
+                return Err(format!("building the next environment: {log_tail}"));
+            }
+        };
+        ensure(next.fingerprint != self.image.fingerprint, || {
+            "the next environment is the same image".into()
+        })?;
+        self.running_workspace(workspace).await?;
+        self.shell(
+            workspace,
+            "home",
+            "echo here > ~/update-mark && echo wr''ote",
+            "wrote",
+        )
+        .await?;
+        let first = self.image_of(workspace).await?;
+        ensure(
+            first
+                .as_ref()
+                .is_none_or(|first| *first == self.image.fingerprint),
+            || format!("created from {first:?}, not {}", self.image.fingerprint),
+        )?;
+        // Another account would leave its files someone else's.
+        let mut stranger = next.user.clone();
+        stranger.uid = Uid::try_from(stranger.uid.get() + 1).map_err(|e| e.to_string())?;
+        self.refused(
+            workspace,
+            Command::Upgrade(UpgradeSpec {
+                image: next.fingerprint.clone(),
+                user: stranger,
+            }),
+            ErrorCode::InvalidState,
+        )
+        .await?;
+        // Stopped, it's started to be upgraded and restarted into the new
+        // system; asked again, it's done already, and still running.
+        self.perform(workspace, Command::Stop).await?;
+        let upgrade = Command::Upgrade(UpgradeSpec {
+            image: next.fingerprint.clone(),
+            user: next.user.clone(),
+        });
+        for _ in 0..2 {
+            let instance = self.perform(workspace, upgrade.clone()).await?;
+            ensure(matches!(status(instance), Some(Status::Running(_))), || {
+                format!("not running after upgrading: {instance:?}")
+            })?;
+        }
+        let now = self.image_of(workspace).await?;
+        ensure(now.as_ref() == Some(&next.fingerprint), || {
+            format!("it runs {now:?}, not {}", next.fingerprint)
+        })?;
+        self.boot(workspace).await?;
+        self.shell(workspace, "home", "cat ~/update-mark", "here")
+            .await
+    }
+
+    /// What one of a person's workspaces keeps, their others see, live;
+    /// another person's don't. The words the checks wait for are split in
+    /// what's typed, so only the output has them whole.
+    async fn keeps_per_person(&self, workspace: WorkspaceId) -> Checked {
+        let same = WorkspaceId::from_uuid(Uuid::new_v4());
+        let other = WorkspaceId::from_uuid(Uuid::new_v4());
+        let result = async {
+            self.running_workspace(workspace).await?;
+            self.shell(
+                workspace,
+                "keeps",
+                r#"printf 'kept-%s\n' yes > "$CLAUDE_CONFIG_DIR/mark" && test -d "$CODEX_HOME" && echo wr''ote"#,
+                "wrote",
+            )
+            .await?;
+            self.perform(same, Command::Create(self.spec())).await?;
+            self.boot(same).await?;
+            self.shell(same, "keeps", r#"cat "$CLAUDE_CONFIG_DIR/mark""#, "kept-yes")
+                .await?;
+            let stranger = PrincipalId::from_uuid(Uuid::new_v4());
+            self.perform(other, Command::Create(self.spec_for(stranger)))
+                .await?;
+            self.boot(other).await?;
+            self.shell(
+                other,
+                "keeps",
+                r#"test -e "$CLAUDE_CONFIG_DIR/mark" || echo mi''ssing"#,
+                "missing",
+            )
+            .await
+        }
+        .await;
+        let cleaned = [
+            self.perform(same, Command::Delete).await,
+            self.perform(other, Command::Delete).await,
+        ];
+        cleaned
+            .into_iter()
+            .try_for_each(|done| done.map(|_| ()))
+            .and(result)
     }
 
     async fn deliver(
@@ -883,6 +1050,8 @@ impl<'a, R: Runtime> Suite<'a, R> {
         }
     }
 
+    /// A thread shows in the inventory; closing its session drops it, and a
+    /// session opened again under the name starts with none.
     async fn attention(&self, workspace: WorkspaceId) -> Checked {
         self.running_workspace(workspace).await?;
         self.shell(
@@ -893,23 +1062,74 @@ impl<'a, R: Runtime> Suite<'a, R> {
         )
         .await?;
         let session: SessionName = "agent".parse().expect("a valid session name");
+        self.until_reported(workspace, "the waiting thread", |statuses| {
+            statuses.iter().any(|status| {
+                status.session == session
+                    && status.state == AttentionState::Waiting
+                    && status.summary.as_str() == "conformance-question"
+            })
+        })
+        .await?;
+        self.host
+            .close_terminal(workspace, &session)
+            .await
+            .map_err(|e| e.to_string())?;
+        let gone = |statuses: &[SessionStatus]| statuses.iter().all(|s| s.session != session);
+        self.until_reported(workspace, "no thread after closing", gone)
+            .await?;
+        self.shell(workspace, "agent", "echo again-$((6*7))", "again-42")
+            .await?;
+        self.until_reported(workspace, "no thread in the new session", gone)
+            .await?;
+        // A frozen guest can't be read, which isn't the same as having no
+        // threads: they're there again once it thaws.
+        self.shell(
+            workspace,
+            "agent",
+            "iglu-status set done held-over && echo held-$((6*7))",
+            "held-42",
+        )
+        .await?;
+        let held = |statuses: &[SessionStatus]| {
+            statuses
+                .iter()
+                .any(|s| s.session == session && s.summary.as_str() == "held-over")
+        };
+        self.until_reported(workspace, "the done thread", held)
+            .await?;
+        self.perform(workspace, Command::Freeze).await?;
+        let inventory = self.host.inventory().await.map_err(|e| e.to_string())?;
+        let frozen = inventory
+            .iter()
+            .find(|report| report.workspace == workspace);
+        ensure(
+            frozen.is_some_and(|report| report.sessions.is_none()),
+            || format!("a frozen guest's threads read as known: {frozen:?}"),
+        )?;
+        self.perform(workspace, Command::Thaw).await?;
+        self.until_reported(workspace, "the done thread after thawing", held)
+            .await
+    }
+
+    /// Waits until the host reads the workspace's threads and they pass.
+    async fn until_reported(
+        &self,
+        workspace: WorkspaceId,
+        what: &str,
+        passes: impl Fn(&[SessionStatus]) -> bool,
+    ) -> Checked {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let inventory = self.host.inventory().await.map_err(|e| e.to_string())?;
-            let reported = inventory
+            let read = inventory
                 .iter()
-                .filter(|report| report.workspace == workspace)
-                .flat_map(|report| &report.sessions)
-                .any(|status| {
-                    status.session == session
-                        && status.state == AttentionState::Waiting
-                        && status.summary.as_str() == "conformance-question"
-                });
-            if reported {
+                .find(|report| report.workspace == workspace)
+                .and_then(|report| report.sessions.as_deref());
+            if read.is_some_and(&passes) {
                 return Ok(());
             }
             if Instant::now() > deadline {
-                return Err(format!("the inventory never showed it: {inventory:?}"));
+                return Err(format!("never {what}: {inventory:?}"));
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -931,7 +1151,8 @@ impl<'a, R: Runtime> Suite<'a, R> {
             inventory
                 .iter()
                 .filter(|report| report.workspace == workspace)
-                .flat_map(|report| &report.sessions)
+                .filter_map(|report| report.sessions.as_ref())
+                .flatten()
                 .any(|status| {
                     status.session == session
                         && status.state == AttentionState::Working

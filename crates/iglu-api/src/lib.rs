@@ -7,7 +7,7 @@
 
 pub mod browser;
 
-use iglu_domain::agent::Prompt;
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::attention::{AttentionState, Seen, Summary, ThreadKey};
 use iglu_domain::auth::{DisplayName, Email, Permission};
 use iglu_domain::capacity::{Bytes, Capacity};
@@ -16,7 +16,7 @@ use iglu_domain::env::{BuiltImage, EnvName, EnvSource, GuestPath};
 use iglu_domain::git::{GitState, Unsaved};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
-use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
+use iglu_domain::label::{ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Phase, Revision};
 use iglu_domain::listener::Listener;
 use iglu_domain::names::WorkspaceLabel;
@@ -39,8 +39,6 @@ pub struct Me {
     pub id: PrincipalId,
     pub name: Option<DisplayName>,
     pub email: Option<Email>,
-    /// Sent back in `x-csrf-token` on every mutating console request.
-    pub csrf_token: String,
     pub preview_domain: String,
     pub boot: BootId,
 }
@@ -59,8 +57,7 @@ pub struct WorkspaceView {
     pub environment: EnvName,
     pub phase: Phase,
     pub desired: DesiredState,
-    /// Sent back as `expected_revision` so a change applies only to what
-    /// the caller saw.
+    /// Increases whenever its desired state changes.
     pub revision: Revision,
     pub condition: Option<Condition>,
     /// Waiting on the person: a thread needs an answer or review, or the
@@ -75,10 +72,11 @@ pub struct WorkspaceView {
     pub threads: Vec<AttentionView>,
     /// The columns the workspace opens, in order.
     pub columns: Vec<ColumnSpec>,
-    /// The agents its image can run, for agent columns.
-    pub agents: Vec<AgentName>,
     /// Whether its image has a browser, for a browser column.
     pub browser: bool,
+    /// Whether its environment's newest build is of another image than the
+    /// one it's on, which updating upgrades it to in place.
+    pub newer_build: bool,
     pub routes: Vec<RouteView>,
     /// What it may do from inside, through the `iglu` command, to itself
     /// and to its owner's other workspaces.
@@ -104,7 +102,11 @@ pub struct PutAccess {
 /// Who's asking: a person, or a workspace through its channel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, tag = "kind", rename_all = "snake_case")
+)]
 pub enum Identity {
     Person {
         id: PrincipalId,
@@ -239,8 +241,6 @@ pub struct ProjectView {
     pub environment: EnvName,
     /// The columns its new workspaces open with.
     pub opening: Opening,
-    /// The agent its new workspaces start, if any.
-    pub agent: Option<AgentName>,
     /// Ports its new workspaces publish as previews.
     pub ports: PreviewPorts,
     pub idle: IdleRule,
@@ -296,7 +296,7 @@ pub struct SecretView {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ActivityEntry {
-    pub kind: String,
+    pub kind: ActivityKind,
     pub detail: String,
     pub at: Timestamp,
     /// The workspace it was done from, when a workspace did it.
@@ -319,7 +319,7 @@ pub struct ColumnStatus {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct AddColumn {
     pub kind: ColumnKind,
-    /// Picked from the kind when absent: `shell`, `claude-2`.
+    /// Picked from the kind when absent: `shell`, `browser-2`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub name: Option<SessionName>,
@@ -330,10 +330,6 @@ pub struct AddColumn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub after: Option<SessionName>,
-    /// What an agent column's agent starts on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub prompt: Option<Prompt>,
 }
 
 /// What to call a column; `null` goes back to its session name.
@@ -476,16 +472,6 @@ pub struct CreateWorkspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub label: Option<WorkspaceLabel>,
-    /// What to work on: it starts an agent with it, and names the workspace
-    /// when nothing else does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub prompt: Option<Prompt>,
-    /// The agent to start. Defaults to the opening's first agent column, or
-    /// the environment's first agent when there's a prompt.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub agent: Option<AgentName>,
     /// The branch to work on. Defaults to the workspace name, and names it
     /// when no name or label is given. Only for projects with a repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -495,8 +481,7 @@ pub struct CreateWorkspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub base: Option<BranchName>,
-    /// Made from the label, the branch or the prompt when absent, or else
-    /// generated.
+    /// Made from the label or the branch when absent, or else generated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub name: Option<WorkspaceName>,
@@ -507,9 +492,6 @@ pub struct CreateWorkspace {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct SetDesiredState {
     pub state: DesiredState,
-    /// Refuses the change if the workspace moved on since this revision, so
-    /// it applies only to what the caller saw.
-    pub expected_revision: Revision,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -592,8 +574,6 @@ pub struct ChangeProject {
     pub repo: Option<RepoUrl>,
     pub environment: EnvName,
     pub opening: Opening,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub agent: Option<AgentName>,
     pub ports: PreviewPorts,
     pub idle: IdleRule,
 }
@@ -614,7 +594,7 @@ mod tests {
 
     #[test]
     fn a_whole_project_change_names_every_field() {
-        let whole = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"agent":null,"ports":[],"idle":{"kind":"default"}}"#;
+        let whole = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"ports":[],"idle":{"kind":"default"}}"#;
         assert!(serde_json::from_str::<ChangeProject>(whole).is_ok());
         let without_repo = whole.replace(r#""repo":null,"#, "");
         assert!(serde_json::from_str::<ChangeProject>(&without_repo).is_err());

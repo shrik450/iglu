@@ -11,44 +11,32 @@
 @property --f { syntax: '<number>'; inherits: false; initial-value: 0; }
 
 :root {
-  --bg: #0a1020; --surface: #0f1830; --raised: #152140; --ink: #e6eefb; --muted: #8b9bbb; --line: #22315a;
-  --accent: #8fd8ff; --accent-ink: #07142a; --accent-soft: rgba(143,216,255,.12); --accent-hover: #b4e6ff;
-  --line-strong: #34497d; --sunk: #0b1328; --lift: 0 1px 0 rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05); --error-soft: rgba(255,143,143,.1);
-  --working: #8fd8ff; --waiting: #ffc46b; --waiting-glow: rgba(255,196,107,.38); --done: #7eedbd; --error: #ff8f8f;
-  --term-bg: #070c18; --term-ink: #d4e0f4; --term-dim: #6d80a6; --term-line: #18233f;
-  --frost-core: rgba(214,236,255,.62); --frost-edge: rgba(170,208,245,.42); --frost-ink: #0b1a33;
-  --ice-1: #eaf5ff; --ice-2: #bcd9f4; --ice-line: #8fb6dd; --door: #0b1530;
-  --scrim: rgba(4,8,18,.6); --shadow: 0 24px 60px -24px rgba(0,0,0,.7);
+  /* Each colour once, as light-dark(light, dark): the page's colour scheme picks, following the
+     system unless the look is set. */
+  color-scheme: light dark;
+  --bg: light-dark(#edf2f8, #0a1020); --surface: light-dark(#ffffff, #0f1830); --raised: light-dark(#f6f9fc, #152140);
+  --sunk: light-dark(#e6edf6, #0b1328); --ink: light-dark(#13213d, #e6eefb); --muted: light-dark(#5a6a87, #8b9bbb);
+  --line: light-dark(#d4deeb, #22315a); --line-strong: light-dark(#b5c4d9, #34497d);
+  --accent: light-dark(#2462d1, #8fd8ff); --accent-ink: light-dark(#ffffff, #07142a);
+  --accent-soft: light-dark(rgba(42,107,224,.08), rgba(143,216,255,.12)); --accent-hover: light-dark(#1b51b4, #b4e6ff);
+  --working: light-dark(#2462d1, #8fd8ff); --waiting: light-dark(#9a5c00, #ffc46b);
+  --waiting-glow: light-dark(rgba(214,140,20,.30), rgba(255,196,107,.38)); --done: light-dark(#0b7a59, #7eedbd);
+  --error: light-dark(#b23a32, #ff8f8f); --error-soft: light-dark(rgba(178,58,50,.07), rgba(255,143,143,.1));
+  --term-bg: light-dark(#0e1830, #070c18); --term-ink: light-dark(#dbe6f7, #d4e0f4);
+  --term-dim: light-dark(#7488ad, #6d80a6); --term-line: light-dark(#1b2846, #18233f);
+  --frost-core: light-dark(rgba(255,255,255,.8), rgba(214,236,255,.62)); --frost-edge: light-dark(rgba(206,226,248,.72), rgba(170,208,245,.42));
+  --frost-ink: light-dark(#13213d, #0b1a33); --ice-1: light-dark(#ffffff, #eaf5ff); --ice-2: light-dark(#d6e6f6, #bcd9f4);
+  --ice-line: light-dark(#9ab8d9, #8fb6dd); --door: light-dark(#2b3d62, #0b1530);
+  --scrim: light-dark(rgba(19,33,61,.35), rgba(4,8,18,.6));
+  --lift: 0 1px 1px light-dark(rgba(19,33,61,.08), rgba(0,0,0,.4)), inset 0 1px 0 light-dark(rgba(255,255,255,.9), rgba(255,255,255,.05));
+  --shadow: 0 24px 60px -26px light-dark(rgba(19,33,61,.4), rgba(0,0,0,.7));
   --radius: 10px; --pill: 999px;
   --display: 'Unbounded', 'Arial Rounded MT Bold', system-ui, sans-serif;
   --ui: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  color-scheme: dark;
 }
-@media (prefers-color-scheme: light) {
-  :root:not([data-look="dark"]) {
-    --bg: #edf2f8; --surface: #ffffff; --raised: #f6f9fc; --ink: #13213d; --muted: #5a6a87; --line: #d4deeb;
-    --accent: #2462d1; --accent-ink: #ffffff; --accent-soft: rgba(42,107,224,.08); --accent-hover: #1b51b4;
-    --line-strong: #b5c4d9; --sunk: #e6edf6; --lift: 0 1px 1px rgba(19,33,61,.08), inset 0 1px 0 rgba(255,255,255,.9); --error-soft: rgba(178,58,50,.07);
-    --working: #2462d1; --waiting: #9a5c00; --waiting-glow: rgba(214,140,20,.30); --done: #0b7a59; --error: #b23a32;
-    --term-bg: #0e1830; --term-ink: #dbe6f7; --term-dim: #7488ad; --term-line: #1b2846;
-    --frost-core: rgba(255,255,255,.8); --frost-edge: rgba(206,226,248,.72); --frost-ink: #13213d;
-    --ice-1: #ffffff; --ice-2: #d6e6f6; --ice-line: #9ab8d9; --door: #2b3d62;
-    --scrim: rgba(19,33,61,.35); --shadow: 0 24px 60px -28px rgba(19,33,61,.4);
-    color-scheme: light;
-  }
-}
-:root[data-look="light"] {
-  --bg: #edf2f8; --surface: #ffffff; --raised: #f6f9fc; --ink: #13213d; --muted: #5a6a87; --line: #d4deeb;
-  --accent: #2462d1; --accent-ink: #ffffff; --accent-soft: rgba(42,107,224,.08); --accent-hover: #1b51b4;
-    --line-strong: #b5c4d9; --sunk: #e6edf6; --lift: 0 1px 1px rgba(19,33,61,.08), inset 0 1px 0 rgba(255,255,255,.9); --error-soft: rgba(178,58,50,.07);
-  --working: #2462d1; --waiting: #9a5c00; --waiting-glow: rgba(214,140,20,.30); --done: #0b7a59; --error: #b23a32;
-  --term-bg: #0e1830; --term-ink: #dbe6f7; --term-dim: #7488ad; --term-line: #1b2846;
-  --frost-core: rgba(255,255,255,.8); --frost-edge: rgba(206,226,248,.72); --frost-ink: #13213d;
-  --ice-1: #ffffff; --ice-2: #d6e6f6; --ice-line: #9ab8d9; --door: #2b3d62;
-  --scrim: rgba(19,33,61,.35); --shadow: 0 24px 60px -28px rgba(19,33,61,.4);
-  color-scheme: light;
-}
+:root[data-look="dark"] { color-scheme: dark; }
+:root[data-look="light"] { color-scheme: light; }
 
 [hidden] { display: none !important; }
 * { box-sizing: border-box; }
@@ -115,6 +103,8 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 /* glyphs and states */
 .g { display: inline-grid; place-items: center; width: 16px; flex: none; font: 13px/1 var(--mono); color: var(--muted); }
 .g-waiting { color: var(--waiting); animation: pulse 1.4s ease-in-out infinite; }
+/* A count of what needs you is steady: only the workspaces themselves pulse. */
+.needs-badge .g-waiting, .cnt .g-waiting { animation: none; }
 .g-done { color: var(--done); }
 .g-working { color: var(--working); }
 .g-working .i { animation: spin .9s linear infinite; }
@@ -189,8 +179,8 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .card.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card.needs { border-color: var(--waiting); }
 .card::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 24px var(--waiting-glow); opacity: 0; pointer-events: none; }
-.card.needs::after { animation: breathe 2.6s ease-in-out infinite; }
-@keyframes breathe { 50% { opacity: 1; } }
+/* Steady: the glyph already pulses, and a page of them breathing at once is restless. */
+.card.needs::after { opacity: .75; }
 .card.asleep { background: transparent; }
 .card.asleep .c-head .name { color: var(--muted); }
 .c-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 4px; min-width: 0; }
@@ -223,7 +213,7 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
   mask-image: radial-gradient(ellipse at center, transparent calc(110% - var(--f) * 140%), #000 calc(140% - var(--f) * 120%)); }
 .is-frozen > .frost { --f: 1; }
 .frost-label { display: grid; justify-items: center; gap: 2px; text-align: center; color: var(--frost-ink); padding: 10px; }
-.frost-label .flake { font-size: 22px; line-height: 1; }
+.frost-label .flake { display: inline-grid; line-height: 1; }
 .frost-label b { font: 600 13px/1.3 var(--display); }
 .frost-label small { font-size: 12px; opacity: .8; }
 
@@ -257,7 +247,8 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .t-ws[aria-current="page"] .n { font-weight: 600; }
 .t-ws.needs .n { color: var(--waiting); }
 .t-ws.asleep .n { color: var(--muted); }
-.main { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; min-width: 0; min-height: 0; }
+/* A column of rows, as many as there are: the columns take what the rest leave. */
+.main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
 .keyrow { display: flex; gap: 5px; padding-bottom: env(safe-area-inset-bottom); }
 .keyrow button { flex: 1 1 0; min-width: 0; padding: 0; min-height: 42px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: 600 13px/1 var(--mono); box-shadow: var(--lift); }
 .keyrow button:active { transform: translateY(1px); box-shadow: none; background: var(--sunk); }
@@ -287,7 +278,9 @@ button.chip:hover, a.chip:hover { border-color: var(--accent); color: var(--ink)
 .w-strip { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .minimap { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; padding: 2px; scrollbar-width: none; }
 .sc { display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 200px; padding: 4px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; font: 12px/1.2 var(--mono); color: var(--muted); }
-.sc span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sc > span:nth-child(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sc .bell { display: inline-grid; color: var(--waiting); }
+.sc.rang { color: var(--ink); }
 .sc:hover { color: var(--ink); }
 .sc.vis { color: var(--ink); background: var(--raised); }
 .sc[aria-current] { border-color: var(--accent); color: var(--ink); }
@@ -306,7 +299,7 @@ form.add-menu { display: flex; flex-wrap: wrap; gap: 6px; width: 300px; }
 form.add-menu > :not(input, button) { flex-basis: 100%; margin: 0; }
 form.add-menu .about { font-size: 12px; line-height: 1.4; color: var(--muted); }
 form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; font: 13px/1.2 var(--mono); }
-.w-body { position: relative; min-height: 0; display: grid; }
+.w-body { position: relative; flex: 1 1 0; min-height: 0; display: grid; }
 .w-cols { position: relative; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; min-height: 0; overscroll-behavior-x: contain; padding-bottom: 6px; }
 /* Terminals are dark in both looks, so what's said on them uses Polar night's hues. */
 .col { --waiting: #ffc46b; --done: #7eedbd; --working: #8fd8ff; --error: #ff8f8f; --accent: #8fd8ff; --muted: var(--term-dim); --ink: var(--term-ink); --cw: .5; flex: 0 0 calc((100% + 10px) * var(--cw) - 10px); min-width: 0; display: flex; flex-direction: column; background: var(--term-bg); border: 1px solid var(--term-line); border-radius: 8px; overflow: hidden; scroll-snap-align: start; transition: border-color .15s; }
@@ -376,8 +369,7 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .browser-bar button:hover, .browser-tab button:hover { background: var(--term-line); color: var(--term-ink); }
 .browser-bar button:disabled, .browser .browser-address:disabled { opacity: .45; }
 .browser-bar button:disabled:hover { background: transparent; color: var(--term-dim); }
-.browser-bar button.loading .i { animation: browser-spin 1s linear infinite; }
-@keyframes browser-spin { to { transform: rotate(360deg); } }
+.browser-bar button.loading .i { animation: spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .browser-bar button:disabled, .browser .browser-address:disabled { opacity: .45; }
 .browser-bar button:disabled:hover { background: transparent; color: var(--term-dim); }
 .browser-bar button.loading .i { animation: none; } .browser-bar button.loading { color: var(--accent); } }
@@ -419,6 +411,9 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .cols-note.problem .acts { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .info { position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; width: min(340px, 100%); overflow: auto; overscroll-behavior: contain; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); display: grid; align-content: start; gap: 16px; font-size: 13.5px; }
 .info h2 { margin: 0 0 6px; font: 600 13px/1.2 var(--ui); }
+.info-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -8px -8px 0 0; }
+.info-head h2 { margin: 0; }
+.info .update p { margin: 0 0 8px; font-size: 12.5px; }
 .info dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
 .info dt { color: var(--muted); }
 .info dd { margin: 0; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
@@ -435,6 +430,7 @@ form.add-menu input { flex: 1; min-width: 0; background: var(--bg); border: 1px 
 .p-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
 .p-head h1 { margin: 0; font: 500 22px/1.2 var(--display); }
 .p-head .btn { margin-left: auto; }
+.p-head .btn + .btn { margin-left: 0; }
 .p-settings h2 { flex-basis: 100%; margin: 0; font: 500 15px/1.2 var(--display); }
 .opening { flex-basis: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0; min-width: 0; }
 .opening legend { font-size: 12.5px; color: var(--muted); padding: 0 4px; }
@@ -501,12 +497,13 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .overlay { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; color: inherit; background: var(--scrim); justify-items: center; align-items: start; padding: 10vh 16px 16px; overflow: auto; overscroll-behavior: contain; }
 .overlay[open] { display: grid; }
 .overlay::backdrop { background: transparent; }
+/* A dialog's title, and the button that closes it. */
+.dhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -4px -6px -4px 0; }
+.dhead h2 { margin: 0; font: 500 17px/1.2 var(--display); }
 .pbox, .nbox { width: min(560px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .pbox input { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 14px 16px; font-size: 16px; outline: none; }
 .pbox input:focus-visible { box-shadow: inset 0 -2px 0 var(--accent); }
 .kbox { width: min(720px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 16px 18px; display: grid; gap: 14px; }
-.kbox .khead { display: flex; align-items: center; justify-content: space-between; }
-.kbox h2 { margin: 0; font: 500 16px/1.2 var(--display); }
 .kbox h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .kgroups { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px 24px; }
 .kgroups dl { margin: 0; display: grid; gap: 6px; }
@@ -528,7 +525,6 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .pitem:hover, .pitem[aria-selected="true"] { background: var(--raised); }
 .pempty { padding: 14px; color: var(--muted); font-size: 14px; }
 .nbox { padding: 18px; display: grid; gap: 14px; }
-.nbox h2 { margin: 0; font: 500 17px/1.2 var(--display); }
 .nbox label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .nbox textarea { resize: vertical; min-height: 64px; font: 14px/1.45 var(--ui); }
 .nbox textarea:disabled { opacity: .6; }
@@ -541,8 +537,9 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
 .nbtns { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* toasts and flash */
-.toasts { position: fixed; top: 54px; right: 12px; z-index: 15; display: grid; gap: 8px; width: min(320px, calc(100% - 24px)); }
-.toast { color: inherit; text-decoration: none; display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 2px 10px; text-align: left; padding: 10px 12px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); animation: slide-in .35s cubic-bezier(.2,.9,.3,1.2); }
+/* Bottom right, where a terminal's lines rarely reach and no control is; the newest nearest the corner. */
+.toasts { position: fixed; bottom: 14px; right: 12px; z-index: 15; display: flex; flex-direction: column-reverse; gap: 8px; width: min(320px, calc(100% - 24px)); }
+.toast { color: inherit; text-decoration: none; display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 2px 10px; text-align: left; padding: 10px 12px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); animation: slide-in .3s cubic-bezier(.2,.9,.3,1); }
 .toast:hover { border-color: var(--muted); }
 .toast .igloo { width: 20px; grid-row: span 2; align-self: start; margin-top: 2px; }
 .toast b { font-size: 13.5px; font-weight: 600; }
@@ -579,13 +576,18 @@ a.who { display: inline-grid; place-items: center; text-decoration: none; }
   .tb-left, .tb-right { gap: 6px; }
   .needs-badge .wide { display: none; }
   .seg button { padding-inline: 10px; }
+  /* Details is a sheet over the columns, not a panel beside a sliver of one. */
+  .info { width: 100%; }
+  /* A phone's bottom has its keys and the flash: toasts come in under the bar. */
+  .toasts { bottom: auto; top: 54px; flex-direction: column; }
 }
 /* Shortcut hints are no help on a touch screen. A chord that is a setting's
    value, like the prefix, still shows: a tablet can have a keyboard. */
 @media (hover: none) and (pointer: coarse) {
   .search kbd, .pitem .h { display: none; }
-  /* A finger needs more than a mouse does to pick one column control. */
-  .col-ctl { gap: 4px; }
+  /* A finger needs more than a mouse does to pick one column control, and
+     can't hover to show one: hidden, it could still be tapped. */
+  .col-ctl { gap: 4px; opacity: 1; }
   .col-ctl button, .col-find button { min-width: 34px; min-height: 32px; display: inline-grid; place-items: center; }
 }
 @media (prefers-reduced-motion: reduce) {

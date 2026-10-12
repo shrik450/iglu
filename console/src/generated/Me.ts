@@ -7,8 +7,4 @@ import type { PrincipalId } from "./PrincipalId";
 /**
  * The signed-in person, and what the console needs to act for them.
  */
-export type Me = { id: PrincipalId, name: DisplayName | null, email: Email | null, 
-/**
- * Sent back in `x-csrf-token` on every mutating console request.
- */
-csrf_token: string, preview_domain: string, boot: BootId, };
+export type Me = { id: PrincipalId, name: DisplayName | null, email: Email | null, preview_domain: string, boot: BootId, };

@@ -1,0 +1,15 @@
+--- a/src/util.zig	2026-10-11 14:46:56
++++ b/src/util.zig	2026-10-11 14:46:57
+@@ -819,6 +819,12 @@
+                 std.log.warn("failed to format scrollback err={s}", .{@errorName(err)});
+             };
+         }
++
++        // Changed by iglu: the last screenful of those lines is still on the
++        // client's screen, not in its scrollback, and clearing the screen
++        // would lose it. A newline for each row scrolls every one of them
++        // into the scrollback first: the cursor is on the last line printed.
++        for (0..pages.rows) |_| builder.writer.writeAll("\r\n") catch {};
+ 
+         // Clear visible screen after scrollback. \x1b[2J clears only the visible
+         // rows (not the scrollback buffer). \x1b[H homes the cursor. \x1b[0m resets

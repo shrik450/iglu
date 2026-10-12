@@ -16,8 +16,8 @@ crates/
 ├── iglu-devhost/  # hostd over local processes, for the dev stack; not isolating, loopback only
 ├── iglud/         # control plane: API, console, preview gateway, OIDC, reconciler
 ├── iglu-cli/      # the `iglu` command
-└── iglu-guest/    # tools baked into workspace images (status, provisioning, git credentials)
-console/           # TypeScript web console (ghostty-web terminals); src/generated is from iglu-api
+└── iglu-guest/    # tools hosts mount into every workspace (sessions, status, provisioning, secrets)
+console/           # TypeScript web console (wterm terminals); src/generated is from iglu-api
 nix/               # NixOS modules, packages, checks, and VM integration tests
 templates/         # `nix flake init -t` starting points for environments
 dev/               # the local dev stack's shared services (Caddy, Authelia), run in Docker

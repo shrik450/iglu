@@ -28,6 +28,9 @@ pub struct Config {
     pub oidc: Oidc,
     pub sign_in: SignInPolicy,
     pub hosts: Vec<Host>,
+    /// The client certificate iglud presents to hosts, which accept only
+    /// certificates from the CA that signed it.
+    pub host_client: HostClient,
     #[serde(default)]
     pub workspaces: WorkspaceDefaults,
     #[serde(default)]
@@ -46,26 +49,6 @@ pub struct Oidc {
     pub console: OidcClient,
     /// The preview gateway is its own relying party.
     pub preview: OidcClient,
-    /// The service identity iglud uses to call hosts (client credentials).
-    pub worker: WorkerClient,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkerClient {
-    pub client_id: String,
-    pub client_secret_file: PathBuf,
-    /// An RFC 8707 resource to ask for. Without one, the identity provider
-    /// picks the audience, usually the worker's own client ID; hosts accept
-    /// only the audience in their `auth.audience`.
-    #[serde(default)]
-    pub resource: Option<Url>,
-}
-
-impl WorkerClient {
-    pub fn secret(&self) -> anyhow::Result<String> {
-        read_secret(&self.client_secret_file)
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +62,13 @@ impl OidcClient {
     pub fn secret(&self) -> anyhow::Result<String> {
         read_secret(&self.client_secret_file)
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostClient {
+    pub certificate: PathBuf,
+    pub key: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]

@@ -18,7 +18,6 @@ import {
   loadLive,
   markActive,
   moveColumn,
-  openColumn,
   placeColumn,
   publish,
   remove,
@@ -29,6 +28,7 @@ import {
   toggleFreeze,
   toggleZoom,
   unpublish,
+  update,
   zoomedIn,
 } from "../actions.ts";
 import { api, failure } from "../api/client.ts";
@@ -49,6 +49,7 @@ import {
 } from "../components/bits.tsx";
 import type { AccessGrant } from "../generated/AccessGrant.ts";
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
+import type { ActivityKind } from "../generated/ActivityKind.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
@@ -60,10 +61,10 @@ import { chordLabel } from "../state/keys.ts";
 import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
-import { situation } from "../state/situation.ts";
+import { gibibytes, situation } from "../state/situation.ts";
 import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
-import { ctrlHeld, newCore, panes, TerminalPane, titles } from "../terminal.ts";
+import { ctrlHeld, newCore, panes, rang, TerminalPane, titles } from "../terminal.ts";
 import { called } from "../state/naming.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
@@ -110,7 +111,15 @@ function Tree({ current }: { current: WorkspaceView | null }) {
                   <span class="label" translate={false}>
                     {group.label}
                   </span>
-                  <span class={`cnt${need ? " hot" : ""}`}>{need ? `● ${need}` : group.workspaces.length}</span>
+                  <span class={`cnt${need ? " hot" : ""}`}>
+                    {need ? (
+                      <>
+                        <Glyph kind="waiting" /> {need}
+                      </>
+                    ) : (
+                      group.workspaces.length
+                    )}
+                  </span>
                 </div>
                 {/* A folded project still shows the open workspace, and a phone, with no
                     projects to unfold, shows them all. */}
@@ -123,11 +132,6 @@ function Tree({ current }: { current: WorkspaceView | null }) {
                     // In the one-row list on a phone, the current workspace may be off to the side.
                     ref={(el) => {
                       if (ws.id === current?.id) el?.scrollIntoView({ inline: "nearest", block: "nearest" });
-                    }}
-                    onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                      e.preventDefault();
-                      navigate({ view: "workspace", name: ws.name });
                     }}
                   >
                     <Glyph kind={workspaceGlyph(ws)} />
@@ -165,7 +169,7 @@ function Main({ ws }: { ws: WorkspaceView }) {
   return (
     <div class="main">
       <Header ws={ws} />
-      {running ? <Strip ws={ws} /> : <div />}
+      {running ? <Strip ws={ws} /> : null}
       <div class="w-body">
         {running ? <Columns ws={ws} /> : <Resting ws={ws} />}
         {details.value ? <Details ws={ws} /> : null}
@@ -282,7 +286,7 @@ function Header({ ws }: { ws: WorkspaceView }) {
         <div class="w-actions">
           {ws.phase === "running" ? (
             <button type="button" class="btn icon" aria-label="Freeze" title={`Freeze (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
-              ❄
+              <Icon name="snow" />
             </button>
           ) : ws.phase === "frozen" ? (
             <button type="button" class="btn" title={`Thaw (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
@@ -397,7 +401,7 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             type="button"
             aria-current={c.name === active ? "true" : undefined}
             key={c.name}
-            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}${dragging === c.name ? " dragging" : ""}`}
+            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}${dragging === c.name ? " dragging" : ""}${rang.value.has(`${ws.id}/${c.name}`) ? " rang" : ""}`}
             data-drop={drop?.name === c.name ? (drop.after ? "after" : "before") : undefined}
             draggable={arrangeable(c.state)}
             onDragStart={(e) => {
@@ -425,6 +429,12 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             <span translate={false} title={c.label ? `${c.label} (session ${c.name})` : undefined}>
               {titleOf(c)}
             </span>
+            {rang.value.has(`${ws.id}/${c.name}`) ? (
+              <span class="bell" title="It rang the bell">
+                <Icon name="bell" size={12} />
+                <span class="sr-only">(rang the bell)</span>
+              </span>
+            ) : null}
           </button>
         ))}
       </nav>
@@ -439,14 +449,13 @@ function Strip({ ws }: { ws: WorkspaceView }) {
         >
           <Icon name="plus" size={13} />
         </button>
-        {question.value?.kind === "add-column" ? <AddMenu ws={ws} server={question.value.server === true} /> : null}
+        {question.value?.kind === "add-column" ? <AddMenu ws={ws} /> : null}
       </div>
     </div>
   );
 }
 
-function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
-  const [command, setCommand] = useState(server);
+function AddMenu({ ws }: { ws: WorkspaceView }) {
   // What's opening: the menu stays, says so, and takes no second click until
   // the column is there (which puts the menu away) or iglu refuses it.
   const [opening, setOpening] = useState<string | null>(null);
@@ -464,36 +473,10 @@ function AddMenu({ ws, server }: { ws: WorkspaceView; server: boolean }) {
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
   }, []);
-  const run = useForm(async (data) => {
-    const text = data.get("command");
-    // The person's own command in their own workspace, so a shell may read it.
-    if (typeof text === "string" && text.trim()) await openColumn(ws, { kind: "server", command: ["sh", "-c", text.trim()] });
-  });
-  if (command) {
-    return (
-      <form class="add-menu" onSubmit={run.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
-        <CommandInput form={run} />
-        <button type="submit" class="btn" disabled={run.busy}>
-          Start
-        </button>
-        <p class="about">It keeps running, and starts again with the workspace. For a one-off command, use a shell.</p>
-        <FieldError form={run} input="command" />
-        <FormError form={run} />
-      </form>
-    );
-  }
   return (
     <div class="add-menu" role="group" aria-label="Add a column" aria-busy={opening !== null} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
       <button type="button" ref={first} disabled={opening !== null} onClick={() => add("Shell", { kind: "shell" })}>
         {opening === "Shell" ? "Opening a shell…" : "Shell"}
-      </button>
-      {ws.agents.map((agent) => (
-        <button type="button" key={agent} translate={false} disabled={opening !== null} onClick={() => add(agent, { kind: "agent", agent })}>
-          {opening === agent ? `Opening ${agent}…` : agent}
-        </button>
-      ))}
-      <button type="button" disabled={opening !== null} onClick={() => setCommand(true)}>
-        Server…
       </button>
       {browser ? (
         <button type="button" disabled={opening !== null} onClick={() => (settle(ws, "add-column"), focusColumn(ws, browser.name))}>
@@ -516,11 +499,6 @@ function RenameInput({ ws, form }: { ws: WorkspaceView; form: Form }) {
 function PortInput({ form }: { form: Form }) {
   const ref = useGrab<HTMLInputElement>();
   return <input ref={ref} name="port" inputMode="numeric" placeholder="3000…" aria-label="Port to publish" autocomplete="off" {...invalid(form, "port")} />;
-}
-
-function CommandInput({ form }: { form: Form }) {
-  const ref = useGrab<HTMLInputElement>();
-  return <input ref={ref} name="command" aria-label="Server command" placeholder="npm run dev…" autocomplete="off" spellcheck={false} {...invalid(form, "command")} />;
 }
 
 /** Naming a column: Enter, or leaving the field, keeps the name, as renaming
@@ -921,8 +899,14 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
             </p>
           ) : null}
           <div class="acts">
+            {/* A failure of the build it's on, such as one an older iglu made, may be over on the newest. */}
+            {ws.newer_build ? (
+              <button type="button" class="btn primary" onClick={() => void update(ws)}>
+                Update to the newest build
+              </button>
+            ) : null}
             {cloning && project ? (
-              <a class="btn" href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
+              <a class="btn" href={`/p/${project.name}`}>
                 Open {project.name}
               </a>
             ) : null}
@@ -975,17 +959,33 @@ function lossText(ws: WorkspaceView): string {
   if (ws.phase !== "running") return `It's ${ws.phase}, so unpushed work can't be checked. Its files are lost.`;
   const live = inside.value[ws.id];
   if (!live) return "Its files are lost; push your work first.";
-  return live.unsaved ? `It has ${unsavedText(live.unsaved)}, which would be lost.` : "Everything is committed and pushed.";
+  if (live.unsaved) return `It has ${unsavedText(live.unsaved)}, which would be lost.`;
+  // Its checkout should be there; without it, nothing says what's pushed.
+  return live.git ? "Everything is committed and pushed." : "Its files are lost; push your work first.";
 }
 
 function Details({ ws }: { ws: WorkspaceView }) {
+  const project = projects.value.find((p) => p.id === ws.project);
   return (
     <aside class="info" aria-label="Details">
       <div>
-        <h2>Workspace</h2>
+        <div class="info-head">
+          <h2>Workspace</h2>
+          <button type="button" class="btn icon" aria-label="Close details" onClick={() => (details.value = false)}>
+            <Icon name="close" />
+          </button>
+        </div>
         <dl>
           <dt>Project</dt>
-          <dd translate={false}>{projects.value.find((p) => p.id === ws.project)?.name ?? "—"}</dd>
+          <dd translate={false}>
+            {project ? (
+              <a href={`/p/${project.name}`}>
+                {project.name}
+              </a>
+            ) : (
+              "—"
+            )}
+          </dd>
           {ws.checkout ? (
             <>
               <dt>Repository</dt>
@@ -996,8 +996,8 @@ function Details({ ws }: { ws: WorkspaceView }) {
           ) : null}
           <dt>Environment</dt>
           <dd translate={false}>{ws.environment}</dd>
-          <dt>Memory</dt>
-          <dd>{ws.memory === null ? "—" : `${(ws.memory / 1024 ** 3).toFixed(1)} GB${ws.phase === "frozen" ? " in swap" : ""}`}</dd>
+          <dt>Memory in use</dt>
+          <dd>{ws.memory === null ? "—" : gibibytes(ws.memory)}</dd>
           <dt>Created</dt>
           <dd>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(ws.created_at)}</dd>
         </dl>
@@ -1007,6 +1007,15 @@ function Details({ ws }: { ws: WorkspaceView }) {
           </button>
         ) : null}
       </div>
+      {ws.newer_build ? (
+        <div class="update">
+          <h2>A newer build of {ws.environment}</h2>
+          <p class="muted">Updating upgrades this workspace to it and restarts it. Its files stay; what's running ends.</p>
+          <button type="button" class="btn primary" onClick={() => void update(ws)}>
+            Update
+          </button>
+        </div>
+      ) : null}
       <Access ws={ws} />
       <History ws={ws} />
       {ws.routes.length ? (
@@ -1117,6 +1126,39 @@ function Access({ ws }: { ws: WorkspaceView }) {
 
 const stamp = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
+/** Each kind of history entry in words; its detail follows. */
+const HAPPENED: Record<ActivityKind, string> = {
+  requested: "Asked for",
+  "state-set": "Set to",
+  created: "Created",
+  started: "Started",
+  "secrets-delivered": "Secrets delivered",
+  provisioned: "Set up",
+  "columns-opened": "Columns opened",
+  frozen: "Frozen",
+  thawed: "Thawed",
+  stopped: "Stopped",
+  removed: "Removed from its host",
+  deleted: "Deleted",
+  error: "Failed",
+  renamed: "Renamed",
+  typed: "Typed",
+  "thawed-on-open": "Thawed when opened",
+  "idle-froze": "Frozen while idle",
+  "idle-stopped": "Stopped while idle",
+  "secret-updated": "Secret updated",
+  published: "Published",
+  unpublished: "Unpublished",
+  "file-kept": "Kept a file",
+  adopted: "Changed by its host",
+  "access-changed": "Access changed",
+  "column-added": "Added a column",
+  "column-restarted": "Restarted a column",
+  "column-closed": "Closed a column",
+  "update-asked": "Asked to update",
+  updated: "Updated to the newest build",
+};
+
 /** What happened to the workspace, newest first. Loaded when shown, and again when it changes. */
 function History({ ws }: { ws: WorkspaceView }) {
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
@@ -1139,7 +1181,7 @@ function History({ ws }: { ws: WorkspaceView }) {
           <li key={`${entry.at}-${i}`}>
             <time dateTime={new Date(entry.at).toISOString()}>{stamp.format(entry.at)}</time>
             <span class="k">
-              {entry.kind}
+              {HAPPENED[entry.kind]}
               {entry.via === ws.name ? (
                 " from this workspace"
               ) : entry.via ? (

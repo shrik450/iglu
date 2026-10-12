@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use iglu_domain::capacity::Bytes;
 use iglu_domain::label::HostId;
-use iglu_hostd::config::{Auth, Timeouts};
+use iglu_hostd::config::Timeouts;
 use iglu_hostd::server::Loopback;
 use serde::Deserialize;
 
@@ -15,7 +15,6 @@ pub struct Config {
     pub host_id: HostId,
     /// Plain HTTP, so only on loopback.
     pub listen: Loopback,
-    pub auth: Auth,
     pub runtime: Settings,
     #[serde(default)]
     pub timeouts: Timeouts,
@@ -40,10 +39,6 @@ pub struct Settings {
     /// The shell terminal sessions run; your account's login shell when unset.
     #[serde(default)]
     pub shell: Option<AbsolutePath>,
-    /// The agents every environment gets here. Local workspaces use this
-    /// machine's tools, so agents are this machine's, not the flake's.
-    #[serde(default)]
-    pub agents: Vec<iglu_domain::agent::AgentSpec>,
     /// A CA certificate that workspaces' Git trusts for `https://*.localhost`
     /// only, such as the dev CA, so workspaces can clone the dev stack's
     /// fixture repositories at `git.localhost`. Other hosts keep Git's own

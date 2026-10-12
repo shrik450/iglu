@@ -57,16 +57,17 @@ pub const fn activity(phase: Phase) -> Activity {
 }
 
 /// A workspace's place in the list. Ordered least to most pressing, so the
-/// list sorts by it descending.
+/// list sorts by it descending. Those that need their person come first, by
+/// why and then by when; the rest stay put, by how awake they are and then
+/// newest first, so a workspace's agent working or idling doesn't move it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Standing {
     pub needs_you: NeedsYou,
-    activity: Activity,
-    urgency: Option<Urgency>,
-    /// The newest change: its most urgent status, or its creation.
-    latest: Timestamp,
     /// Why it needs its person, when it does.
     pub need: Option<Need>,
+    activity: Activity,
+    /// When it came to need its person, or else when it was made.
+    since: Timestamp,
 }
 
 /// The facts a standing is decided from.
@@ -97,12 +98,15 @@ pub fn standing(facts: Facts) -> Standing {
     } else {
         NeedsYou::No
     };
+    let since = match (need, facts.top) {
+        (Some(Need::Waiting | Need::Done), Some((_, _, at))) => at,
+        _ => facts.created_at,
+    };
     Standing {
         needs_you,
-        activity,
-        urgency,
-        latest: facts.top.map_or(facts.created_at, |(_, _, at)| at),
         need,
+        activity,
+        since,
     }
 }
 
@@ -192,20 +196,26 @@ mod tests {
     }
 
     #[test]
-    fn ties_go_to_the_newest_change() {
-        let older = standing(facts(
-            Phase::Running,
-            Some((AttentionState::Working, Seen::Seen, 1)),
-        ));
-        let newer = standing(facts(
-            Phase::Running,
-            Some((AttentionState::Working, Seen::Seen, 2)),
-        ));
-        assert!(newer > older);
-        let fresh = standing(Facts {
-            created_at: at(5),
-            ..facts(Phase::Running, None)
-        });
-        assert!(fresh > standing(facts(Phase::Running, None)));
+    fn working_or_idling_never_moves_a_workspace() {
+        let made = |ms, top| Facts {
+            created_at: at(ms),
+            ..facts(Phase::Running, top)
+        };
+        let older = made(1, Some((AttentionState::Working, Seen::Seen, 50)));
+        let newer = made(2, Some((AttentionState::Idle, Seen::Seen, 3)));
+        assert!(standing(newer) > standing(older));
+        let busier = made(1, Some((AttentionState::Working, Seen::Seen, 99)));
+        assert_eq!(standing(busier), standing(older));
+    }
+
+    #[test]
+    fn among_those_that_need_you_the_newest_need_comes_first() {
+        let done = |ms| {
+            standing(facts(
+                Phase::Running,
+                Some((AttentionState::Done, Seen::Unseen, ms)),
+            ))
+        };
+        assert!(done(2) > done(1));
     }
 }

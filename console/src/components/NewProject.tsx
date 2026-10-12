@@ -4,7 +4,7 @@ import { api } from "../api/client.ts";
 import type { CreateProject } from "../generated/CreateProject.ts";
 import { environments, newIn, overlay } from "../state/store.ts";
 import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
-import { Modal } from "./Modal.tsx";
+import { DialogHead, Modal } from "./Modal.tsx";
 
 export function NewProject() {
   const close = () => (overlay.value = null);
@@ -24,7 +24,7 @@ export function NewProject() {
   return (
     <Modal labelledby="project-h" onClose={close}>
       <form class="nbox" aria-labelledby="project-h" onSubmit={add.onSubmit}>
-        <h2 id="project-h">New project</h2>
+        <DialogHead id="project-h" title="New project" onClose={close} />
         {environments.value.length === 0 ? <p class="field-err">Add an environment first, in <a href="/settings">Settings</a>.</p> : null}
         <label>
           Repository

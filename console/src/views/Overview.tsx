@@ -2,11 +2,11 @@
 
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { Card } from "../components/Card.tsx";
-import { Glyph, Icon, Igloo, WorkspaceLink, attentionGlyph } from "../components/bits.tsx";
+import { attentionGlyph, Glyph, Icon, Igloo, needYou, WorkspaceLink } from "../components/bits.tsx";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { situation } from "../state/situation.ts";
 import { repoLabel } from "../state/groups.ts";
-import { collapsed, groups, navigate, newIn, overlay, projects, waiting, workspaces } from "../state/store.ts";
+import { collapsed, groups, newIn, overlay, projects, waiting, workspaces } from "../state/store.ts";
 import { called } from "../state/naming.ts";
 
 function toggle(key: string): void {
@@ -41,7 +41,7 @@ function Welcome() {
         </li>
         <li>
           <b>Start a workspace</b>
-          <span>A branch to work on, with terminals; start agents in it from its + menu.</span>
+          <span>A branch to work on, with terminals to run your agents in.</span>
         </li>
       </ol>
     </div>
@@ -91,11 +91,6 @@ export function Overview() {
                 <h2 translate={false}>
                   <a
                     href={`/p/${group.label}`}
-                    onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                      e.preventDefault();
-                      navigate({ view: "project", name: group.label });
-                    }}
                   >
                     {group.label}
                   </a>
@@ -123,7 +118,9 @@ export function Overview() {
                     {need ? (
                       <>
                         {" · "}
-                        <b>{need} waiting</b>
+                        <b>
+                          {need} {needYou(need)}
+                        </b>
                       </>
                     ) : null}
                   </span>

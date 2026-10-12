@@ -220,9 +220,28 @@ pub fn last_lines(history: &str, lines: OutputLines) -> (String, bool) {
     (text, truncated)
 }
 
+/// As much of `text` as fits in a WebSocket close frame's reason: 123
+/// bytes, cut between characters.
+#[must_use]
+pub fn close_reason(text: &str) -> &str {
+    let mut end = text.len().min(123);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn close_reasons_fit_a_frame_without_splitting_a_character() {
+        assert_eq!(close_reason("short"), "short");
+        let long = "é".repeat(100);
+        let cut = close_reason(&long);
+        assert!(cut.len() <= 123 && cut.chars().all(|c| c == 'é'), "{cut}");
+    }
 
     #[test]
     fn input_is_exact_and_bounded() {

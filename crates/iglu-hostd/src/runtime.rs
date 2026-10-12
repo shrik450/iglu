@@ -15,14 +15,14 @@ use std::time::Duration;
 use bytes::Bytes;
 use iglu_domain::capacity;
 use iglu_domain::download::DownloadName;
-use iglu_domain::env::{BuiltImage, EnvSource, GuestUser};
-use iglu_domain::guest::Interface;
+use iglu_domain::env::{BuiltImage, EnvSource, GuestUser, ImageFingerprint};
 use iglu_domain::id::{InstanceName, PrincipalId};
 use iglu_domain::lifecycle::Provisioning;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
-use iglu_proto::CreateSpec;
+use iglu_domain::time::Timestamp;
+use iglu_proto::{CreateSpec, UpgradeSpec};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
@@ -56,7 +56,9 @@ pub trait Runtime: Send + Sync + 'static {
     ) -> impl Future<Output = Result<BuiltImage, BuildFailure>> + Send;
 
     /// Creates a stopped instance from a built image, recording the spec's
-    /// owner and user on it. The name is free.
+    /// owner and user on it. The name is free. Its processes find the
+    /// owner's kept directory, the same for every instance of theirs and
+    /// no one else's, in `IGLU_KEPT`.
     fn create(
         &self,
         name: InstanceName,
@@ -79,8 +81,21 @@ pub trait Runtime: Send + Sync + 'static {
     /// stop timeout, then by force.
     fn stop(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
-    /// Removes a stopped instance and everything the runtime keeps for it.
+    /// Removes a stopped instance and everything the runtime keeps for it,
+    /// but for its owner's kept directory.
     fn delete(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
+
+    /// Upgrades an instance in place to `spec.image`'s system: brings it up
+    /// if it's stopped or frozen, puts the system in its store, makes it the
+    /// one it boots, restarts it into it, and records the image and its
+    /// interface on it. Done already when it runs that image's system.
+    /// Refused when the image's account isn't the instance's, or the image
+    /// has no system to upgrade to.
+    fn upgrade(
+        &self,
+        name: InstanceName,
+        spec: &UpgradeSpec,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
     /// Records on the instance that its repository is in place, so the
     /// record survives every iglu process restarting.
@@ -135,6 +150,24 @@ pub trait Runtime: Send + Sync + 'static {
         guest: &Guest,
         port: GuestPort,
     ) -> impl Future<Output = Result<Self::Stream, RuntimeError>> + Send;
+
+    /// The images this runtime built, and when, where it knows.
+    fn images(&self) -> impl Future<Output = Result<Vec<StoredImage>, RuntimeError>> + Send;
+
+    /// Removes an image this runtime built. Instances made from it carry on;
+    /// one gone already is no error.
+    fn delete_image(
+        &self,
+        image: &ImageFingerprint,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
+}
+
+/// An image a runtime built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredImage {
+    pub fingerprint: ImageFingerprint,
+    /// When it was built; unknown for images from before this was recorded.
+    pub built: Option<Timestamp>,
 }
 
 /// A runtime that keeps workspaces apart from the host and from each other:
@@ -157,9 +190,8 @@ pub struct Observed {
     pub user: GuestUser,
     pub provisioning: Provisioning,
     pub state: State,
-    /// The guest-tools interface recorded on the instance when it was
-    /// created, if any: an instance from before it was recorded says nothing.
-    pub guest_interface: Option<Interface>,
+    /// The image whose system it runs, when the runtime records it.
+    pub image: Option<ImageFingerprint>,
     /// Resident memory, when the runtime measures it.
     pub memory: Option<capacity::Bytes>,
 }
@@ -279,8 +311,9 @@ pub enum RuntimeError {
     NotFound,
     #[error("the environment's image isn't on this host")]
     ImageMissing,
-    #[error(transparent)]
-    ImageIncompatible(#[from] iglu_domain::guest::Incompatible),
+    /// The runtime won't do it, for a reason the owner can act on.
+    #[error("{0}")]
+    Refused(String),
     #[error("{0}")]
     Failed(String),
 }

@@ -16,7 +16,7 @@ import { MAX_FILE_BYTES, pastedPath } from "./state/paste.ts";
 import { programTitle } from "./state/program.ts";
 import { scan } from "./state/replies.ts";
 import { say } from "./state/store.ts";
-import { type Colors, XTERM } from "./state/themes.ts";
+import { type Colors, XTERM, hexOf } from "./state/themes.ts";
 import { styleApplied } from "./termstyle.ts";
 
 /** Each terminal's history, in bytes: ghostty keeps it in pages, so the rows
@@ -40,19 +40,26 @@ interface Theme {
 }
 
 /** A terminal's colours, read from the page where it sits: the look's, so it
- * matches its column in either, or the theme's chosen in Settings. */
+ * matches its column in either, or the theme's chosen in Settings. Each is
+ * read as the page resolves it, whichever look picks it and however it's
+ * written, from an element that's never shown. */
 function themeOf(where: Element): Theme {
-  const css = getComputedStyle(where);
+  const probe = document.createElement("span");
+  probe.style.display = "none";
+  where.append(probe);
   const color = (name: string, otherwise: string) => {
-    const value = css.getPropertyValue(name).trim();
-    return /^#[0-9a-f]{6}$/i.test(value) ? value : otherwise;
+    probe.style.color = otherwise;
+    probe.style.color = `var(${name}, ${otherwise})`;
+    return hexOf(getComputedStyle(probe).color) ?? otherwise;
   };
-  return {
+  const theme = {
     background: color("--term-bg", "#070c18"),
     foreground: color("--term-ink", "#d4e0f4"),
     cursor: color("--term-caret", color("--accent", "#8fd8ff")),
     palette: XTERM.map((otherwise, index) => color(`--term-ansi-${index}`, otherwise)),
   };
+  probe.remove();
+  return theme;
 }
 
 function colorsOf(theme: Theme): TerminalThemeColors {
@@ -96,6 +103,18 @@ export function setTitle(key: string, title: string): void {
   if (title) next.set(key, title);
   else next.delete(key);
   titles.value = next;
+}
+
+/** Panes, by `workspace/session`, whose program rang the bell while the
+ * person was elsewhere: their chips say so until they go back. */
+export const rang = signal<ReadonlySet<string>>(new Set());
+
+function ring(key: string, on: boolean): void {
+  if (rang.peek().has(key) === on) return;
+  const next = new Set(rang.peek());
+  if (on) next.add(key);
+  else next.delete(key);
+  rang.value = next;
 }
 
 /** The pane the person last focused, for `globalThis.iglu.screen()`. */
@@ -180,13 +199,17 @@ export class TerminalPane implements Pane {
       onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
       onPasteFiles: (files) => void this.pasteFiles(files),
       onTitle: (title) => setTitle(this.key, programTitle(title)),
+      onBell: () => {
+        if (!this.focused || document.visibilityState !== "visible") ring(this.key, true);
+      },
       // Ghostty's own answer: a VT220 with colour, which can set the
       // clipboard (OSC 52), so programs like nvim copy through it.
       primaryAttributes: "\x1b[?62;22;52c",
       onSearchChange: (state) => (this.found.value = state.query ? state : null),
-      // Every pane tells its session its own size when that changes, focused
-      // or not. zmx applies the most recent size from any client, so a
-      // browser in the background stays quiet, and focusing claims the size.
+      // Every pane tells its client its own size when that changes, focused
+      // or not, and again on focus. zmx sizes the session to the client that
+      // last typed in it, asking it for its size then, so the browser typing
+      // sets the size and one in the background stays quiet.
       onResize: (cols, rows) => {
         if (document.visibilityState === "visible") this.sendResize(cols, rows);
       },
@@ -262,6 +285,7 @@ export class TerminalPane implements Pane {
   private readonly focusIn = () => {
     this.focused = true;
     lastFocused = this;
+    ring(this.key, false);
     this.sendResize(this.term.cols, this.term.rows, true);
     this.onFocus();
   };
@@ -375,6 +399,7 @@ export class TerminalPane implements Pane {
     panes.delete(this.key);
     setTitle(this.key, "");
     if (lastFocused === this) lastFocused = null;
+    ring(this.key, false);
     this.sight.disconnect();
     this.container.removeEventListener("keydown", this.keyDown, { capture: true });
     this.container.removeEventListener("wheel", this.wheel, { capture: true });

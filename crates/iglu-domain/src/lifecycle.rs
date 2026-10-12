@@ -1,14 +1,11 @@
 //! Workspace lifecycle: what the user wants, what the host reports, and the
 //! one next step that moves the second toward the first.
 
-use std::fmt;
-use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
 
-use crate::ParseError;
 use crate::capacity::{Capacity, Room};
-use crate::parse::text_type;
+use crate::env::ImageFingerprint;
+use crate::parse::{serde_text, text_type};
 
 /// What the user wants a workspace to be. Set through the API; owned by the
 /// control plane.
@@ -22,17 +19,13 @@ pub enum DesiredState {
     Deleted,
 }
 
-impl DesiredState {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Frozen => "frozen",
-            Self::Stopped => "stopped",
-            Self::Deleted => "deleted",
-        }
-    }
+serde_text!(
+    DesiredState,
+    "desired state",
+    "expected running, frozen, stopped or deleted"
+);
 
+impl DesiredState {
     /// The phase a workspace is in once it has reached this state.
     #[must_use]
     pub const fn settled(self) -> Phase {
@@ -41,29 +34,6 @@ impl DesiredState {
             Self::Frozen => Phase::Frozen,
             Self::Stopped => Phase::Stopped,
             Self::Deleted => Phase::Deleted,
-        }
-    }
-}
-
-impl fmt::Display for DesiredState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for DesiredState {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "running" => Ok(Self::Running),
-            "frozen" => Ok(Self::Frozen),
-            "stopped" => Ok(Self::Stopped),
-            "deleted" => Ok(Self::Deleted),
-            _ => Err(ParseError::new(
-                "desired state",
-                "expected running, frozen, stopped or deleted",
-            )),
         }
     }
 }
@@ -89,8 +59,9 @@ impl DesiredState {
     }
 }
 
-/// Increases every time the desired state changes. A change applies only from
-/// the revision its author saw, so concurrent changes can't undo each other.
+/// Increases every time the desired state changes. iglu's own changes, such
+/// as idle freezing, apply only from the revision they saw, so they can't
+/// undo a person's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]
@@ -139,6 +110,28 @@ impl SecretsGeneration {
 pub struct Desired {
     pub state: DesiredState,
     pub secrets: SecretsGeneration,
+    pub build: Build,
+}
+
+/// Whether the instance runs the system of the build the workspace is on:
+/// one updated to a newer build is upgraded to its system in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Build {
+    Current,
+    Outdated,
+}
+
+impl Build {
+    /// Outdated only when the host says which image's system the instance
+    /// runs and it isn't the one the workspace is on: an instance nothing is
+    /// known about is left alone, never upgraded on a guess.
+    #[must_use]
+    pub fn of(observed: Option<&ImageFingerprint>, wanted: Option<&ImageFingerprint>) -> Self {
+        match (observed, wanted) {
+            (Some(observed), Some(wanted)) if observed != wanted => Self::Outdated,
+            _ => Self::Current,
+        }
+    }
 }
 
 /// What the host reports about a workspace's instance.
@@ -224,13 +217,17 @@ pub enum Effect {
     Thaw,
     Stop,
     Delete,
+    /// Upgrade the instance in place to its new image's system, starting it
+    /// if it isn't running, and restart it into that system. Everything on
+    /// its disk stays.
+    Upgrade,
 }
 
 impl Effect {
     /// Whether the effect puts a workspace's memory back in use.
     const fn uses_memory(self) -> bool {
         match self {
-            Self::Start | Self::Thaw => true,
+            Self::Start | Self::Thaw | Self::Upgrade => true,
             Self::Create
             | Self::DeliverSecrets
             | Self::Provision
@@ -288,9 +285,20 @@ pub fn plan(desired: Desired, instance: Instance, capacity: Capacity) -> Plan {
         (None, Instance::Absent) => Plan::Stable,
         (None, Instance::Present(_)) => Plan::Perform(Effect::Delete),
         (Some(_), Instance::Absent) => Plan::Perform(Effect::Create),
-        (Some(live), Instance::Present(present)) => {
-            plan_live(live, desired.secrets, present, capacity)
-        }
+        (Some(live), Instance::Present(present)) => match (desired.build, present.runtime) {
+            (Build::Current, _) | (Build::Outdated, Runtime::Transitioning) => {
+                plan_live(live, desired.secrets, present, capacity)
+            }
+            // Upgraded from wherever it is, then brought to what it's meant
+            // to be; a broken one is stopped first.
+            (Build::Outdated, Runtime::Stopped | Runtime::Running(_) | Runtime::Frozen) => {
+                match capacity {
+                    Capacity::Fits => Plan::Perform(Effect::Upgrade),
+                    Capacity::Short { .. } => Plan::Wait(Wait::Capacity(capacity)),
+                }
+            }
+            (Build::Outdated, Runtime::Failed) => Plan::Perform(Effect::Stop),
+        },
     }
 }
 
@@ -385,28 +393,7 @@ pub enum Phase {
     Deleted,
 }
 
-impl Phase {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Creating => "creating",
-            Self::Starting => "starting",
-            Self::Running => "running",
-            Self::Freezing => "freezing",
-            Self::Frozen => "frozen",
-            Self::Stopping => "stopping",
-            Self::Stopped => "stopped",
-            Self::Deleting => "deleting",
-            Self::Deleted => "deleted",
-        }
-    }
-}
-
-impl fmt::Display for Phase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+serde_text!(Phase, "phase", "not a phase");
 
 /// Derives the user-facing phase from intent and observation.
 #[must_use]
@@ -497,6 +484,7 @@ mod tests {
         Desired {
             state,
             secrets: GEN,
+            build: Build::Current,
         }
     }
 
@@ -806,6 +794,77 @@ mod tests {
     }
 
     #[test]
+    fn a_root_is_outdated_only_when_known_to_be_from_another_image() {
+        let a: ImageFingerprint = "a".repeat(64).parse().expect("a fingerprint");
+        let b: ImageFingerprint = "b".repeat(64).parse().expect("a fingerprint");
+        assert_eq!(Build::of(Some(&a), Some(&b)), Build::Outdated);
+        assert_eq!(Build::of(Some(&a), Some(&a)), Build::Current);
+        assert_eq!(Build::of(None, Some(&b)), Build::Current);
+        assert_eq!(Build::of(Some(&a), None), Build::Current);
+    }
+
+    #[test]
+    fn an_outdated_system_is_upgraded_from_wherever_it_is_given_room() {
+        for state in [
+            DesiredState::Running,
+            DesiredState::Frozen,
+            DesiredState::Stopped,
+        ] {
+            let want = Desired {
+                build: Build::Outdated,
+                ..desired(state)
+            };
+            for runtime in [ready(), Runtime::Frozen, Runtime::Stopped] {
+                let instance = present(runtime, Provisioning::Complete);
+                assert_eq!(
+                    plan(want, instance, Capacity::Fits),
+                    Plan::Perform(Effect::Upgrade),
+                    "{state:?} {runtime:?}"
+                );
+                assert_eq!(
+                    plan(want, instance, SHORT),
+                    Plan::Wait(Wait::Capacity(SHORT)),
+                    "{state:?} {runtime:?}"
+                );
+            }
+            assert_eq!(
+                plan(
+                    want,
+                    present(Runtime::Failed, Provisioning::Complete),
+                    Capacity::Fits
+                ),
+                Plan::Perform(Effect::Stop),
+                "{state:?}"
+            );
+            assert_eq!(
+                plan(
+                    want,
+                    present(Runtime::Transitioning, Provisioning::Complete),
+                    Capacity::Fits
+                ),
+                Plan::Wait(Wait::Transition)
+            );
+            // Nothing to upgrade once it's gone or going.
+            assert_eq!(
+                plan(want, Instance::Absent, Capacity::Fits),
+                Plan::Perform(Effect::Create)
+            );
+        }
+        let deleted = Desired {
+            build: Build::Outdated,
+            ..desired(DesiredState::Deleted)
+        };
+        assert_eq!(
+            plan(
+                deleted,
+                present(Runtime::Stopped, Provisioning::Complete),
+                Capacity::Fits
+            ),
+            Plan::Perform(Effect::Delete)
+        );
+    }
+
+    #[test]
     fn phases_describe_progress() {
         assert_eq!(
             phase(DesiredState::Running, Instance::Absent),
@@ -891,18 +950,5 @@ mod tests {
             allow_transition(Phase::Deleting, DesiredState::Running),
             Err(TransitionError::Deleting)
         );
-    }
-
-    #[test]
-    fn desired_states_round_trip_as_text() {
-        for state in [
-            DesiredState::Running,
-            DesiredState::Frozen,
-            DesiredState::Stopped,
-            DesiredState::Deleted,
-        ] {
-            assert_eq!(state.as_str().parse(), Ok(state));
-        }
-        assert!("paused".parse::<DesiredState>().is_err());
     }
 }

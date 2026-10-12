@@ -16,6 +16,7 @@ let
   system = "x86_64-linux";
   packages = self.packages.${system};
   image = self.nixosConfigurations.example.config.system.build.igluImage;
+  nextImage = self.nixosConfigurations.example-next.config.system.build.igluImage;
 
   issuer = "https://auth.idp.test:9091";
   gitAddress = "11.0.0.10";
@@ -45,6 +46,17 @@ let
         leaf host 'DNS:host'
         leaf idp 'DNS:auth.idp.test'
         leaf git 'IP:${gitAddress}'
+
+        # iglud's client certificate, from a CA of its own that hosts trust
+        # for that alone.
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+          -subj /CN=iglu-e2e-clients -keyout clients.key -out clients.crt \
+          -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign
+        openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=iglud \
+          -keyout iglud.key -out iglud.csr
+        printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE\n' > iglud.ext
+        openssl x509 -req -in iglud.csr -CA clients.crt -CAkey clients.key -CAcreateserial \
+          -days 3650 -extfile iglud.ext -out iglud.crt
         chmod 644 *.key
 
         openssl genrsa -out oidc.pem 2048
@@ -105,6 +117,32 @@ let
         cp $flake alice-env-${privateEnvRev}/flake.nix
         cp $lock alice-env-${privateEnvRev}/flake.lock
         tar -czf $out alice-env-${privateEnvRev}
+      '';
+
+  # An environment that changes: the example until a file named `next` is
+  # beside its flake, then the example built again with a change. The test
+  # updates a workspace from one to the other. Its lock is the private
+  # environment's, so it evaluates offline.
+  changingEnv =
+    pkgs.runCommand "iglu-e2e-changing-env"
+      {
+        flake = pkgs.writeText "flake.nix" ''
+          {
+            inputs.iglu.url = "path:${self}";
+            outputs = { iglu, ... }: {
+              nixosConfigurations.changing =
+                if builtins.pathExists ./next
+                then iglu.nixosConfigurations.example-next
+                else iglu.nixosConfigurations.example;
+            };
+          }
+        '';
+        lock = pkgs.writeText "flake.lock" privateEnvLock;
+      }
+      ''
+        mkdir $out
+        cp $flake $out/flake.nix
+        cp $lock $out/flake.lock
       '';
 
   # Playwright's Chromium, trusting the test CA (see the test script) and
@@ -231,23 +269,7 @@ in
                       id = "preview";
                       redirect = "https://auth.dev.example.test/callback";
                     }
-                  ]
-                ++ [
-                  {
-                    client_id = "worker";
-                    client_name = "iglu worker";
-                    client_secret = "$plaintext$worker-secret-for-tests";
-                    authorization_policy = "one_factor";
-                    grant_types = [ "client_credentials" ];
-                    response_types = [ ];
-                    scopes = [ ];
-                    audience = [ "iglu-hosts" ];
-                    # iglud requests no audience, so grant the client's own.
-                    requested_audience_mode = "implicit";
-                    token_endpoint_auth_method = "client_secret_basic";
-                    access_token_signed_response_alg = "RS256";
-                  }
-                ];
+                  ];
             };
           };
         };
@@ -277,10 +299,10 @@ in
               clientId = "preview";
               clientSecretFile = "${secret "preview"}";
             };
-            worker = {
-              clientId = "worker";
-              clientSecretFile = "${secret "worker"}";
-            };
+          };
+          hostClient = {
+            certificate = "${pki}/iglud.crt";
+            key = "${pki}/iglud.key";
           };
           signIn.emails = [ "alice@example.org" ];
           backups.keep = 2;
@@ -329,10 +351,11 @@ in
             1
             2
           ];
-          # The environment builds offline: its flake, nixpkgs and the image
-          # it evaluates to are already in the store.
+          # The environments build offline: their flake, nixpkgs and the
+          # images they evaluate to are already in the store.
           additionalPaths = [
             image
+            nextImage
             "${self}"
             "${nixpkgs}"
           ];
@@ -357,11 +380,7 @@ in
           tls = {
             certificate = "${pki}/host.crt";
             key = "${pki}/host.key";
-          };
-          auth = {
-            inherit issuer;
-            audience = "iglu-hosts";
-            subjects = [ "worker" ];
+            clients = "${pki}/clients.crt";
           };
           storage.source = "/dev/vdb";
         };
@@ -446,6 +465,7 @@ in
     ''
       PKI = "${pki}"
       SELF = "${self}"
+      CHANGING_ENV = "${changingEnv}"
       GIT_ADDRESS = "${gitAddress}"
       HOST_IP = "${nodes.host.networking.primaryIPAddress}"
       CONTROL_IP = "${nodes.control.networking.primaryIPAddress}"

@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt};
 use iglu_api::browser::BrowserSize;
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
@@ -19,7 +19,7 @@ use iglu_api::{
     ListenerView, LiveView, Me, PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace,
     RouteView, SecretView, SendInput, SetDesiredState, Snapshot, WorkspaceView,
 };
-use iglu_domain::agent::Prompt;
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::auth::{Action, Grant, Permission};
 use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
 use iglu_domain::download::DownloadName;
@@ -47,71 +47,27 @@ use crate::app::{
 use crate::crypto::{self, Binding};
 use crate::db::{self, NewRoute, RenameOutcome, SealedSecret};
 use crate::extract::{Body, Path, Query, Upgrade, read_within};
-use crate::model::{ColumnRecord, RouteRecord, WorkspaceRecord};
+use crate::model::{RouteRecord, WorkspaceRecord};
 use crate::views::{ordered, route_view, workspace_view};
 
 mod projects;
 
 pub fn router() -> Router<Arc<App>> {
-    Router::new()
+    workspace_routes()
         .route("/v1/me", get(me))
-        .route("/v1/identity", get(identity))
         .route(
             "/v1/me/preferences",
             get(get_preferences).put(put_preferences),
         )
-        .route(
-            "/v1/workspaces",
-            get(list_workspaces).post(create_workspace),
-        )
-        .route("/v1/workspaces/{id}", get(get_workspace))
-        .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
-        .route("/v1/workspaces/{id}/name", put(rename_workspace))
-        .route("/v1/workspaces/{id}/label", put(label_workspace))
+        .route("/v1/workspaces", post(create_workspace))
         .route("/v1/workspaces/{id}/seen", post(mark_seen))
-        .route("/v1/workspaces/{id}/activity", get(activity))
-        .route(
-            "/v1/workspaces/{id}/columns",
-            get(list_columns).post(add_column),
-        )
-        .route("/v1/workspaces/{id}/layout", put(put_layout))
-        .route(
-            "/v1/workspaces/{id}/columns/{session}",
-            delete(close_column),
-        )
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/label",
-            put(label_column),
-        )
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/restart",
-            post(restart_column),
-        )
         .route(
             "/v1/workspaces/{id}/columns/{session}/attach",
             get(attach_column),
         )
         .route("/v1/workspaces/{id}/browser", get(open_browser))
         .route("/v1/workspaces/{id}/downloads/{name}", get(download))
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/output",
-            get(column_output),
-        )
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/input",
-            post(send_input),
-        )
         .route("/v1/workspaces/{id}/access", put(put_access))
-        .route("/v1/workspaces/{id}/files", files_route())
-        .route("/v1/workspaces/{id}/live", get(live))
-        .route(
-            "/v1/workspaces/{id}/routes",
-            get(list_routes).post(publish_route),
-        )
-        .route(
-            "/v1/workspaces/{id}/routes/{route}",
-            delete(unpublish_route),
-        )
         .route(
             "/v1/environments",
             get(list_environments).post(create_environment),
@@ -126,16 +82,25 @@ pub fn router() -> Router<Arc<App>> {
         .method_not_allowed_fallback(no_such_method)
 }
 
-/// What a workspace may ask through its channel: each route it can reach is
-/// named here, so a route added to the API isn't reachable from inside a
-/// workspace until it's added here too. What it may do to which workspace
-/// is still decided per request by its grants.
+/// What a workspace may ask through its channel: the routes it shares with
+/// people, and nothing else.
 pub fn guest_router() -> Router<Arc<App>> {
+    workspace_routes()
+        .route("/v1/{*rest}", any(not_for_workspaces))
+        .method_not_allowed_fallback(no_such_method)
+}
+
+/// What people and workspaces may both ask: each route a workspace can
+/// reach through its channel is named here, so a route added to the API
+/// isn't reachable from inside a workspace until it's added here too. What
+/// it may do to which workspace is still decided per request by its grants.
+fn workspace_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/v1/identity", get(identity))
         .route("/v1/workspaces", get(list_workspaces))
         .route("/v1/workspaces/{id}", get(get_workspace))
         .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
+        .route("/v1/workspaces/{id}/update", post(update_workspace))
         .route("/v1/workspaces/{id}/name", put(rename_workspace))
         .route("/v1/workspaces/{id}/label", put(label_workspace))
         .route("/v1/workspaces/{id}/activity", get(activity))
@@ -174,8 +139,6 @@ pub fn guest_router() -> Router<Arc<App>> {
             "/v1/workspaces/{id}/routes/{route}",
             delete(unpublish_route),
         )
-        .route("/v1/{*rest}", any(not_for_workspaces))
-        .method_not_allowed_fallback(no_such_method)
 }
 
 async fn identity(actor: Actor) -> Json<Identity> {
@@ -197,7 +160,6 @@ async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, Api
         id: caller.principal.id,
         name: caller.principal.name,
         email: caller.principal.email,
-        csrf_token: caller.csrf_token,
         preview_domain: app.config.preview_domain.clone(),
         boot: app.boot,
     }))
@@ -415,21 +377,12 @@ fn insert_requested(
     let Some(project) = db::project(tx, owner, request.project)? else {
         return Ok(Err(Problem::at("project", "no such project")));
     };
-    let Some((revision, image)) = db::latest_ready_revision(tx, project.environment_id)? else {
+    let Some((revision, _)) = db::latest_ready_revision(tx, project.environment_id)? else {
         return Ok(Err(format!(
             "the environment {} has no built image yet",
             project.environment
         )
         .into()));
-    };
-    let started = match project::start(
-        &project.opening,
-        &image.agents,
-        request.agent.as_ref().or(project.agent.as_ref()),
-        request.prompt.as_ref(),
-    ) {
-        Ok(started) => started,
-        Err(refused) => return Ok(Err(refused.to_string().into())),
     };
     let made = made_from(&request);
     let name = match choose_name(tx, owner, request.name, &made, fresh.entropy)? {
@@ -471,18 +424,7 @@ fn insert_requested(
         })
         .collect();
     db::replace_grants(tx, fresh.id, &own)?;
-    let columns: Vec<ColumnRecord> = started
-        .columns
-        .into_iter()
-        .map(|spec| ColumnRecord {
-            prompt: request
-                .prompt
-                .clone()
-                .filter(|_| started.prompted.as_ref() == Some(&spec.name)),
-            spec,
-        })
-        .collect();
-    db::replace_columns(tx, fresh.id, &columns)?;
+    db::replace_columns(tx, fresh.id, &project.opening.columns())?;
     let what = match &record.checkout {
         Some(checkout) => format!("{} on {}", checkout.branch, checkout.repo),
         None => format!("in {}", project.name),
@@ -491,7 +433,7 @@ fn insert_requested(
         tx,
         Some(fresh.id),
         Some(db::By::person(owner)),
-        "requested",
+        ActivityKind::Requested,
         &what,
         now(),
     )?;
@@ -536,7 +478,7 @@ fn publish_in(
                     tx,
                     Some(workspace),
                     actor,
-                    "published",
+                    ActivityKind::Published,
                     &format!("port {} as {}", route.port, route.name),
                     now(),
                 )?;
@@ -549,7 +491,7 @@ fn publish_in(
 }
 
 /// What a new workspace's name can be made from, in the order tried: what
-/// the person calls it, its branch, and what it was started to do.
+/// the person calls it, then its branch.
 fn made_from(request: &CreateWorkspace) -> Vec<Made> {
     let mut made = Vec::new();
     if let Some(label) = &request.label {
@@ -558,9 +500,6 @@ fn made_from(request: &CreateWorkspace) -> Vec<Made> {
     if let Some(branch) = &request.branch {
         made.push(Made::Branch(branch.to_string()));
     }
-    if let Some(prompt) = &request.prompt {
-        made.push(Made::Prompt(prompt.as_str().to_owned()));
-    }
     made
 }
 
@@ -568,7 +507,6 @@ fn made_from(request: &CreateWorkspace) -> Vec<Made> {
 enum Made {
     Label(String),
     Branch(String),
-    Prompt(String),
 }
 
 impl Made {
@@ -576,13 +514,12 @@ impl Made {
         match self {
             Self::Label(text) => names::from_label(text, attempt),
             Self::Branch(text) => names::from_branch(text, attempt),
-            Self::Prompt(text) => names::from_prompt(text, attempt),
         }
     }
 }
 
 /// The name asked for if it's free; else the first free one made from the
-/// label, branch or prompt; else the first unused generated name.
+/// label or branch; else the first unused generated name.
 fn choose_name(
     tx: &rusqlite::Connection,
     owner: PrincipalId,
@@ -639,31 +576,84 @@ async fn set_desired_state(
     allow_transition(ws.phase(), request.state)
         .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
     let by = actor.by();
-    let updated = app
+    let (asked, updated) = app
         .db
         .call(move |tx| {
-            let revision = db::set_desired(tx, id, request.state, request.expected_revision)?;
-            if revision.is_some() {
+            let asked = db::ask_desired(tx, id, request.state)?;
+            if asked == db::Asked::Changed {
                 db::add_activity(
                     tx,
                     Some(id),
                     Some(by),
-                    "requested",
-                    &format!("set to {}", request.state),
+                    ActivityKind::StateSet,
+                    &request.state.to_string(),
                     now(),
                 )?;
             }
-            revision
-                .and_then(|_| db::workspace(tx, id).transpose())
-                .transpose()
+            Ok((asked, db::workspace(tx, id)?))
         })
-        .await?
-        .ok_or_else(|| ApiError::Conflict("the workspace changed; reload and retry".into()))?;
-    tracing::info!(workspace = %id, state = %request.state, by = %by.person, via = ?by.via, "workspace state requested");
+        .await?;
+    let updated = updated.ok_or(ApiError::NotFound)?;
     app.usage.used(id);
-    app.kick();
-    app.changed();
+    if asked == db::Asked::Changed {
+        tracing::info!(workspace = %id, state = %request.state, by = %by.person, via = ?by.via, "workspace state requested");
+        app.kick();
+        app.changed();
+    }
     Ok(Json(actor.shown(view(&app, updated).await?)))
+}
+
+/// Moves a workspace to its environment's newest build: the reconciler
+/// upgrades it in place to the build's system, restarting it, and brings it
+/// back as it was asked to be.
+async fn update_workspace(
+    actor: Actor,
+    State(app): State<Arc<App>>,
+    Path(id): Path<WorkspaceId>,
+) -> Result<Json<WorkspaceView>, ApiError> {
+    workspace_for(&app, &actor, id, Action::OperateWorkspace).await?;
+    let by = actor.by();
+    let (updated, ws) = app
+        .db
+        .call(move |tx| {
+            let updated = db::update_to_newest(tx, id)?;
+            if let db::Updated::Moved(revision) = &updated {
+                let detail = db::environment_name_of_revision(tx, *revision)?
+                    .map(|name| format!("{name}'s newest build"))
+                    .unwrap_or_default();
+                db::add_activity(
+                    tx,
+                    Some(id),
+                    Some(by),
+                    ActivityKind::UpdateAsked,
+                    &detail,
+                    now(),
+                )?;
+            }
+            Ok((updated, db::workspace(tx, id)?))
+        })
+        .await?;
+    match updated {
+        db::Updated::Moved(revision) => {
+            tracing::info!(workspace = %id, %revision, by = %by.person, via = ?by.via, "workspace update requested");
+            app.kick();
+            app.changed();
+        }
+        db::Updated::Already => {}
+        db::Updated::NoBuild => {
+            return Err(ApiError::Conflict(
+                "its environment has no build ready to update to".into(),
+            ));
+        }
+        db::Updated::OtherAccount => {
+            return Err(ApiError::Conflict(
+                "the environment's newest build has another account than this workspace, whose files would be someone else's; recreate it to use the build".into(),
+            ));
+        }
+        db::Updated::Gone => return Err(ApiError::NotFound),
+    }
+    let ws = ws.ok_or(ApiError::NotFound)?;
+    Ok(Json(actor.shown(view(&app, ws).await?)))
 }
 
 async fn rename_workspace(
@@ -684,7 +674,7 @@ async fn rename_workspace(
                     tx,
                     Some(id),
                     Some(by),
-                    "renamed",
+                    ActivityKind::Renamed,
                     &format!("{} to {}", ws.name, request.name),
                     now(),
                 )?;
@@ -732,7 +722,7 @@ async fn label_workspace(
                     tx,
                     Some(id),
                     Some(by),
-                    "renamed",
+                    ActivityKind::Renamed,
                     &format!("to {to}"),
                     now(),
                 )?;
@@ -751,10 +741,12 @@ async fn mark_seen(
     Path(id): Path<WorkspaceId>,
 ) -> Result<StatusCode, ApiError> {
     owned_workspace(&app, &caller, id, Action::ViewWorkspace).await?;
-    app.db.call(move |tx| db::mark_seen(tx, id, now())).await?;
+    let marked = app.db.call(move |tx| db::mark_seen(tx, id)).await?;
     // Looking at a workspace is using it.
     app.usage.used(id);
-    app.changed();
+    if marked {
+        app.changed();
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -792,7 +784,6 @@ pub fn host_error(error: crate::hosts::HostError) -> ApiError {
         }
         iglu_proto::ErrorCode::Conflict
         | iglu_proto::ErrorCode::ImageMissing
-        | iglu_proto::ErrorCode::ImageIncompatible
         | iglu_proto::ErrorCode::GuestFailed
         | iglu_proto::ErrorCode::Timeout
         | iglu_proto::ErrorCode::Runtime => ApiError::Unavailable(error.message),
@@ -811,7 +802,7 @@ async fn list_columns(
         .call(move |tx| db::columns(tx, id))
         .await?
         .into_iter()
-        .map(|column| column.spec.name)
+        .map(|column| column.name)
         .collect();
     let open: Vec<(SessionName, u32)> = host_for(&app, &ws)?
         .terminals(id)
@@ -834,9 +825,9 @@ async fn list_columns(
 
 /// A change to a workspace's columns, for its history when a workspace made
 /// it: the owner sees what their workspaces did, not what they did themselves.
-struct Noted(Option<(db::By, &'static str, String)>);
+struct Noted(Option<(db::By, ActivityKind, String)>);
 
-fn noted(actor: &Actor, kind: &'static str, detail: String) -> Noted {
+fn noted(actor: &Actor, kind: ActivityKind, detail: String) -> Noted {
     Noted(match actor {
         Actor::Person(_) => None,
         Actor::Workspace(_) => Some((actor.by(), kind, detail)),
@@ -847,49 +838,36 @@ impl Noted {
     fn add(&self, tx: &rusqlite::Connection, id: WorkspaceId) -> Result<(), db::DbError> {
         match &self.0 {
             Some((by, kind, detail)) => {
-                db::add_activity(tx, Some(id), Some(*by), kind, detail, now())
+                db::add_activity(tx, Some(id), Some(*by), *kind, detail, now())
             }
             None => Ok(()),
         }
     }
 }
 
-/// What a column runs, resolving an agent through the workspace's environment.
+/// What a column runs. A browser needs an image that has one.
 async fn session_for(
     app: &App,
     ws: &WorkspaceRecord,
     spec: &ColumnSpec,
-    prompt: Option<&Prompt>,
 ) -> Result<SessionSpec, ApiError> {
-    let revision = ws.env_revision;
-    let agents = match &spec.kind {
-        ColumnKind::Agent { .. } => app
+    if spec.kind == ColumnKind::Browser {
+        let revision = ws.env_revision;
+        let image = app
             .db
             .call(move |tx| db::revision_image(tx, revision))
-            .await?
-            .map(|image| image.agents)
-            .unwrap_or_default(),
-        ColumnKind::Browser => {
-            let image = app
-                .db
-                .call(move |tx| db::revision_image(tx, revision))
-                .await?;
-            if !image.is_some_and(|image| image.browser) {
-                return Err(ApiError::Conflict(
-                    "this workspace's image has no browser: rebuild its environment with \
-                     iglu.browser.enable, and recreate the workspace"
-                        .into(),
-                ));
-            }
-            Vec::new()
+            .await?;
+        if !image.is_some_and(|image| image.browser) {
+            return Err(ApiError::Conflict(
+                "this workspace's image has no browser: rebuild its environment with \
+                 iglu.browser.enable, then update the workspace"
+                    .into(),
+            ));
         }
-        ColumnKind::Shell | ColumnKind::Server { .. } => Vec::new(),
-    };
-    let command = column::command(&spec.kind, &agents, prompt)
-        .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
+    }
     Ok(SessionSpec {
         name: spec.name.clone(),
-        command,
+        command: column::command(&spec.kind),
     })
 }
 
@@ -900,31 +878,21 @@ async fn add_column(
     Body(request): Body<AddColumn>,
 ) -> Result<(StatusCode, Json<ColumnSpec>), ApiError> {
     let ws = workspace_for(&app, &actor, id, Action::ManageColumns).await?;
-    if request.prompt.is_some() && !matches!(request.kind, ColumnKind::Agent { .. }) {
-        return Err(ApiError::BadRequest(Problem::at(
-            "prompt",
-            "only an agent column starts on a prompt",
-        )));
-    }
     let host = host_for(&app, &ws)?;
     let _editing = app.column_edits.lock(id).await;
     let columns = app.db.call(move |tx| db::columns(tx, id)).await?;
     // There's one debugging port for agents to find the browser on.
     if request.kind == ColumnKind::Browser
-        && let Some(browser) = columns.iter().find(|c| c.spec.kind == ColumnKind::Browser)
+        && let Some(browser) = columns.iter().find(|c| c.kind == ColumnKind::Browser)
     {
         return Err(ApiError::Conflict(
-            format!(
-                "this workspace has a browser already: {}",
-                browser.spec.name
-            )
-            .into(),
+            format!("this workspace has a browser already: {}", browser.name).into(),
         ));
     }
     let open = host.terminals(id).await.map_err(host_error)?;
     let taken: Vec<SessionName> = columns
         .iter()
-        .map(|c| c.spec.name.clone())
+        .map(|c| c.name.clone())
         .chain(open.into_iter().map(|t| t.name))
         .collect();
     let name = match request.name {
@@ -943,30 +911,21 @@ async fn add_column(
         width: request.width.unwrap_or(ColumnWidth::Half),
         label: None,
     };
-    host.open_terminal(
-        id,
-        &session_for(&app, &ws, &spec, request.prompt.as_ref()).await?,
-    )
-    .await
-    .map_err(host_error)?;
+    host.open_terminal(id, &session_for(&app, &ws, &spec).await?)
+        .await
+        .map_err(host_error)?;
     // Read again: other changes may have landed while the session opened.
     let added = spec.clone();
     let after = request.after;
-    let noted = noted(&actor, "column-added", spec.name.to_string());
+    let noted = noted(&actor, ActivityKind::ColumnAdded, spec.name.to_string());
     app.db
         .call(move |tx| {
             noted.add(tx, id)?;
             let mut columns = db::columns(tx, id)?;
             let at = after
-                .and_then(|after| columns.iter().position(|c| c.spec.name == after))
+                .and_then(|after| columns.iter().position(|c| c.name == after))
                 .map_or(columns.len(), |i| i + 1);
-            columns.insert(
-                at,
-                ColumnRecord {
-                    spec: added,
-                    prompt: None,
-                },
-            );
+            columns.insert(at, added);
             db::replace_columns(tx, id, &columns)
         })
         .await?;
@@ -990,20 +949,9 @@ async fn put_layout(
         .db
         .call(move |tx| {
             let columns = db::columns(tx, id)?;
-            let specs: Vec<ColumnSpec> = columns.iter().map(|c| c.spec.clone()).collect();
-            Ok(match column::arrange(&specs, &layout) {
+            Ok(match column::arrange(&columns, &layout) {
                 Ok(arranged) => {
-                    let records: Vec<ColumnRecord> = arranged
-                        .into_iter()
-                        .map(|spec| ColumnRecord {
-                            prompt: columns
-                                .iter()
-                                .find(|c| c.spec.name == spec.name)
-                                .and_then(|c| c.prompt.clone()),
-                            spec,
-                        })
-                        .collect();
-                    db::replace_columns(tx, id, &records)?;
+                    db::replace_columns(tx, id, &arranged)?;
                     Ok(())
                 }
                 Err(mismatch) => Err(mismatch),
@@ -1048,21 +996,15 @@ async fn restart_column(
         .call(move |tx| db::columns(tx, id))
         .await?
         .into_iter()
-        .find(|c| c.spec.name == lookup)
+        .find(|c| c.name == lookup)
         .ok_or(ApiError::NotFound)?;
-    // A column that never opened still has its prompt; this is its next try.
-    let session = session_for(&app, &ws, &column.spec, column.prompt.as_ref()).await?;
+    let session = session_for(&app, &ws, &column).await?;
     host_for(&app, &ws)?
         .open_terminal(id, &session)
         .await
         .map_err(host_error)?;
-    let noted = noted(&actor, "column-restarted", name.to_string());
-    app.db
-        .call(move |tx| {
-            noted.add(tx, id)?;
-            db::clear_prompts(tx, id, &[name])
-        })
-        .await?;
+    let noted = noted(&actor, ActivityKind::ColumnRestarted, name.to_string());
+    app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1079,12 +1021,12 @@ async fn close_column(
     if open.iter().any(|t| t.name == name) {
         host.close_terminal(id, &name).await.map_err(host_error)?;
     }
-    let noted = noted(&actor, "column-closed", name.to_string());
+    let noted = noted(&actor, ActivityKind::ColumnClosed, name.to_string());
     app.db
         .call(move |tx| {
             noted.add(tx, id)?;
             let mut columns = db::columns(tx, id)?;
-            columns.retain(|c| c.spec.name != name);
+            columns.retain(|c| c.name != name);
             db::replace_columns(tx, id, &columns)
         })
         .await?;
@@ -1144,7 +1086,7 @@ async fn send_input(
             .map_err(host_error)?;
     }
     app.usage.used(id);
-    let noted = noted(&actor, "typed", format!("into {session}"));
+    let noted = noted(&actor, ActivityKind::Typed, format!("into {session}"));
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1185,7 +1127,7 @@ async fn keep_file(
         .await
         .map_err(host_error)?;
     app.usage.used(id);
-    let noted = noted(&actor, "file-kept", path.to_string());
+    let noted = noted(&actor, ActivityKind::FileKept, path.to_string());
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(Json(KeptFile { path }))
 }
@@ -1226,7 +1168,7 @@ async fn put_access(
                 tx,
                 Some(id),
                 Some(db::By::person(owner)),
-                "access-changed",
+                ActivityKind::AccessChanged,
                 "",
                 now(),
             )?;
@@ -1391,9 +1333,23 @@ async fn unpublish_route(
     Path((id, route)): Path<(WorkspaceId, RouteId)>,
 ) -> Result<StatusCode, ApiError> {
     workspace_for(&app, &actor, id, Action::PublishRoute).await?;
+    let by = actor.by();
     let removed = app
         .db
-        .call(move |tx| db::delete_route(tx, id, route))
+        .call(move |tx| {
+            let removed = db::delete_route(tx, id, route)?;
+            if let Some(route) = &removed {
+                db::add_activity(
+                    tx,
+                    Some(id),
+                    Some(by),
+                    ActivityKind::Unpublished,
+                    &format!("port {} as {}", route.port, route.name),
+                    now(),
+                )?;
+            }
+            Ok(removed.is_some())
+        })
         .await?;
     app.changed();
     if removed {
@@ -1555,7 +1511,7 @@ async fn put_secret(
                 tx,
                 None,
                 Some(db::By::person(owner)),
-                "secret-updated",
+                ActivityKind::SecretUpdated,
                 sealed.name.as_str(),
                 now(),
             )?;
@@ -1594,17 +1550,27 @@ async fn events(
     State(app): State<Arc<App>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut changes = app.changes.subscribe();
-    let stream = async_stream(move |sender| async move {
+    let (sender, receiver) = tokio::sync::mpsc::channel(4);
+    tokio::spawn(async move {
+        // What this stream last sent: a snapshot that says the same again
+        // isn't sent, so a page only hears of changes.
+        let mut sent = String::new();
         loop {
             if !crate::terminal::lease_valid(&app, &caller, crate::terminal::Use::Idle).await {
                 break;
             }
             match snapshot(&app, caller.principal.id).await {
                 Ok(snapshot) => match serde_json::to_string(&snapshot) {
+                    Ok(data) if data == sent => {}
                     Ok(data) => {
-                        if sender.send(Event::default().data(data)).await.is_err() {
+                        if sender
+                            .send(Event::default().data(data.clone()))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
+                        sent = data;
                     }
                     Err(error) => tracing::warn!(%error, "couldn't serialize the event snapshot"),
                 },
@@ -1616,18 +1582,6 @@ async fn events(
             while changes.try_recv().is_ok() {}
         }
     });
+    let stream = tokio_stream::wrappers::ReceiverStream::new(receiver).map(Ok);
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
-}
-
-/// A stream fed by a producer task over a small channel.
-fn async_stream<F, Fut>(producer: F) -> impl Stream<Item = Result<Event, Infallible>>
-where
-    F: FnOnce(tokio::sync::mpsc::Sender<Event>) -> Fut,
-    Fut: std::future::Future<Output = ()> + Send + 'static,
-{
-    let (sender, receiver) = tokio::sync::mpsc::channel(4);
-    tokio::spawn(producer(sender));
-    futures_util::stream::unfold(receiver, |mut receiver| async move {
-        receiver.recv().await.map(|event| (Ok(event), receiver))
-    })
 }

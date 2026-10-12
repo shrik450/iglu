@@ -13,6 +13,7 @@ use iglu_domain::id::InstanceName;
 use iglu_domain::terminal::TerminalSize;
 use serde::Deserialize;
 use serde_json::json;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::net::UnixStream;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
@@ -24,26 +25,55 @@ use crate::runtime::Output;
 /// Output beyond this much per stream is dropped.
 const MAX_OUTPUT: usize = 1024 * 1024;
 
-/// A program run as the workspace user. hostd never runs anything in a
-/// guest as root.
+/// A program run in a guest: everything of the workspace's as its user.
 #[derive(Clone, Debug)]
 pub struct Program<'a> {
     argv: Vec<String>,
-    user: &'a GuestUser,
+    account: Account<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Account<'a> {
+    User(&'a GuestUser),
+    /// Only for upgrading the guest's system, with the system's own tools
+    /// and store paths hostd chose: see `upgrade`.
+    Root,
 }
 
 impl<'a> Program<'a> {
     pub fn new(user: &'a GuestUser, argv: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             argv: argv.into_iter().map(Into::into).collect(),
-            user,
+            account: Account::User(user),
+        }
+    }
+
+    /// One of the system's own tools, run as root to upgrade the system.
+    pub(super) fn system(argv: impl IntoIterator<Item = impl Into<String>>) -> Program<'static> {
+        Program {
+            argv: argv.into_iter().map(Into::into).collect(),
+            account: Account::Root,
         }
     }
 
     /// Every exec waits for hostd to connect its streams, so even programs
     /// that only produce output can be given input.
     fn body(&self, interactive: Option<TerminalSize>) -> serde_json::Value {
-        let user = self.user;
+        let user = match self.account {
+            Account::User(user) => user,
+            Account::Root => {
+                return json!({
+                    "command": self.argv,
+                    "environment": { "PATH": "/run/current-system/sw/bin", "HOME": "/root" },
+                    "user": 0,
+                    "group": 0,
+                    "cwd": "/",
+                    "wait-for-websocket": true,
+                    "record-output": false,
+                    "interactive": false,
+                });
+            }
+        };
         let env = BTreeMap::from([
             ("HOME", user.home.to_string()),
             ("USER", user.name.to_string()),
@@ -54,9 +84,14 @@ impl<'a> Program<'a> {
                 iglu_domain::guest::INSTANCE_CHANNEL.to_owned(),
             ),
             (
+                iglu_domain::guest::KEPT_ENV,
+                iglu_domain::guest::INSTANCE_KEPT.to_owned(),
+            ),
+            (
                 "PATH",
                 format!(
-                    "/run/wrappers/bin:/etc/profiles/per-user/{}/bin:/run/current-system/sw/bin",
+                    "{}/bin:/run/wrappers/bin:/etc/profiles/per-user/{}/bin:/run/current-system/sw/bin",
+                    iglu_domain::guest::INSTANCE_TOOLS,
                     user.name
                 ),
             ),
@@ -167,6 +202,62 @@ pub async fn capture(
     })
     .await
     .map_err(|_| IncusError::Operation(format!("timed out after {}s", timeout.as_secs())))?
+}
+
+/// Runs a program to completion with `input` streamed to it, however long,
+/// and returns its exit status and output.
+pub async fn capture_from(
+    incus: &Incus,
+    instance: InstanceName,
+    program: &Program<'_>,
+    input: impl AsyncRead + Unpin + Send,
+    timeout: Duration,
+) -> Result<Output, IncusError> {
+    tokio::time::timeout(timeout, async {
+        let mut exec = Started::new(
+            incus,
+            instance,
+            &program.body(None),
+            &["control", "0", "1", "2"],
+        )
+        .await?;
+        let _control = exec.take("control");
+        let (fed, stdout, stderr) = tokio::join!(
+            stream(exec.take("0"), input),
+            drain(exec.take("1")),
+            drain(exec.take("2")),
+        );
+        let result: ExecResult =
+            serde_json::from_value(incus.wait(&exec.operation, timeout).await?)
+                .map_err(|e| IncusError::Protocol(e.to_string()))?;
+        fed.map_err(|e| IncusError::Operation(format!("sending the input: {e}")))?;
+        Ok(Output {
+            success: result.status == 0,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        })
+    })
+    .await
+    .map_err(|_| IncusError::Operation(format!("timed out after {}s", timeout.as_secs())))?
+}
+
+/// Sends `input` in pieces as it's read, then closes the socket.
+async fn stream(
+    mut socket: WebSocketStream<UnixStream>,
+    mut input: impl AsyncRead + Unpin,
+) -> std::io::Result<()> {
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        let read = input.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        socket
+            .send(Message::binary(buffer[..read].to_vec()))
+            .await
+            .map_err(std::io::Error::other)?;
+    }
+    socket.close(None).await.map_err(std::io::Error::other)
 }
 
 /// Writes the input, then closes the socket, which Incus passes on as the

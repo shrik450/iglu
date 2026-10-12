@@ -2,7 +2,7 @@
 //! iglu never sees passwords; the provider hosts login and MFA.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use iglu_domain::auth::{Issuer, VerifiedIdentity};
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
@@ -265,81 +265,4 @@ fn parse_claim<T: std::str::FromStr<Err = iglu_domain::ParseError>>(
     value
         .parse()
         .map_err(|e: iglu_domain::ParseError| OidcError::Claims(format!("{what}: {e}")))
-}
-
-/// Fetches and caches the service token iglud presents to hosts, through
-/// the OAuth client-credentials grant.
-pub struct WorkerTokens {
-    provider: Arc<Provider>,
-    client_id: String,
-    client_secret: String,
-    resource: Option<Url>,
-    cached: tokio::sync::Mutex<Option<(String, Instant)>>,
-}
-
-#[derive(serde::Deserialize)]
-struct TokenReply {
-    access_token: String,
-    #[serde(default)]
-    expires_in: Option<u64>,
-}
-
-impl WorkerTokens {
-    #[must_use]
-    pub fn new(
-        provider: Arc<Provider>,
-        client_id: String,
-        client_secret: String,
-        resource: Option<Url>,
-    ) -> Self {
-        Self {
-            provider,
-            client_id,
-            client_secret,
-            resource,
-            cached: tokio::sync::Mutex::new(None),
-        }
-    }
-
-    /// A current service token, from the cache or the provider.
-    ///
-    /// # Errors
-    ///
-    /// When the provider can't be reached or refuses the client.
-    pub async fn token(&self) -> Result<String, OidcError> {
-        let mut cached = self.cached.lock().await;
-        if let Some((token, valid_until)) = cached.as_ref()
-            && Instant::now() < *valid_until
-        {
-            return Ok(token.clone());
-        }
-        let metadata = self.provider.metadata().await?;
-        let endpoint = metadata
-            .token_endpoint()
-            .ok_or_else(|| OidcError::Config("the provider has no token endpoint".into()))?
-            .url()
-            .clone();
-        let mut form = vec![("grant_type", "client_credentials")];
-        if let Some(resource) = &self.resource {
-            form.push(("resource", resource.as_str()));
-        }
-        let reply: TokenReply = self
-            .provider
-            .http
-            .post(endpoint)
-            .basic_auth(&self.client_id, Some(&self.client_secret))
-            .form(&form)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|e| OidcError::Exchange(e.to_string()))?
-            .json()
-            .await
-            .map_err(|e| OidcError::Exchange(e.to_string()))?;
-        let lifetime = reply.expires_in.unwrap_or(300).saturating_sub(60).max(30);
-        let valid_until = Instant::now() + Duration::from_secs(lifetime);
-        *cached = Some((reply.access_token.clone(), valid_until));
-        Ok(reply.access_token)
-    }
 }

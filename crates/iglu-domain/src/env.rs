@@ -6,9 +6,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::agent::AgentSpec;
 use crate::label::DnsLabel;
-use crate::parse::text_type;
+use crate::parse::{display_inner, serde_text, text_type};
 
 /// A flake reference as Nix accepts it, such as `github:alice/dotfiles`.
 /// Nix parses it properly; this only keeps it from being anything else.
@@ -224,17 +223,6 @@ impl FromStr for GuestPath {
     }
 }
 
-macro_rules! display_inner {
-    ($($name:ident),*) => {$(
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-        text_type!($name);
-    )*};
-}
-
 display_inner!(FlakeRef, FlakeAttr, ImageFingerprint, UnixUser, GuestPath);
 
 /// The account terminals run as, read from the built image.
@@ -288,20 +276,7 @@ pub enum Arch {
     Aarch64,
 }
 
-impl FromStr for Arch {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "x86_64" => Ok(Self::X86_64),
-            "aarch64" => Ok(Self::Aarch64),
-            _ => Err(ParseError::new(
-                "architecture",
-                "expected x86_64 or aarch64",
-            )),
-        }
-    }
-}
+serde_text!(Arch, "architecture", "expected x86_64 or aarch64");
 
 /// What an image build produced, as reported by the host.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,8 +285,6 @@ pub struct BuiltImage {
     pub fingerprint: ImageFingerprint,
     pub arch: Arch,
     pub user: GuestUser,
-    /// The agents the environment declares, which its workspaces can run.
-    pub agents: Vec<AgentSpec>,
     /// Whether it has the browser a browser column runs: images from before
     /// iglu had one don't.
     #[serde(default)]

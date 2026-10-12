@@ -28,13 +28,14 @@ use iglu_domain::lifecycle::Provisioning;
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
+use iglu_domain::time::Timestamp;
 use iglu_hostd::config::Timeouts;
 use iglu_hostd::guest::{self, GuestCommand};
 use iglu_hostd::runtime::{
     BuildFailure, Claim, Guest, GuestFile, MAX_GUEST_FILE, Observed, Output, Ownership, Runtime,
-    RuntimeError, Terminal, TerminalInput,
+    RuntimeError, StoredImage, Terminal, TerminalInput,
 };
-use iglu_proto::CreateSpec;
+use iglu_proto::{CreateSpec, UpgradeSpec};
 use rustix::process::Signal;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -78,8 +79,6 @@ pub struct LocalRuntime {
     tools: PathBuf,
     /// Whom workspaces run as: the devhost's own user.
     user: GuestUser,
-    /// The agents every environment gets; see [`Settings::agents`].
-    agents: Vec<iglu_domain::agent::AgentSpec>,
     memory_available: capacity::Bytes,
     timeouts: Timeouts,
     /// The account's login shell, which terminal sessions run.
@@ -124,14 +123,13 @@ fn guest_path(path: &Path) -> Result<GuestPath, String> {
         .map_err(|e| format!("{e}"))
 }
 
-/// The Git configuration every workspace gets: the guest tools' credential
-/// helper, and, when given, a CA that Git trusts for `https://*.localhost`
-/// alone. A URL-scoped `sslCAInfo` replaces Git's trust only for those hosts.
-fn system_gitconfig(tools: &Path, localhost_ca: Option<&Path>) -> String {
-    let credential = format!(
-        "[credential]\n\thelper = {}/iglu-guest git-credential\n",
-        tools.display()
-    );
+/// The Git configuration every workspace gets: Git's own helper, answering
+/// only, from the credentials the guest tools deliver into the workspace's
+/// runtime directory, and, when given, a CA that Git trusts for
+/// `https://*.localhost` alone. A URL-scoped `sslCAInfo` replaces Git's
+/// trust only for those hosts.
+fn system_gitconfig(localhost_ca: Option<&Path>) -> String {
+    let credential = "[credential]\n\thelper = \"!f() { test \\\"$1\\\" = get && exec git credential-store --file=\\\"$XDG_RUNTIME_DIR/iglu/secrets/git-credentials\\\" get; }; f\"\n".to_owned();
     match localhost_ca {
         None => credential,
         Some(ca) => {
@@ -244,10 +242,7 @@ impl LocalRuntime {
         let gitconfig = layout.gitconfig();
         tokio::fs::write(
             &gitconfig,
-            system_gitconfig(
-                &tools,
-                settings.localhost_ca.as_ref().map(AbsolutePath::as_path),
-            ),
+            system_gitconfig(settings.localhost_ca.as_ref().map(AbsolutePath::as_path)),
         )
         .await
         .map_err(io_at(&gitconfig))?;
@@ -278,7 +273,6 @@ impl LocalRuntime {
             layout,
             tools,
             user,
-            agents: settings.agents.clone(),
             shell: settings
                 .shell
                 .as_ref()
@@ -354,6 +348,10 @@ impl LocalRuntime {
         env.insert("HOME".into(), self.layout.home(name).into());
         env.insert("XDG_RUNTIME_DIR".into(), run.into());
         env.insert(
+            guest_tools::KEPT_ENV.into(),
+            self.layout.kept_link(name).into(),
+        );
+        env.insert(
             iglu_domain::guest::CHANNEL_ENV.into(),
             self.layout.channel(name).into(),
         );
@@ -422,7 +420,7 @@ impl LocalRuntime {
                 Provisioning::Pending
             },
             state: store::state(boots, self.machine, remains),
-            guest_interface: record.guest_interface,
+            image: Some(record.image),
             memory: None,
         })
     }
@@ -455,8 +453,28 @@ impl LocalRuntime {
 
     /// Claude Code's hooks, as the workspace module installs them, so the
     /// console sees agents' attention. Local workspaces have no system
-    /// settings of their own, so they go in the user's.
-    fn claude_settings(&self) -> serde_json::Value {
+    /// settings of their own, so they go in the person's, in place of any
+    /// hooks there and beside the rest.
+    async fn hook_claude(&self, kept: &Path) -> std::io::Result<()> {
+        let dir = kept.join(guest_tools::CLAUDE_KEPT);
+        tokio::fs::create_dir_all(&dir).await?;
+        let file = dir.join("settings.json");
+        let mut settings = match tokio::fs::read(&file).await {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(std::io::Error::other)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(error) => return Err(error),
+        };
+        let serde_json::Value::Object(fields) = &mut settings else {
+            return Err(std::io::Error::other(format!(
+                "{} isn't an object",
+                file.display()
+            )));
+        };
+        fields.insert("hooks".into(), self.claude_hooks());
+        store::write_json(&file, &settings).await
+    }
+
+    fn claude_hooks(&self) -> serde_json::Value {
         let hook = serde_json::json!({
             "type": "command",
             "command": format!("{} claude-hook", self.tool("iglu-status").display()),
@@ -477,7 +495,7 @@ impl LocalRuntime {
                 serde_json::json!([{ "matcher": "*", "hooks": [hook] }]),
             );
         }
-        serde_json::json!({ "hooks": hooks })
+        serde_json::Value::Object(hooks)
     }
 
     /// Lays the workspace out beside the others, then moves it into place,
@@ -488,7 +506,10 @@ impl LocalRuntime {
             tokio::fs::remove_dir_all(&staging).await?;
         }
         let home = staging.join("home");
-        tokio::fs::create_dir_all(home.join(".claude")).await?;
+        tokio::fs::create_dir_all(&home).await?;
+        let kept = self.layout.kept(spec.owner);
+        self.hook_claude(&kept).await?;
+        tokio::fs::symlink(&kept, staging.join("kept")).await?;
         if let Some(profile) = &self.profile {
             tokio::fs::symlink(profile, home.join(".nix-profile")).await?;
         }
@@ -509,7 +530,6 @@ impl LocalRuntime {
             )
             .await?;
         }
-        store::write_json(&home.join(".claude/settings.json"), &self.claude_settings()).await?;
         let user = GuestUser {
             home: guest_path(&self.layout.home(name)).map_err(std::io::Error::other)?,
             ..spec.user.clone()
@@ -521,8 +541,6 @@ impl LocalRuntime {
             image: spec.image.clone(),
             provisioned: false,
             slot,
-            // The image was just checked to speak this host's interface.
-            guest_interface: Some(guest_tools::INTERFACE),
         };
         store::write_json(&staging.join("record.json"), &record).await?;
         store::write_json(&staging.join("power.json"), &Boots::NEVER).await?;
@@ -627,7 +645,6 @@ impl Runtime for LocalRuntime {
         let fingerprint = fingerprint(source);
         let image = Image {
             source: source.clone(),
-            guest_interface: Some(guest_tools::INTERFACE),
         };
         store::write_json(&self.layout.image(&fingerprint), &image)
             .await
@@ -636,7 +653,6 @@ impl Runtime for LocalRuntime {
             fingerprint,
             arch: iglu_hostd::host_arch().map_err(|e| BuildFailure(e.to_string()))?,
             user: self.user.clone(),
-            agents: self.agents.clone(),
             // Local workspaces use the machine's own; the dev shell has one.
             browser: on_path(self.inherited.get("PATH"), "chromium"),
             // Nothing was built.
@@ -645,14 +661,13 @@ impl Runtime for LocalRuntime {
     }
 
     async fn create(&self, name: InstanceName, spec: &CreateSpec) -> Result<(), RuntimeError> {
-        let image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
+        let _image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
             Ok(image) => image,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(RuntimeError::ImageMissing);
             }
             Err(error) => return Err(RuntimeError::failed(error)),
         };
-        guest_tools::compatible(image.guest_interface)?;
         let slot = self.allocate_slot().await?;
         self.make(name, spec, slot)
             .await
@@ -709,6 +724,38 @@ impl Runtime for LocalRuntime {
         store::write_json(&self.layout.record(name), &record)
             .await
             .map_err(RuntimeError::failed)
+    }
+
+    /// A local workspace's home is a directory of its own and its tools are
+    /// the machine's, so moving it to another image is only a new record.
+    async fn upgrade(&self, name: InstanceName, spec: &UpgradeSpec) -> Result<(), RuntimeError> {
+        self.ensure_exists(name).await?;
+        let _image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
+            Ok(image) => image,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(RuntimeError::ImageMissing);
+            }
+            Err(error) => return Err(RuntimeError::failed(error)),
+        };
+        let mut record = self.record(name).await?;
+        // Its home is rewritten to its own directory; the account is the rest.
+        if (&record.user.name, record.user.uid, record.user.gid)
+            != (&spec.user.name, spec.user.uid, spec.user.gid)
+        {
+            return Err(RuntimeError::Refused(
+                "the environment's newest build has another account than this workspace; recreate it to use the build".into(),
+            ));
+        }
+        if record.image == spec.image {
+            return Ok(());
+        }
+        record.image = spec.image.clone();
+        store::write_json(&self.layout.record(name), &record)
+            .await
+            .map_err(RuntimeError::failed)?;
+        // Its tools are the new image's from its next boot, which starting
+        // it from whatever it was in is.
+        self.start(name).await
     }
 
     async fn run(
@@ -805,6 +852,44 @@ impl Runtime for LocalRuntime {
             .await
             .map_err(RuntimeError::failed)
     }
+
+    /// Recorded environments; the last recording is when one was built.
+    async fn images(&self) -> Result<Vec<StoredImage>, RuntimeError> {
+        let mut images = Vec::new();
+        let mut entries = match tokio::fs::read_dir(self.layout.images()).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(images),
+            Err(error) => return Err(RuntimeError::failed(error)),
+        };
+        while let Some(entry) = entries.next_entry().await.map_err(RuntimeError::failed)? {
+            let path = entry.path();
+            let Some(fingerprint) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.parse().ok())
+            else {
+                continue;
+            };
+            let built = entry
+                .metadata()
+                .await
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|since| i64::try_from(since.as_millis()).ok())
+                .map(Timestamp::from_unix_millis);
+            images.push(StoredImage { fingerprint, built });
+        }
+        Ok(images)
+    }
+
+    async fn delete_image(&self, image: &ImageFingerprint) -> Result<(), RuntimeError> {
+        match tokio::fs::remove_file(self.layout.image(image)).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(RuntimeError::failed(error)),
+        }
+    }
 }
 
 /// Pumps a terminal's PTY to and from a [`Terminal`]'s channels. Dropping
@@ -862,12 +947,8 @@ mod tests {
 
     #[test]
     fn workspaces_trust_a_localhost_ca_only_for_localhost() {
-        let tools = Path::new("/tools");
-        assert_eq!(
-            system_gitconfig(tools, None),
-            "[credential]\n\thelper = /tools/iglu-guest git-credential\n"
-        );
-        let with_ca = system_gitconfig(tools, Some(Path::new("/dev ca/\"ca\".crt")));
+        assert!(!system_gitconfig(None).contains("sslCAInfo"));
+        let with_ca = system_gitconfig(Some(Path::new("/dev ca/\"ca\".crt")));
         assert!(with_ca.ends_with(
             "[http \"https://*.localhost\"]\n\tsslCAInfo = \"/dev ca/\\\"ca\\\".crt\"\n"
         ));

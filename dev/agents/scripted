@@ -10,6 +10,8 @@
 #   idle             nothing to do
 #   fail <message>   exits with an error, like a crashed agent
 #   exit             exits cleanly
+#
+# Exiting ends its thread, as a real agent's conversation ends.
 set -u
 
 report() { iglu-status set "$@" || true; }
@@ -22,8 +24,8 @@ handle() {
     wait) report waiting "$rest" && echo "waiting: $rest" ;;
     done) report "done" "$rest" && echo "done: $rest" ;;
     idle) report idle && echo "idle" ;;
-    fail) report exited "$rest" && echo "failed: $rest" >&2 && exit 1 ;;
-    exit) report exited && exit 0 ;;
+    fail) iglu-status clear && echo "failed: $rest" >&2 && exit 1 ;;
+    exit) iglu-status clear && exit 0 ;;
     "") ;;
     *) echo "say work, wait, done, idle, fail or exit" ;;
     esac
@@ -34,4 +36,4 @@ echo "scripted agent: work, wait or done <summary>; idle; fail <message>; exit"
 while IFS= read -r -p "> " line; do
     handle "$line"
 done
-report exited
+iglu-status clear

@@ -10,11 +10,13 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use iglu_api::{ErrorBody, ErrorKind, Field, WorkspaceView};
-use iglu_domain::auth::{self, Action, Decision, DenyReason, Grant, Resource, authorize};
+use iglu_domain::auth::{
+    self, Action, Decision, DenyReason, Grant, PrincipalStatus, Resource, authorize,
+};
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
 use iglu_domain::preview::{
-    ConsoleOrigin, Credential, CsrfToken, FetchMetadata, MethodClass, Transport, console_access,
+    ConsoleOrigin, Credential, FetchMetadata, MethodClass, Transport, console_access,
 };
 use iglu_domain::secret::{SecretTarget, SecretValue};
 use iglu_domain::time::{Millis, Timestamp};
@@ -29,7 +31,6 @@ use crate::oidc::RelyingParty;
 
 pub const CONSOLE_COOKIE: &str = "__Host-iglu";
 pub use iglu_domain::preview::PREVIEW_COOKIE;
-pub const CSRF_HEADER: &str = "x-csrf-token";
 
 pub struct App {
     pub config: Config,
@@ -357,8 +358,6 @@ pub fn session_valid(row: &SessionRow, kind: SessionKind, now: Timestamp, idle: 
 pub struct Caller {
     pub principal: PrincipalRecord,
     pub session_hash: String,
-    /// The session's CSRF token, which the console sends back on writes.
-    pub csrf_token: String,
     pub kind: SessionKind,
 }
 
@@ -459,12 +458,13 @@ impl Actor {
     }
 }
 
-/// Looks up a session token of `kind` and checks it's still valid.
+/// Looks up a session token of `kind` and checks it's still valid. A
+/// disabled person's sessions are over, wherever they're used.
 pub async fn session_principal(
     app: &App,
     token: &str,
     kind: SessionKind,
-) -> Result<Option<(PrincipalRecord, SessionRow)>, ApiError> {
+) -> Result<Option<PrincipalRecord>, ApiError> {
     let hash = crypto::hash(token);
     let idle = Millis::from_secs(app.config.sessions.idle_minutes.saturating_mul(60));
     let now = now();
@@ -479,10 +479,10 @@ pub async fn session_principal(
                 return Ok(None);
             }
             db::touch_session(tx, &hash, now)?;
-            Ok(db::principal(tx, row.principal)?.map(|principal| (principal, row)))
+            db::principal(tx, row.principal)
         })
         .await?;
-    Ok(found)
+    Ok(found.filter(|principal| principal.status == PrincipalStatus::Active))
 }
 
 impl FromRequestParts<Arc<App>> for Caller {
@@ -506,7 +506,7 @@ impl FromRequestParts<Arc<App>> for Caller {
             (None, Some(token)) => (token.to_owned(), SessionKind::Console, Credential::Cookie),
             (None, None) => return Err(ApiError::Unauthorized),
         };
-        let (principal, row) = session_principal(app, &token, kind)
+        let principal = session_principal(app, &token, kind)
             .await?
             .ok_or(ApiError::Unauthorized)?;
 
@@ -519,24 +519,16 @@ impl FromRequestParts<Arc<App>> for Caller {
             Some(origin) if origin == app.config.console_origin_string() => ConsoleOrigin::Exact,
             Some(_) => ConsoleOrigin::Other,
         };
-        let csrf = match parts.headers.get(CSRF_HEADER).and_then(|v| v.to_str().ok()) {
-            Some(sent) if crypto::constant_time_eq(sent.as_bytes(), row.csrf.as_bytes()) => {
-                CsrfToken::Valid
-            }
-            Some(_) | None => CsrfToken::MissingOrWrong,
-        };
         console_access(
             credential,
             transport(&parts.method, &parts.headers),
             fetch_metadata(&parts.headers),
             origin,
-            csrf,
         )
         .map_err(|rejection| ApiError::Forbidden(rejection.to_string()))?;
         Ok(Self {
             principal,
             session_hash: crypto::hash(&token),
-            csrf_token: row.csrf,
             kind,
         })
     }
@@ -591,7 +583,6 @@ mod tests {
     fn row(seen: i64, expires: i64) -> SessionRow {
         SessionRow {
             principal: PrincipalId::from_uuid(Uuid::nil()),
-            csrf: String::new(),
             last_seen_at: Timestamp::from_unix_millis(seen),
             expires_at: Timestamp::from_unix_millis(expires),
         }

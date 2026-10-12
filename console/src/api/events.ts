@@ -5,7 +5,7 @@ import { batch } from "@preact/signals";
 
 import type { Snapshot } from "../generated/Snapshot.ts";
 import { receive } from "../preferences.ts";
-import { environments, live, me, outdated, projects, workspaces } from "../state/store.ts";
+import { environments, live, loaded, me, outdated, projects, workspaces } from "../state/store.ts";
 import { noticeChanges } from "../notify.ts";
 import { api } from "./client.ts";
 
@@ -40,6 +40,7 @@ export function watch(): void {
       projects.value = snapshot.projects;
       environments.value = snapshot.environments;
       receive(snapshot.preferences);
+      loaded.value = true;
     });
   };
 }

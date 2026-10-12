@@ -4,13 +4,14 @@
 //!
 //! Every command is idempotent: one that already took effect takes no steps.
 
-use iglu_domain::guest as guest_tools;
 use iglu_domain::lifecycle::{
     Columns, Instance, Present, Readiness, Running, Runtime, SecretsGeneration,
 };
-use iglu_proto::{CommandError, CreateSpec, ErrorCode};
+use iglu_proto::{CommandError, CreateSpec, ErrorCode, UpgradeSpec};
 
-use crate::runtime::{Claim, Guest, Observed, Ownership, State};
+use crate::runtime::{Claim, Guest, Observed, Ownership, State, StoredImage};
+use iglu_domain::env::ImageFingerprint;
+use iglu_domain::time::{Millis, Timestamp};
 
 /// A lifecycle step: what a protocol command asks for, and what a runtime
 /// does. A command takes one or more steps.
@@ -23,6 +24,7 @@ pub enum Step<'a> {
     /// Ends every process, whether the instance is running or frozen.
     Stop,
     Delete,
+    Upgrade(&'a UpgradeSpec),
 }
 
 fn not_ours(ownership: &Ownership) -> CommandError {
@@ -54,7 +56,9 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
             return match command {
                 Step::Create(_) => Ok(vec![command]),
                 Step::Delete => Ok(vec![]),
-                Step::Start | Step::Freeze | Step::Thaw | Step::Stop => Err(missing()),
+                Step::Start | Step::Freeze | Step::Thaw | Step::Stop | Step::Upgrade(_) => {
+                    Err(missing())
+                }
             };
         }
         Some(Err(ownership)) => return Err(not_ours(ownership)),
@@ -64,10 +68,7 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
     match command {
         Step::Create(_) => Ok(vec![]),
         Step::Start => match state {
-            State::Stopped | State::Failed => {
-                speaks_this_hosts_interface(observed)?;
-                Ok(vec![Step::Start])
-            }
+            State::Stopped | State::Failed => Ok(vec![Step::Start]),
             State::Running { .. } | State::Frozen | State::Transitioning => Ok(vec![]),
         },
         Step::Freeze => match state {
@@ -96,6 +97,12 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
                 Ok(vec![Step::Stop, Step::Delete])
             }
         },
+        // The runtime brings it up to upgrade it.
+        Step::Upgrade(spec) => match state {
+            State::Stopped | State::Running { .. } | State::Frozen => Ok(vec![Step::Upgrade(spec)]),
+            State::Failed => Ok(vec![Step::Stop, Step::Upgrade(spec)]),
+            State::Transitioning => Err(invalid("the workspace is changing state")),
+        },
     }
 }
 
@@ -113,37 +120,6 @@ pub fn guest(found: Option<&Claim>) -> Result<Guest, CommandError> {
             running(observed).ok_or_else(|| invalid("the workspace isn't running"))
         }
     }
-}
-
-/// The guest hostd may run the guest tools in: a running one whose tools
-/// speak this host's interface.
-///
-/// # Errors
-///
-/// As for [`guest`], and when the instance's tools speak another
-/// interface, or it doesn't record one.
-pub fn tools_guest(found: Option<&Claim>) -> Result<Guest, CommandError> {
-    if let Some(Ok(observed)) = found {
-        speaks_this_hosts_interface(observed)?;
-    }
-    guest(found)
-}
-
-/// Whether an instance's guest tools speak this host's interface. Only
-/// starting it and running its tools need them to; stopping and deleting
-/// an old workspace still work, and nothing ever runs an old tool.
-fn speaks_this_hosts_interface(observed: &Observed) -> Result<(), CommandError> {
-    guest_tools::compatible(observed.guest_interface).map_err(|incompatible| {
-        CommandError::new(
-            ErrorCode::ImageIncompatible,
-            format!(
-                "this workspace's image was built with a different iglu ({}) than this host's \
-                 (interface {}): rebuild its environment and recreate the workspace",
-                incompatible.found,
-                guest_tools::INTERFACE
-            ),
-        )
-    })
 }
 
 /// The guest of an instance, if it's running.
@@ -214,10 +190,53 @@ const fn readiness(ready: bool, has_address: bool) -> Readiness {
     }
 }
 
+/// The images to remove: those not kept, but for any built within
+/// `older_than` of `now`. One built at an unknown time is old.
+#[must_use]
+pub fn unkept(
+    images: &[StoredImage],
+    keep: &[ImageFingerprint],
+    older_than: Millis,
+    now: Timestamp,
+) -> Vec<ImageFingerprint> {
+    images
+        .iter()
+        .filter(|image| !keep.contains(&image.fingerprint))
+        .filter(|image| {
+            image
+                .built
+                .is_none_or(|built| now.since(built) >= older_than)
+        })
+        .map(|image| image.fingerprint.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::BootId;
+
+    fn image(n: u8, built: Option<i64>) -> StoredImage {
+        StoredImage {
+            fingerprint: format!("{n:064x}").parse().expect("valid fingerprint"),
+            built: built.map(Timestamp::from_unix_millis),
+        }
+    }
+
+    #[test]
+    fn images_kept_or_new_stay() {
+        let hour = Millis::from_secs(3600);
+        let now = Timestamp::from_unix_millis(10_000_000);
+        let kept = image(1, Some(0));
+        let new = image(2, Some(now.unix_millis() - 60_000));
+        let old = image(3, Some(now.unix_millis() - 3_600_000));
+        let unknown = image(4, None);
+        let images = [kept.clone(), new, old.clone(), unknown.clone()];
+        assert_eq!(
+            unkept(&images, &[kept.fingerprint], hour, now),
+            [old.fingerprint, unknown.fingerprint]
+        );
+    }
     use iglu_domain::env::GuestUser;
     use iglu_domain::lifecycle::Provisioning;
 
@@ -246,7 +265,7 @@ mod tests {
             )
             .expect("valid user"),
             provisioning: Provisioning::Pending,
-            guest_interface: Some(guest_tools::INTERFACE),
+            image: None,
             state,
             memory: None,
         }
@@ -333,6 +352,29 @@ mod tests {
     }
 
     #[test]
+    fn an_upgrade_starts_from_any_settled_state_and_needs_an_instance() {
+        let spec = UpgradeSpec {
+            image: "a".repeat(64).parse().expect("a fingerprint"),
+            user: observed(State::Stopped).user,
+        };
+        for state in [State::Stopped, RUNNING, State::Frozen] {
+            assert_eq!(
+                steps(Step::Upgrade(&spec), state),
+                Ok(vec![Step::Upgrade(&spec)]),
+                "{state:?}"
+            );
+        }
+        assert_eq!(
+            steps(Step::Upgrade(&spec), State::Failed),
+            Ok(vec![Step::Stop, Step::Upgrade(&spec)])
+        );
+        assert_eq!(
+            decide(Step::Upgrade(&spec), None).map_err(|e| e.code),
+            Err(ErrorCode::NotFound)
+        );
+    }
+
+    #[test]
     fn nothing_acts_on_missing_or_foreign_instances() {
         for command in [Step::Start, Step::Freeze, Step::Thaw, Step::Stop] {
             assert_eq!(
@@ -361,45 +403,6 @@ mod tests {
             Err(ErrorCode::Conflict)
         );
         assert_eq!(guest(None).map_err(|e| e.code), Err(ErrorCode::NotFound));
-    }
-
-    #[test]
-    fn an_instance_from_another_iglu_can_be_stopped_but_not_started_or_used() {
-        let older = guest_tools::Interface::new(guest_tools::INTERFACE.get() - 1);
-        let refused = |result: Result<(), CommandError>| {
-            result.map_err(|e| (e.code, e.message.contains("recreate")))
-        };
-        for recorded in [Some(older), None] {
-            let instance = |state| {
-                Ok(Observed {
-                    guest_interface: recorded,
-                    ..observed(state)
-                })
-            };
-            assert_eq!(
-                refused(decide(Step::Start, Some(&instance(State::Stopped))).map(|_| ())),
-                Err((ErrorCode::ImageIncompatible, true)),
-                "{recorded:?}"
-            );
-            assert_eq!(
-                refused(tools_guest(Some(&instance(RUNNING))).map(|_| ())),
-                Err((ErrorCode::ImageIncompatible, true)),
-                "{recorded:?}"
-            );
-            assert_eq!(
-                decide(Step::Stop, Some(&instance(RUNNING))),
-                Ok(vec![Step::Stop])
-            );
-            assert_eq!(
-                decide(Step::Delete, Some(&instance(State::Stopped))),
-                Ok(vec![Step::Delete])
-            );
-            assert!(
-                guest(Some(&instance(RUNNING))).is_ok(),
-                "terminals still work"
-            );
-        }
-        assert!(tools_guest(Some(&Ok(observed(RUNNING)))).is_ok());
     }
 
     #[test]

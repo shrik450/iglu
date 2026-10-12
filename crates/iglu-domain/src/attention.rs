@@ -9,7 +9,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::parse::{is_printable, text_type};
+use crate::parse::{is_printable, serde_text, text_type};
 use crate::terminal::SessionName;
 use crate::time::Timestamp;
 
@@ -24,45 +24,13 @@ pub enum AttentionState {
     /// Finished a turn and wants review.
     Done,
     Idle,
-    Exited,
 }
 
-impl AttentionState {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Working => "working",
-            Self::Waiting => "waiting",
-            Self::Done => "done",
-            Self::Idle => "idle",
-            Self::Exited => "exited",
-        }
-    }
-}
-
-impl FromStr for AttentionState {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "working" => Ok(Self::Working),
-            "waiting" => Ok(Self::Waiting),
-            "done" => Ok(Self::Done),
-            "idle" => Ok(Self::Idle),
-            "exited" => Ok(Self::Exited),
-            _ => Err(ParseError::new(
-                "attention state",
-                "expected working, waiting, done, idle or exited",
-            )),
-        }
-    }
-}
-
-impl fmt::Display for AttentionState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+serde_text!(
+    AttentionState,
+    "attention state",
+    "expected working, waiting, done or idle"
+);
 
 /// A one-line, guest-supplied description. Untrusted: bounded and free of
 /// control characters, so it can't smuggle terminal escapes into the UI.
@@ -162,9 +130,8 @@ impl fmt::Display for ThreadKey {
 
 text_type!(ThreadKey);
 
-/// The most threads one session keeps, and how many of them may have exited.
+/// The most threads one session keeps.
 pub const MAX_THREADS: usize = 16;
-pub const KEPT_EXITED: usize = 5;
 
 /// Which statuses go first when there are too many: those waiting on the
 /// person, then working ones, then the rest; newest first within each.
@@ -174,30 +141,18 @@ const fn rank(state: AttentionState) -> u8 {
         AttentionState::Working => 1,
         AttentionState::Done => 2,
         AttentionState::Idle => 3,
-        AttentionState::Exited => 4,
     }
 }
 
 /// Which of a session's threads to keep, given each one's state and when it
 /// last changed: waiting and working ones first, then the rest, newest
-/// first, with at most [`KEPT_EXITED`] exited and [`MAX_THREADS`] in all.
+/// first, with at most [`MAX_THREADS`].
 #[must_use]
 pub fn keep<K: Clone>(threads: &[(K, AttentionState, Timestamp)]) -> Vec<K> {
     let mut newest: Vec<&(K, AttentionState, Timestamp)> = threads.iter().collect();
     newest.sort_by_key(|(_, state, at)| (rank(*state), std::cmp::Reverse(*at)));
-    let mut exited = 0;
     newest
         .into_iter()
-        .filter(|(_, state, _)| match state {
-            AttentionState::Exited => {
-                exited += 1;
-                exited <= KEPT_EXITED
-            }
-            AttentionState::Working
-            | AttentionState::Waiting
-            | AttentionState::Done
-            | AttentionState::Idle => true,
-        })
         .take(MAX_THREADS)
         .map(|(key, _, _)| key.clone())
         .collect()
@@ -235,7 +190,6 @@ pub enum Seen {
 /// How much a status wants the user, least to most.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Urgency {
-    Exited,
     Idle,
     SeenDone,
     Working,
@@ -251,7 +205,6 @@ pub const fn urgency(state: AttentionState, seen: Seen) -> Urgency {
         (AttentionState::Working, _) => Urgency::Working,
         (AttentionState::Done, Seen::Seen) => Urgency::SeenDone,
         (AttentionState::Idle, _) => Urgency::Idle,
-        (AttentionState::Exited, _) => Urgency::Exited,
     }
 }
 
@@ -307,14 +260,8 @@ mod tests {
     }
 
     #[test]
-    fn live_threads_stay_and_old_exited_ones_go() {
+    fn a_session_keeps_its_most_wanted_threads() {
         let at = Timestamp::from_unix_millis;
-        let mut threads: Vec<(u32, AttentionState, Timestamp)> = (0..8)
-            .map(|n| (n, AttentionState::Exited, at(i64::from(n))))
-            .collect();
-        threads.push((100, AttentionState::Waiting, at(-5)));
-        let kept = keep(&threads);
-        assert_eq!(kept, [100, 7, 6, 5, 4, 3]);
         let many: Vec<(u32, AttentionState, Timestamp)> = (0..40)
             .map(|n| (n, AttentionState::Working, at(i64::from(n))))
             .collect();

@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 
-import { api } from "../api/client.ts";
 import {
   activeOf,
   addColumn,
@@ -14,8 +13,11 @@ import {
   nextWaiting,
   open,
   restartColumn,
+  setState,
+  signOut,
   toggleFreeze,
   toggleZoom,
+  update,
   zoomedIn,
 } from "../actions.ts";
 import { afterPrefix, keysFor, touchOnly } from "../keyboard.ts";
@@ -86,18 +88,34 @@ function items(): Item[] {
   if (ws) {
     list.push({ label: `Rename ${called(ws)}`, hint: keysFor("rename"), run: () => ask(ws, { kind: "rename" }) });
     list.push({ label: `Details of ${called(ws)}`, hint: keysFor("details"), run: () => (details.value = true) });
+    const project = projects.value.find((p) => p.id === ws.project);
+    if (project) list.push({ label: `Go to project ${project.name}`, sub: `Where ${called(ws)} came from, and its settings`, run: () => navigate({ view: "project", name: project.name }) });
     list.push(...columnItems(ws));
     for (const r of ws.routes) list.push({ label: `Copy the link to ${r.name}`, sub: ONLY_YOU, run: () => copyLink(r.url) });
     if (ws.phase === "running") {
       list.push({ label: `Shell in ${called(ws)}`, run: () => void addColumn(ws, { kind: "shell" }) });
-      for (const agent of ws.agents) list.push({ label: `${agent} in ${called(ws)}`, run: () => void addColumn(ws, { kind: "agent", agent }) });
-      list.push({ label: `Server in ${called(ws)}`, sub: "A command that keeps running, such as a dev server", run: () => ask(ws, { kind: "add-column", server: true }) });
+      if (ws.browser && !ws.columns.some((c) => c.kind.kind === "browser")) list.push({ label: `Browser in ${called(ws)}`, run: () => void addColumn(ws, { kind: "browser" }) });
+      list.push({ label: `Publish a port of ${called(ws)}`, sub: ONLY_YOU, run: () => ask(ws, { kind: "port" }) });
       list.push({ label: `Freeze ${called(ws)}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
     }
     if (ws.phase === "frozen") list.push({ label: `Thaw ${called(ws)}`, hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
+    if (ws.phase === "running" || ws.phase === "frozen") list.push({ label: `Stop ${called(ws)}`, sub: "Its files stay; starting it runs it again", run: () => void setState(ws, "stopped") });
+    if (ws.phase === "stopped") list.push({ label: `Start ${called(ws)}`, run: () => void setState(ws, "running") });
+    if (ws.newer_build) list.push({ label: `Update ${called(ws)}`, sub: `To the newest build of ${ws.environment}, restarting it`, run: () => void update(ws) });
+    list.push({
+      label: `Delete ${called(ws)}…`,
+      sub: "Asks first",
+      run: () => {
+        details.value = true;
+        ask(ws, { kind: "delete" });
+      },
+    });
   }
   for (const w of listed.value) list.push({ label: called(w), sub: w.attention?.summary || (w.checkout ? `⎇ ${w.checkout.branch}` : ""), run: () => open(w) });
-  for (const p of projects.value) list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
+  for (const p of projects.value) {
+    list.push({ label: p.name, sub: "Project", run: () => navigate({ view: "project", name: p.name }) });
+    list.push({ label: `Settings of ${p.name}`, sub: "Repository, environment, previews, how workspaces open", run: () => navigate({ view: "project", name: p.name, settings: true }) });
+  }
   for (const w of listed.value) for (const r of w.routes) list.push({ label: `Open ${r.name}`, sub: `${called(w)} :${r.port}`, run: () => window.open(r.url, "_blank", "noopener") });
   list.push(
     { label: "Look: match the system", run: () => setLook("auto") },
@@ -107,7 +125,7 @@ function items(): Item[] {
       label: "Turn on notifications",
       run: () => void enableNotifications().then((p) => say(p === "granted" ? "Notifications are on." : "Notifications are blocked in this browser.")),
     },
-    { label: "Sign out", run: () => void api.logout().then(() => location.assign("/")) },
+    { label: "Sign out", run: () => void signOut() },
   );
   return list;
 }

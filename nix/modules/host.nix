@@ -1,7 +1,8 @@
 # An iglu execution host: Incus with a Btrfs pool, a workspace bridge and
 # profile, the Nix daemon for environment builds, and hostd.
 #
-# Users never sign in here. hostd accepts only iglud's service tokens.
+# Users never sign in here. hostd accepts only iglud, by its client
+# certificate.
 { self }:
 {
   config,
@@ -15,22 +16,24 @@ let
   incus = config.virtualisation.incus;
   settingsFormat = pkgs.formats.json { };
   runtimeDir = "/run/iglu-hostd";
+  # The guest tools every instance mounts, copied out of the store, which
+  # instances can't see into.
+  guestTools = "/var/lib/iglu-hostd/guest-tools";
 
   settings = {
     host_id = cfg.hostId;
     listen = cfg.listen;
     tls = {
-      inherit (cfg.tls) certificate key;
-    };
-    auth = {
-      inherit (cfg.auth) issuer audience subjects;
+      inherit (cfg.tls) certificate key clients;
     };
     incus = {
       socket = "/var/lib/incus/unix.socket";
       binary = lib.getExe' incus.clientPackage "incus";
       profile = "iglu";
+      pool = "iglu";
       network = cfg.network.name;
       acl = "iglu-egress";
+      guest_tools = guestTools;
     };
     build = {
       nix = lib.getExe' config.nix.package "nix";
@@ -49,6 +52,17 @@ in
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.hostd;
       defaultText = lib.literalExpression "iglu.packages.\${system}.hostd";
+    };
+
+    guestTools = lib.mkOption {
+      type = lib.types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.guest-tools;
+      defaultText = lib.literalExpression "iglu.packages.\${system}.guest-tools";
+      description = ''
+        The tools hostd runs in workspaces and their users run, a static
+        build mounted read-only into every one: they're always this host's,
+        whatever iglu an environment was built with.
+      '';
     };
 
     hostId = lib.mkOption {
@@ -78,21 +92,15 @@ in
         type = lib.types.str;
         description = "PEM private key, readable by root only.";
       };
-    };
-
-    auth = {
-      issuer = lib.mkOption {
+      clients = lib.mkOption {
         type = lib.types.str;
-        example = "https://id.example.org";
-        description = "The OIDC issuer that signs iglud's service tokens.";
-      };
-      audience = lib.mkOption {
-        type = lib.types.str;
-        description = "The `aud` of iglud's service tokens, as the identity provider issues them. Decode one token from the worker client to see it.";
-      };
-      subjects = lib.mkOption {
-        type = lib.types.nonEmptyListOf lib.types.str;
-        description = "The `sub` values allowed to drive this host: the subject the identity provider gives the worker client's tokens.";
+        description = ''
+          The PEM CA certificate whose certificates may drive this host: the
+          one that signs iglud's client certificate
+          (`services.iglu.control.hostClient`). Keep it for that alone, apart
+          from the CA of hosts' own certificates, or any certificate it signs
+          could drive the host.
+        '';
       };
     };
 
@@ -233,6 +241,9 @@ in
       "nix-command"
       "flakes"
     ];
+    # hostd keeps each image's build, its system included, while the image
+    # is on the host; once it removes the image, collection frees the rest.
+    nix.gc.automatic = lib.mkDefault true;
 
     systemd.services.iglu-hostd = {
       description = "iglu host agent";
@@ -252,6 +263,22 @@ in
         RuntimeDirectory = baseNameOf runtimeDir;
         # Proxy devices keep listening on sockets here across hostd restarts.
         RuntimeDirectoryPreserve = true;
+        StateDirectory = "iglu-hostd";
+        # Each tool replaced by a rename, so running workspaces, which mount
+        # this directory, see whole files and the new ones at once.
+        ExecStartPre = pkgs.writeShellScript "iglu-guest-tools" ''
+          set -eu
+          dir=${guestTools}/bin
+          mkdir -p "$dir"
+          for tool in ${cfg.guestTools}/bin/*; do
+            name=$(basename "$tool")
+            install -m 0555 "$tool" "$dir/.$name.new"
+            mv -f "$dir/.$name.new" "$dir/$name"
+          done
+          for old in "$dir"/*; do
+            [ -e "${cfg.guestTools}/bin/$(basename "$old")" ] || rm -f "$old"
+          done
+        '';
       };
     };
   };

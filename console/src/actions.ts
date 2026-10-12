@@ -37,14 +37,20 @@ import {
 import { panes } from "./terminal.ts";
 import { called } from "./state/naming.ts";
 
-/** Runs a request, showing its error instead of throwing. */
-export async function attempt<T>(request: () => Promise<T>): Promise<T | undefined> {
+/** Runs a request, showing its error instead of throwing: what it gave on
+ * success, even nothing, or undefined once its error is shown. */
+export async function attempt<T>(request: () => Promise<T>): Promise<{ value: T } | undefined> {
   try {
-    return await request();
+    return { value: await request() };
   } catch (error) {
     say(failure(error));
     return undefined;
   }
+}
+
+/** Ends this browser's session and goes to the sign-in page. */
+export async function signOut(): Promise<void> {
+  if (await attempt(() => api.logout())) location.assign("/");
 }
 
 export function open(ws: WorkspaceView): void {
@@ -89,6 +95,12 @@ export async function remove(ws: WorkspaceView): Promise<void> {
   const deleted = await attempt(() => api.setState(ws, "deleted"));
   settle(ws, "delete");
   if (deleted && current.value?.id === ws.id) navigate({ view: "overview" });
+}
+
+/** Upgrades a workspace in place to its environment's newest build. */
+export async function update(ws: WorkspaceView): Promise<void> {
+  const updated = await attempt(() => api.update(ws.id));
+  if (updated) say(`Updating ${called(ws)} to the newest build of ${ws.environment}. It restarts once it's ready.`);
 }
 
 export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
@@ -142,15 +154,25 @@ export async function create(body: CreateWorkspace): Promise<void> {
   } else say(`${called(ws)} is being made; it's in the list.`);
 }
 
-/** Publishes a port; throws what iglu refused, for a form to show. */
+/** Publishes a port; throws what iglu refused, for a form to show. Says so
+ * if nothing listens there yet, which would otherwise look like a broken
+ * link, and asks what's listening again so the header shows the preview at
+ * once rather than at the next poll. */
 export async function publish(ws: WorkspaceView, port: number): Promise<void> {
   const route = await api.publish(ws.id, port);
-  say(`Published :${route.port} at ${route.url}`);
   settle(ws, "port");
+  const listening = inside.value[ws.id]?.listeners.some((l) => l.port === route.port) ?? true;
+  say(
+    listening
+      ? `Published :${route.port} as ${route.name}; its link is beside the name.`
+      : `Published :${route.port} as ${route.name}. Nothing listens there yet; it opens once something does.`,
+  );
+  await loadLive(ws);
 }
 
 export async function unpublish(ws: WorkspaceView, route: RouteView): Promise<void> {
   await attempt(() => api.unpublish(ws.id, route.id));
+  await loadLive(ws);
 }
 
 /** Makes the workspace's columns how new workspaces in its project open. */
@@ -165,12 +187,11 @@ export async function saveOpening(ws: WorkspaceView): Promise<void> {
       repo: project.repo,
       environment: project.environment,
       opening,
-      agent: project.agent,
       ports: project.ports,
       idle: project.idle,
     }),
   );
-  if (saved) say(`New workspaces in ${saved.name} open like this.`);
+  if (saved) say(`New workspaces in ${saved.value.name} open like this.`);
 }
 
 /** Asks the host what's listening and where the checkout stands. Polled:
@@ -298,12 +319,12 @@ export async function cycleWidth(ws: WorkspaceView, name?: string): Promise<void
 export async function loadColumns(ws: WorkspaceView): Promise<void> {
   if (ws.phase !== "running") return;
   const list = await attempt(() => api.columns(ws.id));
-  if (list) columnStates.value = { ...columnStates.value, [ws.id]: list };
+  if (list) columnStates.value = { ...columnStates.value, [ws.id]: list.value };
 }
 
 /** Opens a column after the focused one and focuses it; throws what iglu
- * refused, for a form to show. */
-export async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
+ * refused. */
+async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
   if (ws.phase !== "running") return;
   const after = activeOf(ws);
   const created = await api.addColumn(ws.id, after ? { kind, after } : { kind });

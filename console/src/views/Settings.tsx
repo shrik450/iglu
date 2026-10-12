@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 
-import { attempt } from "../actions.ts";
+import { attempt, signOut } from "../actions.ts";
 import { api } from "../api/client.ts";
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
@@ -17,7 +17,7 @@ import { repoLabel } from "../state/groups.ts";
 import { type Chord, chordLabel, usablePrefix } from "../state/keys.ts";
 import type { OptionAsMeta } from "../generated/OptionAsMeta.ts";
 import type { TerminalStyle } from "../generated/TerminalStyle.ts";
-import { environments, me, navigate, projects, say, workspaces } from "../state/store.ts";
+import { environments, me, projects, say, workspaces } from "../state/store.ts";
 import { type CellSize, THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, isLight, parseTheme } from "../state/themes.ts";
 import { oneOf, unreachable } from "../state/unsaved.ts";
 import { pageColors } from "../terminal.ts";
@@ -102,11 +102,6 @@ function ProjectRow({ project }: { project: ProjectView }) {
         <a
           href={`/p/${project.name}`}
           translate={false}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "project", name: project.name });
-          }}
         >
           <b>{project.name}</b>
         </a>
@@ -199,7 +194,10 @@ function Secrets() {
   const [secrets, setSecrets] = useState<SecretView[] | null>(null);
   const [kind, setKind] = useState<TargetKind>("env");
   const [removing, setRemoving] = useState<string | null>(null);
-  const load = async () => setSecrets((await attempt(() => api.secrets())) ?? []);
+  const load = async () => {
+    const got = await attempt(() => api.secrets());
+    if (got) setSecrets(got.value);
+  };
   useEffect(() => void load(), []);
   const add = useForm(async (data, form) => {
     const text = textOf(data);
@@ -230,7 +228,8 @@ function Secrets() {
                       type="button"
                       class="btn danger"
                       onClick={() =>
-                        void attempt(() => api.deleteSecret(secret.name)).then(() => {
+                        void attempt(() => api.deleteSecret(secret.name)).then((done) => {
+                          if (!done) return;
                           setRemoving(null);
                           void load();
                         })
@@ -509,14 +508,7 @@ function Account() {
           >
             Notifications
           </button>
-          <button type="button" class="btn" onClick={() =>
-              void attempt(async () => {
-                await api.logout();
-                return true;
-              }).then((done) => {
-                if (done) location.assign("/");
-              })
-            }>
+          <button type="button" class="btn" onClick={() => void signOut()}>
             Sign out
           </button>
         </span>

@@ -20,19 +20,27 @@ export const workspaces = signal<WorkspaceView[]>([]);
 export const projects = signal<ProjectView[]>([]);
 export const environments = signal<EnvironmentView[]>([]);
 export const live = signal(false);
+/** Whether the first snapshot has come: until then an empty list says
+ * nothing, and no view says something isn't there. */
+export const loaded = signal(false);
 /** iglu restarted, likely upgraded, since this page loaded: its code may no
  * longer match what iglu sends, so it asks to be reloaded. */
 export const outdated = signal(false);
 
-export const route = signal<Route>(parseRoute(location.pathname));
-addEventListener("popstate", () => {
-  route.value = parseRoute(location.pathname);
+export const route = signal<Route>(parseRoute(location.pathname) ?? { view: "overview" });
+// Every move to one of the console's places, by a link, Back and Forward, or
+// navigate(), stays in the page; anything else iglud serves loads as a page.
+// Modified clicks open a tab without coming here.
+window.navigation.addEventListener("navigate", (event) => {
+  if (!event.canIntercept || event.hashChange || event.downloadRequest !== null || event.formData) return;
+  const next = parseRoute(new URL(event.destination.url).pathname);
+  if (!next) return;
+  route.value = next;
+  event.intercept();
 });
 
 export function navigate(next: Route, mode: "push" | "replace" = "push"): void {
-  const path = formatRoute(next);
-  if (path !== location.pathname) history[mode === "push" ? "pushState" : "replaceState"](null, "", path);
-  route.value = next;
+  window.navigation.navigate(formatRoute(next), { history: mode });
 }
 
 export const groups = computed(() => groupByProject(projects.value, workspaces.value));
@@ -97,8 +105,8 @@ export type Question =
   | { kind: "label"; column: string }
   | { kind: "find"; column: string }
   | { kind: "port" }
-  /** A column to add; `server` opens straight at the server's command. */
-  | { kind: "add-column"; server?: true };
+  /** A column to add. */
+  | { kind: "add-column" };
 
 /** One question at a time, held with the workspace that asked it, so it never
  * carries over to another: an armed delete stays with its own workspace. */

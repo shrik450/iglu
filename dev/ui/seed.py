@@ -5,8 +5,8 @@
 Run it against a fresh dev stack (`just dev-reset`, then `just dev`). It
 makes fixture repositories that Caddy serves at https://git.localhost, then
 signs in as alice and bob and uses the console's API and terminals, as a
-person would, to reach each state. The `scripted` agent stands in for a real
-one, reporting whichever attention state its prompt names.
+person would, to reach each state. dev/agents/scripted, run in a shell,
+stands in for a real agent, reporting whichever attention state it's told.
 """
 
 import os
@@ -18,11 +18,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from common import Api, CONSOLE, launch, shared, sign_in, type_in  # noqa: E402
+from common import ROOT, Api, CONSOLE, launch, shared, sign_in, type_in  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 GIT = "https://git.localhost"
-# A server column's port. Local workspaces share this machine's loopback, so
+SCRIPTED = ROOT / "dev/agents/scripted"
+# The preview server's port. Local workspaces share this machine's loopback, so
 # it's one nothing else is likely to use.
 PREVIEW_PORT = 18431
 
@@ -74,7 +75,7 @@ def main() -> None:
             name = repo.rsplit("/", 1)[1].removesuffix(".git")
             if name not in projects:
                 projects[name] = api.send("POST", "/v1/projects", {"repo": repo, "environment": "default"})
-        # app's workspaces open with the stand-in agent and a shell.
+        # app's workspaces open with a shell for the agent, and one beside it.
         project = api.get(f"/v1/projects/{projects['app']['id']}")
         api.send("PUT", f"/v1/projects/{project['id']}", {
             "expected_revision": project["revision"],
@@ -82,17 +83,16 @@ def main() -> None:
             "repo": project["repo"],
             "environment": project["environment"],
             "opening": [
-                {"kind": {"kind": "agent", "agent": "scripted"}, "width": "two-thirds"},
+                {"name": "agent", "kind": {"kind": "shell"}, "width": "two-thirds"},
                 {"kind": {"kind": "shell"}, "width": "third"},
             ],
-            "agent": "scripted",
             "ports": [],
             "idle": {"kind": "never"},
         })
 
         existing = {ws["name"] for ws in api.get("/v1/workspaces")}
         wanted = [
-            # name, project, prompt for the scripted agent
+            # name, project, what the scripted agent is told
             ("fix-login-redirect", "app", "wait Approve the database migration before I run it"),
             ("refactor-billing-and-invoice-generation-pipeline", "app", "work Rewriting how invoice totals are rounded"),
             ("docs-typos", "app", "done Fixed 12 typos across the docs"),
@@ -105,18 +105,19 @@ def main() -> None:
             ("broken-clone", "missing", None),
         ]
         created = []
-        for name, project_name, prompt in wanted:
+        for name, project_name, told in wanted:
             if name in existing:
                 continue
-            request = {"project": projects[project_name]["id"], "name": name}
-            if prompt:
-                request["prompt"] = prompt
-            api.create(**request)
-            created.append((name, project_name))
-        for name, project_name in created:
+            api.create(project=projects[project_name]["id"], name=name)
+            created.append((name, project_name, told))
+        for name, project_name, _ in created:
             if project_name != "missing":
                 api.wait(name, "running")
         time.sleep(2)
+        for name, _, told in created:
+            if told:
+                page.goto(f"{CONSOLE}/w/{name}")
+                type_in(page, "agent", f"{SCRIPTED} '{told}'", "scripted agent:")
 
         # Work that isn't saved: a commit that isn't pushed, and an edit that
         # isn't committed.
@@ -126,17 +127,15 @@ def main() -> None:
         # A server, published at its own preview address.
         ws = api.workspace("preview-server")
         if not any(r["port"] == PREVIEW_PORT for r in ws.get("routes", [])):
-            api.send("POST", f"/v1/workspaces/{ws['id']}/columns", {
-                "kind": {"kind": "server", "command": ["python3", "-m", "http.server", str(PREVIEW_PORT), "--bind", "127.0.0.1"]},
-                "name": "server",
-            })
-            time.sleep(2)
+            api.send("POST", f"/v1/workspaces/{ws['id']}/columns", {"kind": {"kind": "shell"}, "name": "server"})
+            page.goto(f"{CONSOLE}/w/preview-server")
+            type_in(page, "server", f"python3 -m http.server {PREVIEW_PORT} --bind 127.0.0.1", "Serving HTTP")
             api.send("POST", f"/v1/workspaces/{ws['id']}/routes", {"port": PREVIEW_PORT})
 
         for name, state, phase in (("notes-frozen", "frozen", "frozen"), ("notes-stopped", "stopped", "stopped")):
             ws = api.workspace(name)
             if ws["phase"] != phase:
-                api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": state, "expected_revision": ws["revision"]})
+                api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": state})
                 api.wait(name, phase)
 
         if not any(s["name"] == "github-token" for s in api.get("/v1/secrets")):

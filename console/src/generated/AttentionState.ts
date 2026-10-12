@@ -3,4 +3,4 @@
 /**
  * What an agent or shell in a session is doing.
  */
-export type AttentionState = "working" | "waiting" | "done" | "idle" | "exited";
+export type AttentionState = "working" | "waiting" | "done" | "idle";

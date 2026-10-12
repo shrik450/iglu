@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn nested_fields_are_paths() {
-        let project = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"agent":null,"ports":[3000,0],"idle":{"kind":"default"}}"#;
+        let project = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"ports":[3000,0],"idle":{"kind":"default"}}"#;
         assert_eq!(
             json_problem::<ChangeProject>(project).field,
             Some(Field::new("ports[1]"))

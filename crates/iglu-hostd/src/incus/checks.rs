@@ -9,13 +9,9 @@ use iglu_domain::guest as guest_tools;
 use iglu_domain::lifecycle::SecretsGeneration;
 use iglu_domain::secret::bundle;
 
-use iglu_proto::{Command, CommandOutcome, ErrorCode};
-use serde_json::json;
-
 use super::IncusRuntime;
 use super::exec::{self, Program};
 use super::guestfs::paths;
-use super::observe::keys;
 use crate::conformance::Outcome;
 use crate::guest::{GuestCommand, parse_generation};
 use crate::host::Host;
@@ -41,8 +37,8 @@ pub async fn run(host: &Host<IncusRuntime>, guest: &Guest) -> Vec<Outcome> {
             result: unread_input(runtime, guest).await,
         },
         Outcome {
-            check: "a workspace from another iglu gets no secrets",
-            result: other_interface_refused(host, guest).await,
+            check: "the guest tools can't be changed from inside",
+            result: tools_unchangeable(runtime, guest).await,
         },
     ]
 }
@@ -161,31 +157,16 @@ async fn unread_input(runtime: &IncusRuntime, guest: &Guest) -> Result<(), Strin
     }
 }
 
-/// An instance recording another guest-tools interface, as one created
-/// before an upgrade would, is refused secrets with a typed error.
-async fn other_interface_refused(host: &Host<IncusRuntime>, guest: &Guest) -> Result<(), String> {
-    let record = |interface: String| async move {
-        host.runtime()
-            .incus
-            .update_instance(
-                guest.name,
-                |instance| instance["config"][keys::GUEST_INTERFACE] = json!(interface),
-                Duration::from_secs(60),
-            )
-            .await
-            .map_err(|e| e.to_string())
-    };
-    let older = guest_tools::INTERFACE.get() - 1;
-    record(older.to_string()).await?;
-    let secrets = bundle(SecretsGeneration::from_u64(9), []).map_err(|e| e.to_string())?;
-    let outcome = host
-        .perform(guest.name.workspace(), Command::DeliverSecrets(secrets))
-        .await;
-    record(guest_tools::INTERFACE.to_string()).await?;
-    match outcome {
-        CommandOutcome::Failed(error) if error.code == ErrorCode::ImageIncompatible => Ok(()),
-        other @ (CommandOutcome::Done { .. } | CommandOutcome::Failed(_)) => {
-            Err(format!("expected ImageIncompatible, got {other:?}"))
-        }
+/// The tools hostd runs as the workspace user are the host's: the user can
+/// neither replace one nor add one beside them.
+async fn tools_unchangeable(runtime: &IncusRuntime, guest: &Guest) -> Result<(), String> {
+    let tool = paths::GUEST_TOOL;
+    let beside = format!("{}/bin/planted", guest_tools::INSTANCE_TOOLS);
+    let script = format!(
+        "cp /bin/sh {tool} 2>/dev/null; rm -f {tool} 2>/dev/null; touch {beside} 2>/dev/null; test -x {tool} && test ! -e {beside} && echo kept"
+    );
+    match as_user(runtime, guest, &["sh", "-c", &script]).await {
+        Ok(out) if out.trim() == "kept" => Ok(()),
+        other => Err(format!("{other:?}")),
     }
 }

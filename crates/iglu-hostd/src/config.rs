@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use iglu_domain::auth::{Issuer, Subject};
 use iglu_domain::label::HostId;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -17,7 +16,6 @@ pub struct Config {
     pub host_id: HostId,
     pub listen: SocketAddr,
     pub tls: Tls,
-    pub auth: Auth,
     pub incus: Incus,
     pub build: Build,
     /// Where hostd keeps runtime files such as proxy sockets.
@@ -31,39 +29,10 @@ pub struct Config {
 pub struct Tls {
     pub certificate: PathBuf,
     pub key: PathBuf,
-}
-
-/// Which bearer tokens hostd accepts: IdP-issued access tokens for this
-/// audience, from one of the listed service subjects.
-#[derive(Debug, Deserialize)]
-#[serde(try_from = "RawAuth")]
-pub struct Auth {
-    pub issuer: Issuer,
-    pub audience: String,
-    pub subjects: Vec<Subject>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAuth {
-    issuer: Issuer,
-    audience: String,
-    subjects: Vec<Subject>,
-}
-
-impl TryFrom<RawAuth> for Auth {
-    type Error = &'static str;
-
-    fn try_from(raw: RawAuth) -> Result<Self, Self::Error> {
-        if raw.subjects.is_empty() {
-            return Err("auth.subjects must name at least one service subject");
-        }
-        Ok(Self {
-            issuer: raw.issuer,
-            audience: raw.audience,
-            subjects: raw.subjects,
-        })
-    }
+    /// The CA whose certificates may call this host: the one that signs
+    /// iglud's client certificate, and nothing else, or any certificate it
+    /// signed could command the host.
+    pub clients: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,10 +45,15 @@ pub struct Incus {
     pub project: Option<String>,
     /// The profile every workspace instance uses: root disk and NIC.
     pub profile: String,
+    /// The storage pool each person's kept volume is on.
+    pub pool: String,
     /// The managed bridge workspaces attach to.
     pub network: String,
     /// The ACL hostd maintains on that bridge.
     pub acl: String,
+    /// The guest tools, a directory with their static build in its `bin`,
+    /// mounted read-only into every instance.
+    pub guest_tools: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]

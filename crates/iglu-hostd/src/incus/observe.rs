@@ -1,7 +1,6 @@
 //! Reading Incus's view of an instance into hostd's.
 
 use iglu_domain::capacity::Bytes;
-use iglu_domain::guest::Interface;
 use iglu_domain::id::{InstanceName, WorkspaceId};
 use iglu_domain::lifecycle::Provisioning;
 
@@ -15,7 +14,11 @@ pub mod keys {
     pub const OWNER: &str = "user.iglu.owner";
     pub const GUEST_USER: &str = "user.iglu.guest-user";
     pub const PROVISIONED: &str = "user.iglu.provisioned";
-    pub const GUEST_INTERFACE: &str = "user.iglu.guest-interface";
+    /// The image whose system the instance runs: the one it was made from
+    /// until an upgrade records the one it upgraded to.
+    pub const IMAGE: &str = "user.iglu.image";
+    /// That image's NixOS system, which the next upgrade replaces.
+    pub const SYSTEM: &str = "user.iglu.system";
 }
 
 /// Accepts an instance only if both its name and its recorded workspace say
@@ -49,11 +52,10 @@ pub fn claim(instance: &InstanceFull) -> Claim {
         owner,
         user,
         provisioning,
-        guest_interface: instance
+        image: instance
             .config
-            .get(keys::GUEST_INTERFACE)
-            .and_then(|v| v.parse().ok())
-            .map(Interface::new),
+            .get(keys::IMAGE)
+            .and_then(|v| v.parse().ok()),
         state: instance.state.as_ref().map_or(State::Transitioning, state),
         memory: instance
             .state

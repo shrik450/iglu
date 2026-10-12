@@ -1,7 +1,7 @@
 // The console's frame: the top bar, the current view, and overlays.
 
 import { nextWaiting } from "./actions.ts";
-import { Glyph, Icon, Igloo } from "./components/bits.tsx";
+import { Glyph, Icon, Igloo, needYou } from "./components/bits.tsx";
 import { Keys, PrefixHint } from "./components/Keys.tsx";
 import { keysFor, mac } from "./keyboard.ts";
 import { onKeyboard } from "./state/keys.ts";
@@ -13,7 +13,7 @@ import { PreviewsView } from "./views/Previews.tsx";
 import { ProjectPage } from "./views/Project.tsx";
 import { Settings } from "./views/Settings.tsx";
 import { Workspace } from "./views/Workspace.tsx";
-import { current, flash, live, me, navigate, outdated, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
+import { current, flash, live, loaded, me, outdated, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
 
 function Topbar() {
   const view = route.value.view;
@@ -28,20 +28,15 @@ function Topbar() {
           translate={false}
           aria-label="iglu, overview"
           aria-current={view === "overview" ? "page" : undefined}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "overview" });
-          }}
         >
           iglu
         </a>
         {count ? (
-          <button type="button" class="needs-badge" title={`Next workspace that needs you (${keysFor("next-waiting")})`} aria-label={`${count} waiting; go to the next`} onClick={nextWaiting}>
-            <span aria-hidden="true">●</span>
+          <button type="button" class="needs-badge" title={`Next workspace that needs you (${keysFor("next-waiting")})`} aria-label={`${count} ${needYou(count)}; go to the next`} onClick={nextWaiting}>
+            <Glyph kind="waiting" />
             <span>
               {count}
-              <span class="wide"> waiting</span>
+              <span class="wide"> {needYou(count)}</span>
             </span>
           </button>
         ) : null}
@@ -63,11 +58,6 @@ function Topbar() {
           href="/previews"
           aria-current={view === "previews" ? "page" : undefined}
           title={`Previews (${keysFor("previews")})`}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "previews" });
-          }}
         >
           Previews
         </a>
@@ -87,11 +77,6 @@ function Topbar() {
           aria-label={`Settings, signed in as ${who}`}
           title={who}
           aria-current={view === "settings" ? "page" : undefined}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "settings" });
-          }}
         >
           {who.slice(0, 1).toUpperCase()}
         </a>
@@ -113,12 +98,7 @@ function Toasts() {
             key={t.id}
             class="toast"
             href={`/w/${ws.name}`}
-            onClick={(e) => {
-              toasts.value = toasts.value.filter((x) => x.id !== t.id);
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-              e.preventDefault();
-              navigate({ view: "workspace", name: ws.name });
-            }}
+            onClick={() => (toasts.value = toasts.value.filter((x) => x.id !== t.id))}
           >
             <Igloo />
             <b>{t.title}</b>
@@ -154,7 +134,7 @@ function Flash() {
 
 export function App() {
   const r = route.value;
-  const loading = me.value === null;
+  const loading = me.value === null || !loaded.value;
   return (
     <>
       <a class="skip" href="#stage">
@@ -174,9 +154,9 @@ export function App() {
           <Settings />
         ) : r.view === "project" ? (
           <ProjectPage />
-        ) : workspaces.value ? (
+        ) : (
           <Overview />
-        ) : null}
+        )}
       </main>
       {overlay.value === "palette" ? <Palette /> : null}
       {overlay.value === "new" ? <NewWorkspace /> : null}

@@ -34,7 +34,7 @@ pub enum GuestCommand<'a> {
     /// Where the checkout stands, as JSON.
     GitState,
     Close(&'a SessionName),
-    /// Prints a session's last lines as plain text.
+    /// Prints a session's last lines, and whether there were more, as JSON.
     Output(&'a SessionName, OutputLines),
     /// Types into a session; the text goes on the input.
     Input(&'a SessionName, &'a TerminalInput),
@@ -217,12 +217,18 @@ pub fn parse_listeners(stdout: &str) -> Vec<Listener> {
     listener::merge(parsed, MAX_LISTENERS)
 }
 
-/// Parses `iglu-guest git-state`. Untrusted: names are sanitized, and
-/// anything malformed reads as no state.
-#[must_use]
-pub fn parse_git_state(stdout: &str) -> Option<GitState> {
-    let raw: GitReport = serde_json::from_str::<Option<GitReport>>(stdout).ok()??;
-    Some(GitState {
+/// Parses `iglu-guest git-state`: `None` when the workspace has no
+/// checkout. Untrusted: names are sanitized.
+///
+/// # Errors
+///
+/// When the output isn't a Git state, which mustn't read as one with
+/// nothing to lose.
+pub fn parse_git_state(stdout: &str) -> Result<Option<GitState>, serde_json::Error> {
+    let Some(raw) = serde_json::from_str::<Option<GitReport>>(stdout)? else {
+        return Ok(None);
+    };
+    Ok(Some(GitState {
         branch: raw.branch.as_deref().and_then(ObservedBranch::sanitize),
         upstream: raw.upstream.as_deref().and_then(ObservedBranch::sanitize),
         ahead: raw.ahead,
@@ -230,7 +236,7 @@ pub fn parse_git_state(stdout: &str) -> Option<GitState> {
         changed: raw.changed,
         untracked: raw.untracked,
         conflicted: raw.conflicted,
-    })
+    }))
 }
 
 /// Parses `iglu-guest sessions`. Untrusted, like everything from a guest.
@@ -297,8 +303,9 @@ mod tests {
     }
 
     #[test]
-    fn git_state_parses_or_is_absent() {
+    fn git_state_is_a_state_no_checkout_or_an_error() {
         let state = parse_git_state(r#"{"branch":"fix\u001b","upstream":null,"ahead":2,"behind":0,"changed":3,"untracked":1,"conflicted":0}"#)
+            .expect("parses")
             .expect("a state");
         assert_eq!(
             (
@@ -308,8 +315,8 @@ mod tests {
             ),
             (Some("fix".into()), 2, 3)
         );
-        assert_eq!(parse_git_state("null"), None);
-        assert_eq!(parse_git_state(r#"{"branch":"x"}"#), None);
+        assert_eq!(parse_git_state("null").expect("parses"), None);
+        assert!(parse_git_state(r#"{"branch":"x"}"#).is_err());
     }
 
     #[test]

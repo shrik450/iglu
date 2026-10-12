@@ -29,7 +29,9 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderValue, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use rustls_platform_verifier::ConfigVerifierExt;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_platform_verifier::BuilderVerifierExt;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
@@ -124,7 +126,6 @@ async fn main() -> anyhow::Result<()> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(4000))
         .build()?;
-    let tls = Arc::new(rustls::ClientConfig::with_platform_verifier()?);
 
     let provider = Arc::new(oidc::Provider::new(http.clone(), &config.oidc.issuer)?);
     let console = oidc::RelyingParty::new(
@@ -143,12 +144,6 @@ async fn main() -> anyhow::Result<()> {
             config.preview_domain
         ))?,
     );
-    let tokens = Arc::new(oidc::WorkerTokens::new(
-        provider.clone(),
-        config.oidc.worker.client_id.clone(),
-        config.oidc.worker.secret()?,
-        config.oidc.worker.resource.clone(),
-    ));
     // Discover the provider now, so the first sign-in doesn't wait for it.
     // Failing here isn't fatal: sign-in and host calls retry on demand.
     tokio::spawn(async move {
@@ -156,19 +151,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::warn!(%error, "the identity provider isn't reachable yet");
         }
     });
-    let hosts = config
-        .hosts
-        .iter()
-        .map(|host| {
-            Arc::new(hosts::HostClient::new(
-                host.id.clone(),
-                host.url.as_url().clone(),
-                http.clone(),
-                tls.clone(),
-                tokens.clone(),
-            ))
-        })
-        .collect();
+    let hosts = host_clients(&config)?;
 
     let assets = config.console_assets.clone();
     let listen = config.listen;
@@ -201,4 +184,36 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(%listen, "iglud listening");
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+/// A client for each host. Hosts' certificates are checked against the
+/// system's trust store, and they check iglud's own.
+fn host_clients(config: &config::Config) -> anyhow::Result<Vec<Arc<hosts::HostClient>>> {
+    let tls = Arc::new(
+        rustls::ClientConfig::builder()
+            .with_platform_verifier()?
+            .with_client_auth_cert(
+                CertificateDer::pem_file_iter(&config.host_client.certificate)
+                    .and_then(Iterator::collect)
+                    .context("reading the host client certificate")?,
+                PrivateKeyDer::from_pem_file(&config.host_client.key)
+                    .context("reading the host client key")?,
+            )?,
+    );
+    let http = reqwest::Client::builder()
+        .use_preconfigured_tls((*tls).clone())
+        .timeout(std::time::Duration::from_secs(4000))
+        .build()?;
+    Ok(config
+        .hosts
+        .iter()
+        .map(|host| {
+            Arc::new(hosts::HostClient::new(
+                host.id.clone(),
+                host.url.as_url().clone(),
+                http.clone(),
+                tls.clone(),
+            ))
+        })
+        .collect())
 }

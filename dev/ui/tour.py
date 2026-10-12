@@ -79,7 +79,7 @@ def click(role: str, name: str) -> Callable[[Page], None]:
 
 
 def delete_confirmation(page: Page) -> None:
-    page.get_by_role("button", name="Details").click()
+    page.get_by_role("button", name="Details", exact=True).click()
     page.get_by_role("button", name="Delete", exact=True).first.click()
 
 
@@ -96,9 +96,9 @@ def stops() -> list[Stop]:
         ("fix-login-redirect", "an agent waiting for you"),
         ("refactor-billing-and-invoice-generation-pipeline", "a working agent and a long name"),
         ("docs-typos", "an agent that's done"),
-        ("agent-crashed", "an agent that exited with an error"),
+        ("agent-crashed", "an agent that failed, its thread gone and its error in the shell"),
         ("unsaved-work", "uncommitted and unpushed work"),
-        ("preview-server", "a server column and a published preview"),
+        ("preview-server", "a dev server in a shell, published as a preview"),
         ("notes-frozen", "frozen"),
         ("notes-stopped", "stopped"),
         ("scratchpad", "no repository"),

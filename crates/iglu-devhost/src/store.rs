@@ -19,7 +19,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use iglu_domain::env::{EnvSource, GuestUser, ImageFingerprint};
-use iglu_domain::guest::Interface;
 use iglu_domain::id::{InstanceName, PrincipalId, WorkspaceId};
 use iglu_domain::terminal::SessionName;
 use iglu_hostd::runtime::{BootId, State};
@@ -63,6 +62,17 @@ impl Layout {
 
     pub fn home(&self, name: InstanceName) -> PathBuf {
         self.instance(name).join("home")
+    }
+
+    /// A person's kept directory, shared by their workspaces and never
+    /// removed with one.
+    pub fn kept(&self, owner: PrincipalId) -> PathBuf {
+        self.state.join("kept").join(owner.to_string())
+    }
+
+    /// A workspace's way to its owner's kept directory: a link to it.
+    pub fn kept_link(&self, name: InstanceName) -> PathBuf {
+        self.instance(name).join("kept")
     }
 
     pub fn slots(&self) -> PathBuf {
@@ -127,14 +137,10 @@ pub fn longest_socket_path(runtime: &Path) -> usize {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Image {
     pub source: EnvSource,
-    /// What the guest tools spoke when the environment was recorded.
-    #[serde(default)]
-    pub guest_interface: Option<Interface>,
 }
 
 /// What hostd records on an instance, and where its runtime directory is.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Record {
     pub workspace: WorkspaceId,
     pub owner: PrincipalId,
@@ -142,10 +148,6 @@ pub struct Record {
     pub image: ImageFingerprint,
     pub provisioned: bool,
     pub slot: Slot,
-    /// What the guest tools spoke when the workspace was created. Records
-    /// from before it was kept don't say.
-    #[serde(default)]
-    pub guest_interface: Option<Interface>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

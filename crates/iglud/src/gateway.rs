@@ -225,7 +225,7 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
             .flatten(),
         None => None,
     };
-    let Some((principal, _)) = session else {
+    let Some(principal) = session else {
         return match kind {
             Transport::Http(MethodClass::Safe) => {
                 let here = format!(

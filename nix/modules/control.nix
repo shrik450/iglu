@@ -31,7 +31,7 @@ let
   # iglud runs as a dynamic user, so client secrets reach it as systemd
   # credentials rather than by path.
   clients = {
-    inherit (cfg.oidc) console preview worker;
+    inherit (cfg.oidc) console preview;
   };
   clientSettings = name: c: {
     client_id = c.clientId;
@@ -48,13 +48,10 @@ let
     oidc = {
       inherit (cfg.oidc) issuer;
     }
-    // lib.mapAttrs clientSettings clients
-    // {
-      worker =
-        clientSettings "worker" cfg.oidc.worker
-        // lib.optionalAttrs (cfg.oidc.worker.resource != null) {
-          inherit (cfg.oidc.worker) resource;
-        };
+    // lib.mapAttrs clientSettings clients;
+    host_client = {
+      inherit (cfg.hostClient) certificate;
+      key = "/run/credentials/iglud.service/host-client-key";
     };
     sign_in =
       map (subject: { inherit subject; }) cfg.signIn.subjects
@@ -138,24 +135,19 @@ in
         type = client "preview gateway";
         description = "Redirect URI: `https://auth.<previewDomain>/callback`.";
       };
-      worker = lib.mkOption {
-        type = lib.types.submodule {
-          options = clientOptions "worker" // {
-            resource = lib.mkOption {
-              type = lib.types.nullOr lib.types.str;
-              default = null;
-              example = "https://iglu-hosts.example.org";
-              description = ''
-                An RFC 8707 resource to request with the client-credentials
-                grant. Without one, the identity provider picks the token's
-                audience from its own configuration. Hosts accept only the
-                audience in `services.iglu.host.auth.audience`. The identity
-                provider must issue JWT access tokens.
-              '';
-            };
-          };
-        };
-        description = "A client-credentials client whose tokens hosts accept.";
+    };
+
+    hostClient = {
+      certificate = lib.mkOption {
+        type = lib.types.str;
+        description = ''
+          The PEM client certificate iglud presents to hosts, signed by the
+          CA in their `services.iglu.host.tls.clients`.
+        '';
+      };
+      key = lib.mkOption {
+        type = lib.types.str;
+        description = "A file holding its PEM private key, readable by root.";
       };
     };
 
@@ -248,9 +240,9 @@ in
         ExecStart = "${lib.getExe cfg.package} --config ${settingsFormat.generate "iglud.json" settings}";
         Restart = "on-failure";
         RestartSec = 2;
-        LoadCredential = lib.mapAttrsToList (
-          name: c: "${name}-client-secret:${c.clientSecretFile}"
-        ) clients;
+        LoadCredential =
+          lib.mapAttrsToList (name: c: "${name}-client-secret:${c.clientSecretFile}") clients
+          ++ [ "host-client-key:${cfg.hostClient.key}" ];
         DynamicUser = true;
         StateDirectory = baseNameOf stateDir;
         StateDirectoryMode = "0700";

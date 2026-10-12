@@ -69,7 +69,6 @@ class Api:
         self.headers = {
             "origin": CONSOLE,
             "sec-fetch-site": "same-origin",
-            "x-csrf-token": me["csrf_token"],
         }
 
     def _check(self, method: str, path: str, response: Any) -> Any:
@@ -96,13 +95,17 @@ class Api:
         return self.send("POST", "/v1/workspaces", request, **{"idempotency-key": str(uuid.uuid4())})
 
     def environment(self, name: str, source: str, timeout: float = 120) -> None:
-        """Adds an environment unless it exists, and waits until it's built."""
+        """Adds an environment unless it exists, builds it, and waits until
+        it's built. A local build is instant, and an image from before the
+        guest interface changed can't make workspaces."""
         if not any(env["name"] == name for env in self.get("/v1/environments")):
             self.send("POST", "/v1/environments", {"name": name, "source": source})
+        revision = self.send("POST", f"/v1/environments/{name}/builds")["revision"]
         deadline = time.monotonic() + timeout
         while True:
             env = next(env for env in self.get("/v1/environments") if env["name"] == name)
-            status = (env.get("latest") or {}).get("status")
+            latest = env.get("latest") or {}
+            status = latest.get("status") if latest.get("id") == revision else "building"
             if status == "ready":
                 return
             if status == "failed" or time.monotonic() > deadline:

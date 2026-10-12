@@ -12,7 +12,6 @@ use axum::body::Bytes;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
-use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use hyper_util::rt::TokioIo;
@@ -28,10 +27,10 @@ use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_proto::{
     AttachParams, BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode,
     FileParams, GUEST_WORKSPACE, HostReport, Inventory, KeptFile, OutputParams, PROTOCOL_VERSION,
-    SessionSpec, TUNNEL_UPGRADE, TerminalInfo, TerminalOutput, TerminalTyping, path,
+    PruneImages, PrunedImages, SessionSpec, TUNNEL_UPGRADE, TerminalInfo, TerminalOutput,
+    TerminalTyping, path,
 };
 
-use crate::auth::Verifier;
 use crate::host::Host;
 use crate::runtime::{Isolating, Runtime};
 
@@ -39,11 +38,11 @@ pub struct App<R> {
     pub host_id: HostId,
     pub arch: Arch,
     pub host: Host<R>,
-    pub verifier: Arc<Verifier>,
 }
 
-/// Serves iglud over TLS on any address. Only an isolating runtime may: a
-/// host reachable from the network runs other people's workspaces.
+/// Serves iglud over TLS on any address, to clients whose certificate the
+/// TLS configuration accepts. Only an isolating runtime may: a host
+/// reachable from the network runs other people's workspaces.
 ///
 /// # Errors
 ///
@@ -106,9 +105,9 @@ impl TryFrom<String> for Loopback {
 
 fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
     Router::new()
-        .route(path::HOST, get(host::<R>))
         .route(path::INVENTORY, get(inventory::<R>))
         .route(path::BUILDS, post(build::<R>))
+        .route(path::IMAGE_PRUNE, post(prune_images::<R>))
         .route("/v1/workspaces/{workspace}/commands", post(command::<R>))
         .route("/v1/workspaces/{workspace}/listeners", get(listeners::<R>))
         .route("/v1/workspaces/{workspace}/git", get(git_state::<R>))
@@ -145,29 +144,7 @@ fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
             get(download::<R>),
         )
         .route(path::GUEST_CONNECTIONS, get(guest_connection::<R>))
-        .layer(middleware::from_fn_with_state(
-            app.clone(),
-            authenticate::<R>,
-        ))
         .with_state(app)
-}
-
-async fn authenticate<R: Runtime>(
-    State(app): State<Arc<App<R>>>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-    match app.verifier.verify(header).await {
-        Ok(()) => next.run(request).await,
-        Err(error) => {
-            tracing::warn!(%error, "rejected a request");
-            (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
-        }
-    }
 }
 
 /// A command error as an HTTP response.
@@ -178,9 +155,7 @@ impl IntoResponse for Failure {
         let status = match self.0.code {
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict | ErrorCode::InvalidState => StatusCode::CONFLICT,
-            ErrorCode::ImageMissing | ErrorCode::ImageIncompatible | ErrorCode::GuestFailed => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            ErrorCode::ImageMissing | ErrorCode::GuestFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::Timeout => StatusCode::GATEWAY_TIMEOUT,
             ErrorCode::Runtime => StatusCode::BAD_GATEWAY,
         };
@@ -195,10 +170,6 @@ async fn host_report<R: Runtime>(app: &App<R>) -> HostReport {
         arch: app.arch,
         memory_available: app.host.memory_available().await,
     }
-}
-
-async fn host<R: Runtime>(State(app): State<Arc<App<R>>>) -> Json<HostReport> {
-    Json(host_report(&app).await)
 }
 
 async fn inventory<R: Runtime>(State(app): State<Arc<App<R>>>) -> Result<Json<Inventory>, Failure> {
@@ -425,6 +396,17 @@ async fn build<R: Runtime>(
     Json(request): Json<BuildRequest>,
 ) -> Json<BuildOutcome> {
     Json(app.host.build(&request.source, &request.tokens).await)
+}
+
+async fn prune_images<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Json(request): Json<PruneImages>,
+) -> Result<Json<PrunedImages>, Failure> {
+    app.host
+        .prune_images(&request)
+        .await
+        .map(Json)
+        .map_err(Failure)
 }
 
 #[cfg(test)]

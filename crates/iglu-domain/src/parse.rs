@@ -11,16 +11,6 @@ impl ParseError {
     pub(crate) const fn new(what: &'static str, reason: &'static str) -> Self {
         Self { what, reason }
     }
-
-    #[must_use]
-    pub const fn what(&self) -> &'static str {
-        self.what
-    }
-
-    #[must_use]
-    pub const fn reason(&self) -> &'static str {
-        self.reason
-    }
 }
 
 impl fmt::Display for ParseError {
@@ -53,6 +43,43 @@ macro_rules! text_type {
 }
 
 pub(crate) use text_type;
+
+/// Displays a newtype over a `String` as its text, and makes it a
+/// [`text_type!`].
+macro_rules! display_inner {
+    ($($name:ident),*) => {$(
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+        $crate::parse::text_type!($name);
+    )*};
+}
+
+pub(crate) use display_inner;
+
+/// Implements `FromStr` and `Display` through a unit enum's serde names, so
+/// its text, stored or sent, is spelled in one place.
+macro_rules! serde_text {
+    ($name:ident, $what:literal, $expected:literal) => {
+        impl std::str::FromStr for $name {
+            type Err = $crate::ParseError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                serde_plain::from_str(s).map_err(|_| $crate::ParseError::new($what, $expected))
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.pad(&serde_plain::to_string(self).map_err(|_| std::fmt::Error)?)
+            }
+        }
+    };
+}
+
+pub(crate) use serde_text;
 
 /// True for characters that are safe to show in a UI or log line: not
 /// control characters, line or paragraph separators, or the invisible marks

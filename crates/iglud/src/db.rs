@@ -10,15 +10,15 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
-use iglu_domain::agent::Prompt;
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::{Grant, VerifiedIdentity};
 use iglu_domain::capacity::Bytes;
 use iglu_domain::column::{ColumnLabel, ColumnSpec};
-use iglu_domain::env::{BuiltImage, EnvName, EnvSource};
+use iglu_domain::env::{BuiltImage, EnvName, EnvSource, ImageFingerprint};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
-use iglu_domain::label::{AgentName, ProjectName, RouteName, WorkspaceName};
+use iglu_domain::label::{ProjectName, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Instance, Revision, SecretsGeneration};
 use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
@@ -35,8 +35,8 @@ use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 use crate::model::{
-    AttentionRecord, ColumnRecord, Condition, EnvironmentRecord, PrincipalRecord, ProjectRecord,
-    RouteRecord, WorkspaceRecord,
+    AttentionRecord, Condition, EnvironmentRecord, PrincipalRecord, ProjectRecord, RouteRecord,
+    WorkspaceRecord,
 };
 
 /// One step of the schema's history: SQL, or a data change SQL can't express.
@@ -58,6 +58,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0008_preferences.sql")),
     Migration::Sql(include_str!("migrations/0009_access.sql")),
     Migration::Sql(include_str!("migrations/0010_workspace_labels.sql")),
+    Migration::Sql(include_str!("migrations/0011_shells_and_browsers.sql")),
+    Migration::Sql(include_str!("migrations/0012_activity_kinds.sql")),
+    Migration::Sql(include_str!("migrations/0013_no_csrf.sql")),
+    Migration::Sql(include_str!("migrations/0014_no_guest_interface.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -298,7 +302,6 @@ impl FromStr for SessionKind {
 #[derive(Clone, Debug)]
 pub struct SessionRow {
     pub principal: PrincipalId,
-    pub csrf: String,
     pub last_seen_at: Timestamp,
     pub expires_at: Timestamp,
 }
@@ -308,14 +311,13 @@ pub fn create_session(
     token_hash: &str,
     kind: SessionKind,
     principal: PrincipalId,
-    csrf: &str,
     now: Timestamp,
     expires_at: Timestamp,
 ) -> Result<(), DbError> {
     tx.execute(
-        "INSERT INTO web_session (token_hash, principal_id, kind, csrf, created_at, last_seen_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
-        params![token_hash, principal.to_string(), kind.as_str(), csrf, now.unix_millis(), expires_at.unix_millis()],
+        "INSERT INTO web_session (token_hash, principal_id, kind, created_at, last_seen_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+        params![token_hash, principal.to_string(), kind.as_str(), now.unix_millis(), expires_at.unix_millis()],
     )?;
     Ok(())
 }
@@ -327,15 +329,14 @@ pub fn session(
 ) -> Result<Option<SessionRow>, DbError> {
     Ok(tx
         .query_row(
-            "SELECT principal_id, csrf, last_seen_at, expires_at FROM web_session
+            "SELECT principal_id, last_seen_at, expires_at FROM web_session
              WHERE token_hash = ?1 AND kind = ?2",
             params![token_hash, kind.as_str()],
             |row| {
                 Ok(SessionRow {
                     principal: text(row, 0)?,
-                    csrf: row.get(1)?,
-                    last_seen_at: timestamp(row, 2)?,
-                    expires_at: timestamp(row, 3)?,
+                    last_seen_at: timestamp(row, 1)?,
+                    expires_at: timestamp(row, 2)?,
                 })
             },
         )
@@ -605,6 +606,130 @@ pub fn revision_image(tx: &Connection, id: EnvRevisionId) -> Result<Option<Built
         .transpose()
 }
 
+/// The image each live workspace is on, for the reconciler to compare with
+/// the image the host says it runs.
+pub fn workspace_images(
+    tx: &Connection,
+) -> Result<HashMap<WorkspaceId, ImageFingerprint>, DbError> {
+    let mut statement = tx.prepare(
+        "SELECT w.id, r.built FROM workspace w JOIN env_revision r ON r.id = w.env_revision_id
+         WHERE w.deleted_at IS NULL AND r.status = 'ready'",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                text::<WorkspaceId>(row, 0)?,
+                opt_json::<BuiltImage>(row, 1)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, image)| image.map(|image| (id, image.fingerprint)))
+        .collect())
+}
+
+/// The image of the newest ready build of the environment `revision` is a
+/// build of.
+pub fn newest_image_like(
+    tx: &Connection,
+    revision: EnvRevisionId,
+) -> Result<Option<BuiltImage>, DbError> {
+    Ok(tx
+        .query_row(
+            "SELECT n.built FROM env_revision r JOIN env_revision n ON n.environment_id = r.environment_id
+             WHERE r.id = ?1 AND n.status = 'ready'
+             ORDER BY n.created_at DESC, n.rowid DESC LIMIT 1",
+            [revision.to_string()],
+            |row| opt_json::<BuiltImage>(row, 0),
+        )
+        .optional()?
+        .flatten())
+}
+
+/// What asking a workspace to move to its environment's newest build did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Updated {
+    /// It's on the newest build now; the reconciler upgrades it.
+    Moved(EnvRevisionId),
+    /// It was on it already.
+    Already,
+    /// Its environment has no build ready.
+    NoBuild,
+    /// The newest build's account isn't the workspace's: its files would be
+    /// someone else's.
+    OtherAccount,
+    Gone,
+}
+
+/// Moves a workspace to its environment's newest ready build. A frozen one
+/// is asked to run: the upgrade restarts it, and it would otherwise read as
+/// having lost its memory. A failure of the old build is over;
+/// an offline host still is.
+pub fn update_to_newest(tx: &Connection, id: WorkspaceId) -> Result<Updated, DbError> {
+    let current: Option<(EnvRevisionId, String, i64)> = tx
+        .query_row(
+            "SELECT w.env_revision_id, r.environment_id, w.revision FROM workspace w
+             JOIN env_revision r ON r.id = w.env_revision_id
+             WHERE w.id = ?1 AND w.deleted_at IS NULL",
+            [id.to_string()],
+            |row| Ok((text(row, 0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((on, environment, revision)) = current else {
+        return Ok(Updated::Gone);
+    };
+    let environment = Uuid::parse_str(&environment).map_err(|e| conversion(1, e))?;
+    let Some((newest, image)) = latest_ready_revision(tx, environment)? else {
+        return Ok(Updated::NoBuild);
+    };
+    let was = revision_image(tx, on)?;
+    // A build of the same image is no update, though a newer build.
+    if newest == on
+        || was
+            .as_ref()
+            .is_some_and(|was| was.fingerprint == image.fingerprint)
+    {
+        return Ok(Updated::Already);
+    }
+    if was.is_some_and(|was| was.user != image.user) {
+        return Ok(Updated::OtherAccount);
+    }
+    tx.execute(
+        "UPDATE workspace SET env_revision_id = ?2, revision = ?3,
+             desired = CASE desired WHEN 'frozen' THEN 'running' ELSE desired END,
+             condition = CASE WHEN json_extract(condition, '$.kind') = 'host_offline' THEN condition END
+         WHERE id = ?1",
+        params![id.to_string(), newest.to_string(), revision.saturating_add(1)],
+    )?;
+    Ok(Updated::Moved(newest))
+}
+
+/// The images still needed: each environment's newest ready one, which new
+/// workspaces are made from, and each one a workspace not deleted was made
+/// from, which its instance is made from again should it be lost.
+pub fn kept_images(tx: &Connection) -> Result<Vec<ImageFingerprint>, DbError> {
+    let mut statement = tx.prepare(
+        "SELECT r.built FROM env_revision r
+         WHERE r.status = 'ready' AND (
+             r.id IN (SELECT env_revision_id FROM workspace WHERE deleted_at IS NULL)
+             OR r.id = (SELECT n.id FROM env_revision n
+                        WHERE n.environment_id = r.environment_id AND n.status = 'ready'
+                        ORDER BY n.created_at DESC, n.rowid DESC LIMIT 1))",
+    )?;
+    let images = statement
+        .query_map([], |row| opt_json::<BuiltImage>(row, 0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut kept: Vec<ImageFingerprint> = images
+        .into_iter()
+        .flatten()
+        .map(|image| image.fingerprint)
+        .collect();
+    kept.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    kept.dedup();
+    Ok(kept)
+}
+
 pub fn environment_name_of_revision(
     tx: &Connection,
     id: EnvRevisionId,
@@ -675,7 +800,7 @@ pub fn insert_workspace(
             ws.env_revision.to_string(),
             ws.name.as_str(),
             ws.project.to_string(),
-            ws.desired.as_str(),
+            ws.desired.to_string(),
             i64_of(ws.revision.get()),
             create_key,
             create_hash,
@@ -812,7 +937,7 @@ pub fn live_workspaces(tx: &Connection) -> Result<Vec<WorkspaceRecord>, DbError>
 
 const PROJECT_COLUMNS: &str = "project.id, project.name, project.origin, project.repo,
     project.environment_id, environment.name, project.opening, project.revision, project.created_at,
-    project.agent, project.ports, project.idle";
+    project.ports, project.idle";
 const PROJECT_FROM: &str = "project JOIN environment ON environment.id = project.environment_id";
 
 fn project_row(row: &Row<'_>) -> rusqlite::Result<ProjectRecord> {
@@ -826,9 +951,8 @@ fn project_row(row: &Row<'_>) -> rusqlite::Result<ProjectRecord> {
         opening: json(row, 6)?,
         revision: Revision::from_u64(u64_col(row, 7)?),
         created_at: timestamp(row, 8)?,
-        agent: opt_text(row, 9)?,
-        ports: json(row, 10)?,
-        idle: json(row, 11)?,
+        ports: json(row, 9)?,
+        idle: json(row, 10)?,
     })
 }
 
@@ -910,7 +1034,7 @@ pub fn add_project(tx: &Connection, new: &NewProject) -> Result<AddOutcome, DbEr
             new.id.to_string(),
             new.owner.to_string(),
             name.as_str(),
-            new.origin.as_str(),
+            new.origin.to_string(),
             new.repo.as_ref().map(RepoUrl::as_str),
             uuid_text(new.environment_id),
             to_json(&Opening::shell())?,
@@ -960,7 +1084,6 @@ pub struct ProjectChange {
     pub repo: Option<RepoUrl>,
     pub environment_id: Uuid,
     pub opening: Opening,
-    pub agent: Option<AgentName>,
     pub ports: PreviewPorts,
     pub idle: IdleRule,
 }
@@ -992,7 +1115,7 @@ pub fn change_project(
     }
     tx.execute(
         "UPDATE project SET name = ?3, repo = ?4, environment_id = ?5, opening = ?6, revision = ?7,
-                            agent = ?8, ports = ?9, idle = ?10
+                            ports = ?8, idle = ?9
          WHERE owner_id = ?1 AND id = ?2",
         params![
             owner.to_string(),
@@ -1002,7 +1125,6 @@ pub fn change_project(
             uuid_text(change.environment_id),
             to_json(&change.opening)?,
             i64_of(expected.next().get()),
-            change.agent.as_ref().map(AgentName::as_str),
             to_json(&change.ports)?,
             to_json(&change.idle)?,
         ],
@@ -1144,7 +1266,43 @@ pub fn is_deleted(tx: &Connection, id: WorkspaceId) -> Result<bool, DbError> {
         .is_some())
 }
 
-/// Sets the desired state if the revision still matches `expected`.
+/// What asking a workspace to be in a state did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    Changed,
+    /// It was already asked to be in that state.
+    Already,
+    /// It's deleted, or never was.
+    Gone,
+}
+
+/// Sets the state a person asked for, whatever was asked before: the last
+/// to ask decides, so asking again or after a change isn't refused.
+pub fn ask_desired(
+    tx: &Connection,
+    id: WorkspaceId,
+    desired: DesiredState,
+) -> Result<Asked, DbError> {
+    let current: Option<(String, i64)> = tx
+        .query_row(
+            "SELECT desired, revision FROM workspace WHERE id = ?1 AND deleted_at IS NULL",
+            [id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((was, revision)) = current else {
+        return Ok(Asked::Gone);
+    };
+    if was == desired.to_string() {
+        return Ok(Asked::Already);
+    }
+    let revision = Revision::from_u64(u64::try_from(revision).map_err(|e| conversion(1, e))?);
+    write_desired(tx, id, desired, revision.next())?;
+    Ok(Asked::Changed)
+}
+
+/// Sets the desired state if the revision still matches `expected`, for
+/// changes iglu makes itself, which never undo one a person made since.
 /// Returns the new revision, or `None` on a revision conflict.
 pub fn set_desired(
     tx: &Connection,
@@ -1169,11 +1327,25 @@ pub fn set_desired(
         return Ok(None);
     }
     let next = current.next();
-    tx.execute(
-        "UPDATE workspace SET desired = ?2, revision = ?3, condition = NULL WHERE id = ?1",
-        params![id.to_string(), desired.as_str(), i64_of(next.get())],
-    )?;
+    write_desired(tx, id, desired, next)?;
     Ok(Some(next))
+}
+
+/// A new desired state ends what was in the way of the last one; whether
+/// the host answers is still so.
+fn write_desired(
+    tx: &Connection,
+    id: WorkspaceId,
+    desired: DesiredState,
+    next: Revision,
+) -> Result<(), DbError> {
+    tx.execute(
+        "UPDATE workspace SET desired = ?2, revision = ?3,
+             condition = CASE WHEN json_extract(condition, '$.kind') = 'host_offline' THEN condition END
+         WHERE id = ?1",
+        params![id.to_string(), desired.to_string(), i64_of(next.get())],
+    )?;
+    Ok(())
 }
 
 /// Records what the host reported at `at`, unless something newer is already
@@ -1314,7 +1486,7 @@ pub fn sync_attention(
                 status.session.as_str(),
                 status.thread.as_str(),
                 status.title.as_str(),
-                status.state.as_str(),
+                status.state.to_string(),
                 status.summary.as_str(),
                 status.updated_at.unix_millis()
             ],
@@ -1351,32 +1523,32 @@ pub fn attention(tx: &Connection, id: WorkspaceId) -> Result<Vec<AttentionRecord
         .collect::<Result<_, _>>()?)
 }
 
-pub fn mark_seen(tx: &Connection, id: WorkspaceId, now: Timestamp) -> Result<(), DbError> {
-    tx.execute(
-        "UPDATE attention SET seen_at = ?2 WHERE workspace_id = ?1",
-        params![id.to_string(), now.unix_millis()],
+/// Marks the workspace's threads seen as they are now: what each last
+/// reported, by the guest's own clock, so iglud's can't disagree with it.
+/// Whether any thread was unseen.
+pub fn mark_seen(tx: &Connection, id: WorkspaceId) -> Result<bool, DbError> {
+    let marked = tx.execute(
+        "UPDATE attention SET seen_at = updated_at WHERE workspace_id = ?1 AND seen_at < updated_at",
+        [id.to_string()],
     )?;
-    Ok(())
+    Ok(marked > 0)
 }
 
 // ---- columns ----
 
-fn column_row(row: &Row<'_>) -> rusqlite::Result<ColumnRecord> {
-    Ok(ColumnRecord {
-        spec: ColumnSpec {
-            name: text(row, 0)?,
-            kind: json(row, 1)?,
-            width: text(row, 2)?,
-            label: opt_text(row, 4)?,
-        },
-        prompt: opt_text(row, 3)?,
+fn column_row(row: &Row<'_>) -> rusqlite::Result<ColumnSpec> {
+    Ok(ColumnSpec {
+        name: text(row, 0)?,
+        kind: json(row, 1)?,
+        width: text(row, 2)?,
+        label: opt_text(row, 3)?,
     })
 }
 
 /// A workspace's columns, in order.
-pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnRecord>, DbError> {
+pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnSpec>, DbError> {
     let mut statement = tx.prepare(
-        "SELECT name, kind, width, prompt, label FROM workspace_column WHERE workspace_id = ?1 ORDER BY position",
+        "SELECT name, kind, width, label FROM workspace_column WHERE workspace_id = ?1 ORDER BY position",
     )?;
     Ok(statement
         .query_map([workspace.to_string()], column_row)?
@@ -1387,25 +1559,24 @@ pub fn columns(tx: &Connection, workspace: WorkspaceId) -> Result<Vec<ColumnReco
 pub fn replace_columns(
     tx: &Connection,
     workspace: WorkspaceId,
-    columns: &[ColumnRecord],
+    columns: &[ColumnSpec],
 ) -> Result<(), DbError> {
     tx.execute(
         "DELETE FROM workspace_column WHERE workspace_id = ?1",
         [workspace.to_string()],
     )?;
     let mut insert = tx.prepare(
-        "INSERT INTO workspace_column (workspace_id, position, name, kind, width, prompt, label)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO workspace_column (workspace_id, position, name, kind, width, label)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )?;
     for (position, column) in columns.iter().enumerate() {
         insert.execute(params![
             workspace.to_string(),
             i64::try_from(position).unwrap_or(i64::MAX),
-            column.spec.name.as_str(),
-            to_json(&column.spec.kind)?,
-            column.spec.width.as_str(),
-            column.prompt.as_ref().map(Prompt::as_str),
-            column.spec.label.as_ref().map(ColumnLabel::as_str),
+            column.name.as_str(),
+            to_json(&column.kind)?,
+            column.width.to_string(),
+            column.label.as_ref().map(ColumnLabel::as_str),
         ])?;
     }
     Ok(())
@@ -1428,23 +1599,6 @@ pub fn label_column(
         ],
     )?;
     Ok(changed > 0)
-}
-
-/// Forgets the prompts of the columns whose sessions opened: a restart
-/// mustn't hand an agent its task again. A column that didn't open keeps
-/// its prompt for the next try.
-pub fn clear_prompts(
-    tx: &Connection,
-    workspace: WorkspaceId,
-    opened: &[SessionName],
-) -> Result<(), DbError> {
-    let names: Vec<&str> = opened.iter().map(SessionName::as_str).collect();
-    tx.execute(
-        "UPDATE workspace_column SET prompt = NULL
-         WHERE workspace_id = ?1 AND name IN (SELECT value FROM json_each(?2))",
-        params![workspace.to_string(), to_json(&names)?],
-    )?;
-    Ok(())
 }
 
 // ---- routes ----
@@ -1531,12 +1685,20 @@ pub fn route_by_name(tx: &Connection, name: &RouteName) -> Result<Option<RouteRe
         .optional()?)
 }
 
-pub fn delete_route(tx: &Connection, workspace: WorkspaceId, id: RouteId) -> Result<bool, DbError> {
-    let deleted = tx.execute(
-        "DELETE FROM route WHERE id = ?1 AND workspace_id = ?2",
-        params![id.to_string(), workspace.to_string()],
-    )?;
-    Ok(deleted > 0)
+/// The route deleted, if the workspace had it.
+pub fn delete_route(
+    tx: &Connection,
+    workspace: WorkspaceId,
+    id: RouteId,
+) -> Result<Option<RouteRecord>, DbError> {
+    Ok(tx
+        .query_row(
+            "DELETE FROM route WHERE id = ?1 AND workspace_id = ?2
+             RETURNING id, workspace_id, name, port",
+            params![id.to_string(), workspace.to_string()],
+            route_row,
+        )
+        .optional()?)
 }
 
 // ---- secrets ----
@@ -1668,7 +1830,7 @@ pub fn replace_grants(
         insert.execute(params![
             holder.to_string(),
             grant.workspace.to_string(),
-            grant.permission.as_str()
+            grant.permission.to_string()
         ])?;
     }
     Ok(())
@@ -1693,7 +1855,7 @@ pub fn add_activity(
     tx: &Connection,
     workspace: Option<WorkspaceId>,
     by: Option<By>,
-    kind: &str,
+    kind: ActivityKind,
     detail: &str,
     now: Timestamp,
 ) -> Result<(), DbError> {
@@ -1704,7 +1866,7 @@ pub fn add_activity(
             workspace.map(|w| w.to_string()),
             by.map(|b| b.person.to_string()),
             by.and_then(|b| b.via).map(|w| w.to_string()),
-            kind,
+            kind.to_string(),
             detail,
             now.unix_millis()
         ],
@@ -1728,7 +1890,7 @@ pub fn activity(
         .query_map(params![workspace.to_string(), limit], |row| {
             Ok((
                 ActivityEntry {
-                    kind: row.get(0)?,
+                    kind: text(row, 0)?,
                     detail: row.get(1)?,
                     at: timestamp(row, 2)?,
                     via: opt_text(row, 3)?,
@@ -1745,6 +1907,7 @@ pub fn activity(
 mod tests {
     use iglu_domain::attention::{AttentionState, Summary};
     use iglu_domain::auth::{Email, Issuer, Subject};
+    use iglu_domain::column::ColumnKind;
     use iglu_domain::terminal::SessionName;
 
     use super::*;
@@ -1933,7 +2096,7 @@ mod tests {
             &conn,
             Some(one.id),
             Some(By::person(alice)),
-            "renamed",
+            ActivityKind::Renamed,
             "",
             at,
         )
@@ -1945,7 +2108,7 @@ mod tests {
                 person: alice,
                 via: Some(two.id),
             }),
-            "typed",
+            ActivityKind::Typed,
             "into shell",
             Timestamp::from_unix_millis(2),
         )
@@ -2036,6 +2199,48 @@ mod tests {
     }
 
     #[test]
+    fn a_person_asking_for_a_state_gets_it_whatever_was_asked_before() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        set_condition(&conn, ws.id, Some(&Condition::RuntimeFailed)).expect("a failure");
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Frozen).expect("query"),
+            Asked::Changed
+        );
+        let frozen = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(
+            (frozen.desired, frozen.revision),
+            (DesiredState::Frozen, ws.revision.next())
+        );
+        assert_eq!(
+            frozen.condition, None,
+            "a new state ends the old one's failure"
+        );
+        // Asking again changes nothing, and isn't refused.
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Frozen).expect("query"),
+            Asked::Already
+        );
+        let again = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(again.revision, frozen.revision);
+        // An offline host is still offline.
+        let offline = Condition::HostOffline { last_seen: None };
+        set_condition(&conn, ws.id, Some(&offline)).expect("offline");
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Running).expect("query"),
+            Asked::Changed
+        );
+        let running = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(running.condition, Some(offline));
+        mark_deleted(&conn, ws.id, Timestamp::from_unix_millis(9)).expect("deleted");
+        assert_eq!(
+            ask_desired(&conn, ws.id, DesiredState::Running).expect("query"),
+            Asked::Gone
+        );
+    }
+
+    #[test]
     fn desired_state_changes_only_from_the_expected_revision() {
         let conn = conn();
         let owner = principal(&conn, "alice");
@@ -2078,7 +2283,8 @@ mod tests {
             create_route(&conn, RouteId::from_uuid(Uuid::new_v4()), ws.id, owner, &name, port, at(2)),
             Ok(NewRoute::Exists(route)) if route.id == created.id
         ));
-        assert!(delete_route(&conn, ws.id, created.id).expect("delete"));
+        let deleted = delete_route(&conn, ws.id, created.id).expect("delete");
+        assert_eq!(deleted.map(|route| route.id), Some(created.id));
 
         let other = workspace_record(owner, ws.env_revision, ws.project, "other");
         insert_workspace(&conn, &other, None, "hash").expect("workspace");
@@ -2275,7 +2481,6 @@ mod tests {
             repo: None,
             environment_id: general.environment_id,
             opening: Opening::shell(),
-            agent: None,
             ports: PreviewPorts::default(),
             idle: IdleRule::Never,
         };
@@ -2297,27 +2502,95 @@ mod tests {
     }
 
     #[test]
-    fn only_columns_that_opened_forget_their_prompts() {
-        let conn = conn();
+    fn asking_for_a_state_becomes_its_own_kind_of_history() {
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate_until(&mut conn, 11).expect("the schema before");
         let owner = principal(&conn, "alice");
         let ws = new_workspace(&conn, owner, "demo");
-        let column = |name: &str| ColumnRecord {
-            spec: ColumnSpec {
-                name: name.parse().expect("a session"),
-                kind: iglu_domain::column::ColumnKind::Shell,
-                width: iglu_domain::column::ColumnWidth::Half,
-                label: None,
-            },
-            prompt: Some("fix the login bug".parse().expect("a prompt")),
-        };
-        replace_columns(&conn, ws.id, &[column("opened"), column("failed")]).expect("columns");
-        clear_prompts(&conn, ws.id, &["opened".parse().expect("a session")]).expect("cleared");
-        let prompts: Vec<(String, bool)> = columns(&conn, ws.id)
-            .expect("columns")
+        for (at, detail) in [
+            (1, "main on https://example.test/app.git"),
+            (2, "set to frozen"),
+        ] {
+            conn.execute(
+                "INSERT INTO activity (workspace_id, kind, detail, at) VALUES (?1, 'requested', ?2, ?3)",
+                params![ws.id.to_string(), detail, at],
+            )
+            .expect("an entry");
+        }
+        migrate(&mut conn).expect("the rest apply");
+        let log: Vec<(ActivityKind, String)> = activity(&conn, ws.id, 10)
+            .expect("read")
             .into_iter()
-            .map(|c| (c.spec.name.as_str().to_owned(), c.prompt.is_some()))
+            .map(|(entry, _)| (entry.kind, entry.detail))
             .collect();
-        assert_eq!(prompts, [("opened".into(), false), ("failed".into(), true)]);
+        assert_eq!(
+            log,
+            [
+                (ActivityKind::StateSet, "frozen".into()),
+                (
+                    ActivityKind::Requested,
+                    "main on https://example.test/app.git".into()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_and_command_columns_become_shells() {
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate_until(&mut conn, 10).expect("the schema before");
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        for (position, (name, kind)) in [
+            ("claude", r#"{"kind":"agent","agent":"claude"}"#),
+            ("dev", r#"{"kind":"server","command":["just","dev"]}"#),
+            ("browser", r#"{"kind":"browser"}"#),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            conn.execute(
+                "INSERT INTO workspace_column (workspace_id, position, name, kind, width, prompt)
+                 VALUES (?1, ?2, ?3, ?4, 'half', 'fix it')",
+                params![
+                    ws.id.to_string(),
+                    i64::try_from(position).expect("small"),
+                    name,
+                    kind
+                ],
+            )
+            .expect("a column");
+        }
+        conn.execute(
+            r#"UPDATE project SET agent = 'claude', opening = '[{"kind":{"kind":"agent","agent":"claude"},"width":"half"},{"kind":{"kind":"browser"},"width":"third"}]'
+               WHERE id = ?1"#,
+            [ws.project.to_string()],
+        )
+        .expect("an opening with an agent");
+        migrate(&mut conn).expect("the rest apply");
+        let kinds: Vec<(String, ColumnKind)> = columns(&conn, ws.id)
+            .expect("columns read")
+            .into_iter()
+            .map(|c| (c.name.as_str().to_owned(), c.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("claude".into(), ColumnKind::Shell),
+                ("dev".into(), ColumnKind::Shell),
+                ("browser".into(), ColumnKind::Browser),
+            ]
+        );
+        let opening = project(&conn, owner, ws.project)
+            .expect("query")
+            .expect("the project")
+            .opening;
+        let opened: Vec<ColumnKind> = opening.templates().iter().map(|t| t.kind.clone()).collect();
+        assert_eq!(opened, [ColumnKind::Browser]);
     }
 
     #[test]
@@ -2359,10 +2632,132 @@ mod tests {
             live[0].observed.is_none(),
             "observed again on the next tick"
         );
-        let image = revision_image(&conn, revision)
+        revision_image(&conn, revision)
             .expect("an old image reads")
             .expect("ready");
-        assert!(image.agents.is_empty());
+    }
+
+    #[test]
+    fn images_are_kept_while_newest_or_in_use() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let env: String = conn
+            .query_row(
+                "SELECT environment_id FROM env_revision WHERE id = ?1",
+                [ws.env_revision.to_string()],
+                |row| row.get(0),
+            )
+            .expect("its environment");
+        let env = Uuid::parse_str(&env).expect("a UUID");
+        let image = |n: u8| -> BuiltImage {
+            serde_json::from_str(&format!(
+                r#"{{"fingerprint":"{n:064x}","arch":"x86_64","user":{{"name":"dev","uid":1000,"gid":100,"home":"/home/dev"}},"browser":false,"store_path":"/nix/store/x"}}"#
+            ))
+            .expect("an image")
+        };
+        let ready = |id: EnvRevisionId, created: i64, n: u8| {
+            if id != ws.env_revision {
+                insert_revision(&conn, id, env, at(created)).expect("revision");
+            }
+            finish_revision(&conn, id, Ok(&image(n)), at(created)).expect("ready");
+        };
+        ready(EnvRevisionId::from_uuid(Uuid::new_v4()), 0, 1);
+        ready(ws.env_revision, 1, 2);
+        ready(EnvRevisionId::from_uuid(Uuid::new_v4()), 2, 3);
+        let kept =
+            |conn: &Connection| -> Vec<ImageFingerprint> { kept_images(conn).expect("kept") };
+        assert_eq!(kept(&conn), [image(2).fingerprint, image(3).fingerprint]);
+        conn.execute(
+            "UPDATE workspace SET deleted_at = 9 WHERE id = ?1",
+            [ws.id.to_string()],
+        )
+        .expect("deleted");
+        assert_eq!(kept(&conn), [image(3).fingerprint]);
+    }
+
+    #[test]
+    fn a_workspace_updates_to_its_environments_newest_build_of_the_same_account() {
+        let conn = conn();
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        let env: String = conn
+            .query_row(
+                "SELECT environment_id FROM env_revision WHERE id = ?1",
+                [ws.env_revision.to_string()],
+                |row| row.get(0),
+            )
+            .expect("its environment");
+        let env = Uuid::parse_str(&env).expect("a UUID");
+        let image = |n: u8, uid: u32| -> BuiltImage {
+            serde_json::from_str(&format!(
+                r#"{{"fingerprint":"{n:064x}","arch":"x86_64","user":{{"name":"dev","uid":{uid},"gid":100,"home":"/home/dev"}},"browser":false,"store_path":"/nix/store/x"}}"#
+            ))
+            .expect("an image")
+        };
+        let build = |created: i64, n: u8, uid: u32| {
+            let id = EnvRevisionId::from_uuid(Uuid::new_v4());
+            insert_revision(&conn, id, env, at(created)).expect("revision");
+            finish_revision(&conn, id, Ok(&image(n, uid)), at(created)).expect("ready");
+            id
+        };
+        finish_revision(&conn, ws.env_revision, Ok(&image(1, 1000)), at(1)).expect("ready");
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Already
+        );
+        let images = |conn: &Connection| workspace_images(conn).expect("images")[&ws.id].clone();
+        assert_eq!(images(&conn), image(1, 1000).fingerprint);
+
+        // A frozen workspace that failed is asked to run, and its failure is over.
+        conn.execute(
+            r#"UPDATE workspace SET desired = 'frozen', condition = '{"kind":"runtime_failed"}' WHERE id = ?1"#,
+            [ws.id.to_string()],
+        )
+        .expect("frozen and failed");
+        let newer = build(2, 2, 1000);
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Moved(newer)
+        );
+        let moved = workspace(&conn, ws.id).expect("query").expect("live");
+        assert_eq!(
+            (
+                moved.env_revision,
+                moved.desired,
+                moved.condition,
+                moved.revision
+            ),
+            (newer, DesiredState::Running, None, ws.revision.next())
+        );
+        assert_eq!(images(&conn), image(2, 1000).fingerprint);
+
+        // Building the same image again is nothing to update to.
+        build(3, 2, 1000);
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Already
+        );
+
+        // A build for another account would leave the home's files someone else's.
+        build(4, 3, 1001);
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::OtherAccount
+        );
+        assert_eq!(
+            workspace(&conn, ws.id)
+                .expect("query")
+                .expect("live")
+                .env_revision,
+            newer
+        );
+
+        mark_deleted(&conn, ws.id, at(9)).expect("deleted");
+        assert_eq!(
+            update_to_newest(&conn, ws.id).expect("query"),
+            Updated::Gone
+        );
     }
 
     #[test]

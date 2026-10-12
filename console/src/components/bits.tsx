@@ -2,42 +2,14 @@
 
 import type { ComponentChildren } from "preact";
 
-import { open } from "../actions.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
 import type { Condition } from "../generated/Condition.ts";
 import type { Phase } from "../generated/Phase.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
+import { cursor } from "../state/store.ts";
 import { unreachable } from "../state/unsaved.ts";
 
-type GlyphKind = "waiting" | "done" | "working" | "idle" | "exited" | "frozen" | "asleep" | "build" | "trouble";
-
-// A spinner turns about its own centre; a text glyph's box isn't centred on its ink, so it wobbles.
-const SPINNER = (
-  <svg class="i" viewBox="0 0 16 16" width="12" height="12">
-    <circle cx="8" cy="8" r="5.75" fill="none" stroke="currentColor" stroke-opacity=".28" stroke-width="2" />
-    <path d="M8 2.25A5.75 5.75 0 0 1 13.75 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-  </svg>
-);
-
-const GLYPH: Record<GlyphKind, ComponentChildren> = {
-  waiting: "●",
-  done: "✓",
-  working: SPINNER,
-  idle: "○",
-  exited: "·",
-  frozen: "❄",
-  asleep: "■",
-  build: "△",
-  trouble: "!",
-};
-
-export function Glyph({ kind }: { kind: GlyphKind }) {
-  return (
-    <span class={`g g-${kind}`} aria-hidden="true">
-      {GLYPH[kind]}
-    </span>
-  );
-}
+type GlyphKind = "waiting" | "done" | "working" | "idle" | "frozen" | "asleep" | "build" | "trouble";
 
 /** Line icons drawn on a 16-unit square, so they sit at the centre of their box as text can't. */
 const ICON = {
@@ -51,7 +23,48 @@ const ICON = {
   up: "m3.5 10 4.5-4.5 4.5 4.5",
   down: "m3.5 6 4.5 4.5L12.5 6",
   reload: "M12.8 9.2A5 5 0 1 1 11.5 4.4M12 2v3h-3",
+  bell: "M4 11.5V7.5a4 4 0 0 1 8 0v4l1 1H3Zm2.75 2.25a1.5 1.5 0 0 0 2.5 0",
+  snow: "M8 1.8v12.4M2.63 4.9l10.74 6.2M2.63 11.1l10.74-6.2M8 4.1 6.78 2.64M8 4.1l1.22-1.46M4.62 6.05l-1.87.33M4.62 6.05l-.65-1.79M4.62 9.95l-.65 1.79M4.62 9.95l-1.87-.33M8 11.9l1.22 1.46M8 11.9l-1.22 1.46M11.38 9.95l1.87-.33M11.38 9.95l.65 1.79M11.38 6.05l.65-1.79M11.38 6.05l1.87.33",
 } as const;
+
+// Each state drawn on a 16-unit square, as the icons are: a font's glyphs
+// differ by device and sit off the centre of their box, and a spinner would
+// wobble as it turned.
+const drawn = (shape: ComponentChildren) => (
+  <svg class="i" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    {shape}
+  </svg>
+);
+
+const GLYPH: Record<GlyphKind, ComponentChildren> = {
+  waiting: drawn(<circle cx="8" cy="8" r="4.5" fill="currentColor" stroke="none" />),
+  done: drawn(<path d="m3.5 8.5 3 3 6-7" />),
+  working: drawn(
+    <>
+      <circle cx="8" cy="8" r="5.75" stroke-opacity=".28" stroke-width="2" />
+      <path d="M8 2.25A5.75 5.75 0 0 1 13.75 8" stroke-width="2" />
+    </>,
+  ),
+  idle: drawn(<circle cx="8" cy="8" r="4.25" />),
+  frozen: drawn(<path d={ICON.snow} />),
+  asleep: drawn(<rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" stroke="none" />),
+  build: drawn(<path d="M8 3 13.5 12.5h-11Z" />),
+  trouble: drawn(
+    <>
+      <path d="M8 2.5v7" stroke-width="2" />
+      <circle cx="8" cy="13" r="1.25" fill="currentColor" stroke="none" />
+    </>,
+  ),
+};
+
+export function Glyph({ kind }: { kind: GlyphKind }) {
+  return (
+    <span class={`g g-${kind}`} aria-hidden="true">
+      {GLYPH[kind]}
+    </span>
+  );
+}
+
 
 export function Icon({ name, size = 14 }: { name: keyof typeof ICON; size?: number }) {
   return (
@@ -61,18 +74,14 @@ export function Icon({ name, size = 14 }: { name: keyof typeof ICON; size?: numb
   );
 }
 
-/** A link to a workspace that opens it in place; modified clicks open a tab. */
+/** A link to a workspace, which becomes the overview's cursor once opened here. */
 export function WorkspaceLink({ ws, class: className, label, children }: { ws: WorkspaceView; class?: string; label?: string; children: ComponentChildren }) {
   return (
     <a
       href={`/w/${ws.name}`}
       class={className}
       aria-label={label}
-      onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-        e.preventDefault();
-        open(ws);
-      }}
+      onClick={() => (cursor.value = ws.id)}
     >
       {children}
     </a>
@@ -136,6 +145,11 @@ export function phaseText(phase: Phase): string | null {
   return phase === "running" ? null : phase;
 }
 
+/** What a count of workspaces that need you says after the number. */
+export function needYou(count: number): string {
+  return count === 1 ? "needs you" : "need you";
+}
+
 export function attentionText(attention: AttentionView): { tone: string; text: string } {
   switch (attention.state) {
     case "waiting":
@@ -146,8 +160,6 @@ export function attentionText(attention: AttentionView): { tone: string; text: s
       return { tone: "s-working", text: "working" };
     case "idle":
       return { tone: "", text: "idle" };
-    case "exited":
-      return { tone: "", text: "exited" };
   }
 }
 
@@ -197,7 +209,7 @@ export function Frost({ label, hint }: { label: string; hint?: string }) {
     <div class="frost">
       <div class="frost-label">
         <span class="flake" aria-hidden="true">
-          ❄
+          <Icon name="snow" size={20} />
         </span>
         <b>{label}</b>
         {hint ? <small>{hint}</small> : null}

@@ -20,13 +20,13 @@ use iglu_api::{
     LabelWorkspace, ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace,
     RevisionStatus, RouteView, SendInput, SetDesiredState, WorkspaceView,
 };
-use iglu_domain::agent::Prompt;
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::auth::Permission;
-use iglu_domain::column::{Arg, Argv, ColumnKind};
+use iglu_domain::column::ColumnKind;
 use iglu_domain::env::{EnvName, EnvSource};
 use iglu_domain::git::{Unpushed, Unsaved};
 use iglu_domain::id::WorkspaceId;
-use iglu_domain::label::{AgentName, ProjectName, WorkspaceName};
+use iglu_domain::label::{ProjectName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Phase};
 use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
@@ -93,12 +93,6 @@ enum WorkspaceCommand {
         /// What to call it, such as "Tidy the login flow". Names it too.
         #[arg(long)]
         label: Option<WorkspaceLabel>,
-        /// What to work on. Starts an agent with it, and names the workspace
-        /// when nothing else does.
-        prompt: Option<Prompt>,
-        /// The agent to start, if not the project's or the environment's first.
-        #[arg(long)]
-        agent: Option<AgentName>,
         /// The branch to work on. Defaults to the workspace name, and names
         /// it when there's no name or label.
         #[arg(long)]
@@ -106,7 +100,7 @@ enum WorkspaceCommand {
         /// Where a new branch starts. Defaults to the remote's default branch.
         #[arg(long)]
         base: Option<BranchName>,
-        /// Made from the label, branch or prompt when absent.
+        /// Made from the label or branch when absent.
         #[arg(long)]
         name: Option<WorkspaceName>,
         /// Wait until the workspace is running.
@@ -150,6 +144,13 @@ enum WorkspaceCommand {
         #[arg(long)]
         wait: bool,
     },
+    /// Upgrade a workspace in place to its environment's newest build and
+    /// restart it. Its files stay; what's running ends.
+    Update {
+        workspace: String,
+        #[arg(long)]
+        wait: bool,
+    },
     /// Delete a workspace and everything in it. Refuses while it has
     /// uncommitted or unpushed work, or can't be checked, unless forced.
     Rm {
@@ -175,28 +176,19 @@ enum ColumnCommand {
         #[arg(long, short)]
         workspace: Option<String>,
     },
-    /// Open a column: a shell, an agent, or `-- <command>` to run as a server.
+    /// Open a column: a shell, or the workspace's browser.
     New {
         #[arg(long, short)]
         workspace: Option<String>,
-        /// Run this agent from the workspace's environment.
+        /// The workspace's browser rather than a shell. A workspace has one.
         #[arg(long)]
-        agent: Option<AgentName>,
-        /// What the agent starts on.
-        #[arg(long, requires = "agent", conflicts_with = "prompt_file")]
-        prompt: Option<Prompt>,
-        /// Read what the agent starts on from this file.
-        #[arg(long, requires = "agent")]
-        prompt_file: Option<std::path::PathBuf>,
+        browser: bool,
         /// Defaults to one from its kind, such as `shell-2`.
         #[arg(long)]
         name: Option<SessionName>,
         /// The column to put it after; the end by default.
         #[arg(long)]
         after: Option<SessionName>,
-        /// A command to run as a server column.
-        #[arg(last = true, conflicts_with = "agent")]
-        command: Vec<Arg>,
     },
     /// End a column's session and everything in it, and remove the column.
     Close {
@@ -386,6 +378,57 @@ async fn wait_for(
     }
 }
 
+/// Moves a workspace to its environment's newest build, and prints it, with
+/// `wait` once it's upgraded and back as it was asked to be.
+async fn update(
+    client: &Client,
+    json_mode: bool,
+    reference: &str,
+    wait: bool,
+) -> anyhow::Result<()> {
+    let ws = client.resolve(reference).await?;
+    let updated = client.update(ws.id).await?;
+    let ws = if wait {
+        wait_for_upgrade(client, ws.id).await?;
+        wait_for(client, ws.id, updated.desired).await?
+    } else {
+        Some(updated)
+    };
+    print(json_mode, &ws, |ws| {
+        ws.as_ref().map_or_else(|| "deleted".into(), describe)
+    });
+    Ok(())
+}
+
+/// Waits for the workspace to be upgraded since it was last asked to update,
+/// which its history records.
+async fn wait_for_upgrade(client: &Client, id: WorkspaceId) -> anyhow::Result<()> {
+    let started = Instant::now();
+    loop {
+        let log = client.activity(id).await?;
+        let asked = log
+            .iter()
+            .find(|e| e.kind == ActivityKind::UpdateAsked)
+            .map(|e| e.at);
+        if log
+            .iter()
+            .any(|e| e.kind == ActivityKind::Updated && asked.is_none_or(|asked| e.at >= asked))
+        {
+            return Ok(());
+        }
+        if let Some(ws) = client.workspace(id).await?
+            && let Some(condition @ (Condition::Error { .. } | Condition::RuntimeFailed)) =
+                &ws.condition
+        {
+            bail!("{}", condition_text(condition));
+        }
+        if started.elapsed() > Duration::from_secs(1800) {
+            bail!("timed out waiting for the workspace to update");
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 /// Requests `state` and prints the workspace, with `wait` once it gets there.
 async fn transition(
     client: &Client,
@@ -396,13 +439,7 @@ async fn transition(
 ) -> anyhow::Result<()> {
     let ws = client.resolve(reference).await?;
     let updated = client
-        .set_desired_state(
-            ws.id,
-            &SetDesiredState {
-                state,
-                expected_revision: ws.revision,
-            },
-        )
+        .set_desired_state(ws.id, &SetDesiredState { state })
         .await?;
     let ws = if wait {
         wait_for(client, ws.id, state).await?
@@ -473,8 +510,6 @@ async fn workspace(
         WorkspaceCommand::New {
             project,
             label,
-            prompt,
-            agent,
             branch,
             base,
             name,
@@ -484,8 +519,6 @@ async fn workspace(
             let request = CreateWorkspace {
                 project: project.id,
                 label,
-                prompt,
-                agent,
                 branch,
                 base,
                 name,
@@ -526,6 +559,9 @@ async fn workspace(
         }
         WorkspaceCommand::Stop { workspace, wait } => {
             transition(client, json_mode, &workspace, DesiredState::Stopped, wait).await?;
+        }
+        WorkspaceCommand::Update { workspace, wait } => {
+            update(client, json_mode, &workspace, wait).await?;
         }
         WorkspaceCommand::Rm {
             workspace,
@@ -603,28 +639,15 @@ async fn column(client: &Client, json_mode: bool, command: ColumnCommand) -> any
         }
         ColumnCommand::New {
             workspace,
-            agent,
-            prompt,
-            prompt_file,
+            browser,
             name,
             after,
-            command,
         } => {
             let ws = target(client, workspace.as_deref()).await?;
-            let prompt = match prompt_file {
-                Some(path) => Some(
-                    std::fs::read_to_string(&path)
-                        .with_context(|| format!("reading {}", path.display()))?
-                        .parse::<Prompt>()?,
-                ),
-                None => prompt,
-            };
-            let kind = match (agent, command.is_empty()) {
-                (Some(agent), _) => ColumnKind::Agent { agent },
-                (None, true) => ColumnKind::Shell,
-                (None, false) => ColumnKind::Server {
-                    command: Argv::try_from(command)?,
-                },
+            let kind = if browser {
+                ColumnKind::Browser
+            } else {
+                ColumnKind::Shell
             };
             let spec = client
                 .add_column(
@@ -634,7 +657,6 @@ async fn column(client: &Client, json_mode: bool, command: ColumnCommand) -> any
                         name,
                         width: None,
                         after,
-                        prompt,
                     },
                 )
                 .await?;
@@ -725,7 +747,8 @@ async fn access(client: &Client, json_mode: bool, command: AccessCommand) -> any
             return format!("{} may do nothing from inside", ws.name);
         }
         lines(&ws.access, |grant| {
-            let permissions: Vec<&str> = grant.permissions.iter().map(|p| p.as_str()).collect();
+            let permissions: Vec<String> =
+                grant.permissions.iter().map(ToString::to_string).collect();
             format!(
                 "{:<24} {}",
                 name_of(grant.workspace),
@@ -792,6 +815,13 @@ async fn check_nothing_lost(client: &Client, ws: &WorkspaceView) -> anyhow::Resu
             "{} has {}; push it first, or pass --force",
             ws.name,
             unsaved_text(unsaved)
+        );
+    }
+    // Its checkout should be there; without it, nothing says what's pushed.
+    if live.git.is_none() {
+        bail!(
+            "{}'s checkout is missing, so unsaved work can't be checked; pass --force to delete anyway",
+            ws.name
         );
     }
     Ok(())

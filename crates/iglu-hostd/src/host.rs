@@ -18,7 +18,7 @@ use iglu_domain::secret::{FetchTokens, SecretBundle};
 use iglu_domain::terminal::{self, OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{
     BuildOutcome, Command, CommandError, CommandOutcome, ErrorCode, InstanceReport, ProvisionSpec,
-    SessionSpec, TerminalInfo, TerminalOutput,
+    PruneImages, PrunedImages, SessionSpec, TerminalInfo, TerminalOutput,
 };
 
 use crate::channel::Channels;
@@ -26,7 +26,8 @@ use crate::config::Timeouts;
 use crate::guest::{self, GuestCommand, Opening};
 use crate::rules::{self, BootFacts, Step};
 use crate::runtime::{
-    BootId, Guest, GuestFile, Observed, Output, Ownership, Runtime, RuntimeError, Terminal, tail,
+    BootId, Guest, GuestFile, Observed, Output, Ownership, Runtime, RuntimeError, State, Terminal,
+    tail,
 };
 
 impl From<RuntimeError> for CommandError {
@@ -34,7 +35,7 @@ impl From<RuntimeError> for CommandError {
         let code = match error {
             RuntimeError::NotFound => ErrorCode::NotFound,
             RuntimeError::ImageMissing => ErrorCode::ImageMissing,
-            RuntimeError::ImageIncompatible(_) => ErrorCode::ImageIncompatible,
+            RuntimeError::Refused(_) => ErrorCode::InvalidState,
             RuntimeError::Failed(_) => ErrorCode::Runtime,
         };
         Self::new(code, error.to_string())
@@ -83,6 +84,7 @@ impl<R: Runtime> Host<R> {
             Command::Thaw => self.lifecycle(name, Step::Thaw).await,
             Command::Stop => self.lifecycle(name, Step::Stop).await,
             Command::Delete => self.lifecycle(name, Step::Delete).await,
+            Command::Upgrade(spec) => self.lifecycle(name, Step::Upgrade(spec)).await,
         };
         match result {
             Ok(()) => match self.observe(name).await {
@@ -112,6 +114,7 @@ impl<R: Runtime> Host<R> {
                     self.runtime.delete(name).await?;
                     self.boots.forget(name);
                 }
+                Step::Upgrade(spec) => self.runtime.upgrade(name, spec).await?,
             }
         }
         Ok(())
@@ -124,12 +127,6 @@ impl<R: Runtime> Host<R> {
     /// When the instance is missing, isn't iglu's, or isn't running.
     pub async fn guest(&self, name: InstanceName) -> Result<Guest, CommandError> {
         rules::guest(self.runtime.instance(name).await?.as_ref())
-    }
-
-    /// The running guest, for a command its guest tools must know: an
-    /// instance from another iglu is refused with what to do about it.
-    async fn tools_guest(&self, name: InstanceName) -> Result<Guest, CommandError> {
-        rules::tools_guest(self.runtime.instance(name).await?.as_ref())
     }
 
     async fn run(
@@ -166,7 +163,7 @@ impl<R: Runtime> Host<R> {
         name: InstanceName,
         bundle: &SecretBundle,
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(name).await?;
+        let guest = self.guest(name).await?;
         self.run(
             &guest,
             &GuestCommand::InstallSecrets(bundle),
@@ -182,7 +179,7 @@ impl<R: Runtime> Host<R> {
         name: InstanceName,
         spec: &ProvisionSpec,
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(name).await?;
+        let guest = self.guest(name).await?;
         self.run(
             &guest,
             &GuestCommand::Provision(spec),
@@ -200,7 +197,7 @@ impl<R: Runtime> Host<R> {
         name: InstanceName,
         sessions: &[SessionSpec],
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(name).await?;
+        let guest = self.guest(name).await?;
         self.run(
             &guest,
             &GuestCommand::Open(sessions, Opening::Boot),
@@ -308,17 +305,22 @@ impl<R: Runtime> Host<R> {
 
     async fn report(&self, observed: &Observed) -> InstanceReport {
         let instance = rules::instance(observed, self.facts(observed).await);
+        // A running guest without the file has reported nothing this boot;
+        // a stopped one runs nothing. A frozen one can't be read.
         let sessions = match rules::running(observed) {
             Some(guest) => match self.runtime.read(&guest, GuestFile::Status).await {
-                Ok(Some(bytes)) => guest::parse_statuses(&bytes),
-                Ok(None) | Err(_) => Vec::new(),
+                Ok(Some(bytes)) => Some(guest::parse_statuses(&bytes)),
+                Ok(None) => Some(Vec::new()),
+                Err(_) => None,
             },
-            None => Vec::new(),
+            None if observed.state == State::Stopped => Some(Vec::new()),
+            None => None,
         };
         InstanceReport {
             workspace: observed.name.workspace(),
             owner: observed.owner,
             instance,
+            image: observed.image.clone(),
             memory: observed.memory,
             sessions,
         }
@@ -375,7 +377,9 @@ impl<R: Runtime> Host<R> {
                 "reading the Git state failed",
             )
             .await?;
-        Ok(guest::parse_git_state(&output.stdout))
+        guest::parse_git_state(&output.stdout).map_err(|e| {
+            CommandError::new(ErrorCode::GuestFailed, format!("unreadable Git state: {e}"))
+        })
     }
 
     /// Ends a terminal session and everything running in it.
@@ -410,7 +414,7 @@ impl<R: Runtime> Host<R> {
         session: &SessionName,
         lines: OutputLines,
     ) -> Result<TerminalOutput, CommandError> {
-        let guest = self.tools_guest(workspace.instance_name()).await?;
+        let guest = self.guest(workspace.instance_name()).await?;
         let output = self
             .run(
                 &guest,
@@ -439,7 +443,7 @@ impl<R: Runtime> Host<R> {
         session: &SessionName,
         text: &TerminalInput,
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(workspace.instance_name()).await?;
+        let guest = self.guest(workspace.instance_name()).await?;
         self.run(
             &guest,
             &GuestCommand::Input(session, text),
@@ -461,7 +465,7 @@ impl<R: Runtime> Host<R> {
         name: &FileName,
         bytes: &[u8],
     ) -> Result<GuestPath, CommandError> {
-        let guest = self.tools_guest(workspace.instance_name()).await?;
+        let guest = self.guest(workspace.instance_name()).await?;
         let output = self
             .run(
                 &guest,
@@ -526,6 +530,24 @@ impl<R: Runtime> Host<R> {
     ) -> Result<R::Stream, CommandError> {
         let guest = self.guest(workspace.instance_name()).await?;
         Ok(self.runtime.connect(&guest, port).await?)
+    }
+
+    /// Removes the images iglud no longer needs. One that won't go is left
+    /// for next time.
+    ///
+    /// # Errors
+    ///
+    /// When the runtime can't list its images.
+    pub async fn prune_images(&self, request: &PruneImages) -> Result<PrunedImages, CommandError> {
+        let images = self.runtime.images().await?;
+        let mut removed = Vec::new();
+        for fingerprint in rules::unkept(&images, &request.keep, request.older_than, now()) {
+            match self.runtime.delete_image(&fingerprint).await {
+                Ok(()) => removed.push(fingerprint),
+                Err(error) => tracing::warn!(%fingerprint, %error, "removing an image failed"),
+            }
+        }
+        Ok(PrunedImages { removed })
     }
 
     /// Builds an environment for this host, reporting a failure for its owner.
@@ -616,6 +638,16 @@ fn guest_message(stderr: &str) -> &str {
         .strip_prefix("iglu-guest: ")
         .or_else(|| stderr.strip_prefix("iglu-status: "))
         .unwrap_or(stderr)
+}
+
+/// The clock, as the domain's time.
+fn now() -> iglu_domain::time::Timestamp {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        });
+    iglu_domain::time::Timestamp::from_unix_millis(millis)
 }
 
 #[cfg(test)]

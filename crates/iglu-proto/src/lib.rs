@@ -19,17 +19,18 @@ use iglu_domain::port::GuestPort;
 use iglu_domain::repo::Checkout;
 use iglu_domain::secret::{FetchTokens, SecretBundle};
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput};
+use iglu_domain::time::Millis;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Paths, so client and server can't drift.
 pub mod path {
     use super::{FileName, GuestPort, OutputLines, SessionName, WorkspaceId};
 
-    pub const HOST: &str = "/v1/host";
     pub const INVENTORY: &str = "/v1/inventory";
     pub const BUILDS: &str = "/v1/builds";
+    pub const IMAGE_PRUNE: &str = "/v1/images/prune";
 
     #[must_use]
     pub fn commands(workspace: WorkspaceId) -> String {
@@ -116,10 +117,15 @@ pub struct InstanceReport {
     /// The owner recorded on the instance when it was created.
     pub owner: PrincipalId,
     pub instance: Instance,
+    /// The image whose system it runs: the one it was made from, or last
+    /// upgraded to.
+    pub image: Option<ImageFingerprint>,
     /// Resident memory, when the instance is running or frozen.
     pub memory: Option<Bytes>,
-    /// Latest status per terminal session, as the guest reported it.
-    pub sessions: Vec<SessionStatus>,
+    /// Latest status per terminal session, as the guest reported it, and
+    /// none for a stopped guest; `None` when the host couldn't read them, as
+    /// from a frozen guest, which says nothing about whether they changed.
+    pub sessions: Option<Vec<SessionStatus>>,
 }
 
 /// Limits applied to a workspace's instance.
@@ -173,6 +179,17 @@ pub enum Command {
     Thaw,
     Stop,
     Delete,
+    /// Upgrades the instance in place to `image`'s system and restarts it
+    /// into that system, from whatever state it's in but failed. Refused
+    /// when the image's account isn't the instance's, which would leave its
+    /// files someone else's.
+    Upgrade(UpgradeSpec),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpgradeSpec {
+    pub image: ImageFingerprint,
+    pub user: GuestUser,
 }
 
 /// A failed command, classified so the control plane can decide what to do.
@@ -191,8 +208,6 @@ pub enum ErrorCode {
     /// An instance with this workspace's name exists but isn't iglu's.
     Conflict,
     ImageMissing,
-    /// The environment's image was built for a different version of iglu.
-    ImageIncompatible,
     /// The instance isn't in a state where the command makes sense.
     InvalidState,
     /// A command inside the guest failed, such as `git clone`.
@@ -250,6 +265,20 @@ pub struct TerminalTyping {
 pub struct AttachParams {
     pub cols: u16,
     pub rows: u16,
+}
+
+/// The images iglud still needs: the host removes the others it built, but
+/// for any built in the last `older_than`, which iglud may not have heard of
+/// yet.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruneImages {
+    pub keep: Vec<ImageFingerprint>,
+    pub older_than: Millis,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrunedImages {
+    pub removed: Vec<ImageFingerprint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

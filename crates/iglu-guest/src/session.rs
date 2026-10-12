@@ -3,19 +3,20 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use iglu_domain::column::{Arg, Argv};
-use iglu_domain::guest::CHANNEL_ENV;
+use iglu_domain::guest::{CHANNEL_ENV, KEPT_DIRS, KEPT_ENV};
 use iglu_domain::terminal::{SessionName, TerminalInput};
 use serde::{Deserialize, Serialize};
 
 use crate::paths::Dirs;
 use crate::provision::WorkspaceRecord;
-use crate::status::write_atomic;
+use crate::status::{self, write_atomic};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Info {
@@ -46,12 +47,17 @@ pub fn parse_list(output: &str) -> Vec<Info> {
 pub fn session_env(
     secrets: BTreeMap<String, String>,
     zmx_dir: &Path,
+    kept: &Path,
     channel: Option<&Path>,
 ) -> BTreeMap<String, String> {
     let mut env = secrets;
     // Where `iglu` reaches the control plane from.
     if let Some(channel) = channel {
         env.insert(CHANNEL_ENV.into(), channel.display().to_string());
+    }
+    env.insert(KEPT_ENV.into(), kept.display().to_string());
+    for (variable, dir) in KEPT_DIRS {
+        env.insert(variable.into(), kept.join(dir).display().to_string());
     }
     env.insert("ZMX_DIR".into(), zmx_dir.display().to_string());
     env.insert("ZMX_NO_DETACH_KEY".into(), "1".into());
@@ -88,10 +94,21 @@ pub fn list(dirs: &Dirs) -> std::io::Result<Vec<Info>> {
 /// When zmx can't run or reports a failure.
 pub fn close(dirs: &Dirs, name: &SessionName) -> std::io::Result<()> {
     let status = zmx(dirs).arg("kill").arg(name.as_str()).status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other("zmx kill failed"))
+    if !status.success() {
+        return Err(std::io::Error::other("zmx kill failed"));
+    }
+    forget(dirs, name);
+    Ok(())
+}
+
+/// Drops what a session's threads reported: it's gone, and a session opened
+/// later under its name is another one.
+fn forget(dirs: &Dirs, name: &SessionName) {
+    if let Err(error) = status::modify(dirs, |mut statuses| {
+        statuses.remove(name);
+        statuses
+    }) {
+        eprintln!("forgetting {name}'s threads: {error}");
     }
 }
 
@@ -142,6 +159,14 @@ pub fn send(dirs: &Dirs, name: &SessionName, text: &TerminalInput) -> std::io::R
 /// With a command, a new session runs it as given, argument by argument;
 /// without one, it runs the login shell.
 fn zmx_attach(dirs: &Dirs, name: &SessionName, command: Option<&Argv>) -> Command {
+    // Agents expect their configuration directories to be there. One that
+    // can't be made shows when the agent starts, so it's left to say so.
+    for (_, dir) in KEPT_DIRS {
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dirs.kept().join(dir));
+    }
     let secrets: BTreeMap<String, String> = std::fs::read(dirs.secrets_env())
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -161,9 +186,14 @@ fn zmx_attach(dirs: &Dirs, name: &SessionName, command: Option<&Argv>) -> Comman
     if let Some(command) = command {
         zmx.args(command.args().iter().map(Arg::as_str));
     }
-    zmx.envs(session_env(secrets, &zmx_dir(dirs), dirs.channel()))
-        .env("SHELL", shell)
-        .current_dir(checkout);
+    zmx.envs(session_env(
+        secrets,
+        &zmx_dir(dirs),
+        dirs.kept(),
+        dirs.channel(),
+    ))
+    .env("SHELL", shell)
+    .current_dir(checkout);
     zmx
 }
 
@@ -261,6 +291,7 @@ fn start(dirs: &Dirs, spec: &OpenSpec) -> std::io::Result<()> {
     const CLEARED: &[u8] = b"\x1b[2J\x1b[H";
     const DETACH_KEY: u8 = 0x1c;
 
+    forget(dirs, &spec.name);
     let controller = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
     grantpt(&controller)?;
     unlockpt(&controller)?;
@@ -382,11 +413,27 @@ mod tests {
         let env = session_env(
             secrets,
             Path::new("/run/user/1000/zmx"),
+            Path::new("/var/lib/iglu/kept"),
             Some(Path::new("/var/lib/iglu-api.sock")),
         );
         assert_eq!(env["TERM"], "xterm-256color");
         assert_eq!(env["API_KEY"], "k");
         assert_eq!(env["ZMX_DIR"], "/run/user/1000/zmx");
         assert_eq!(env[CHANNEL_ENV], "/var/lib/iglu-api.sock");
+    }
+
+    #[test]
+    fn agents_keep_their_configuration_in_the_kept_directory() {
+        let secrets = BTreeMap::from([("CLAUDE_CONFIG_DIR".to_owned(), "/tmp/c".to_owned())]);
+        let env = session_env(
+            secrets,
+            Path::new("/z"),
+            Path::new("/var/lib/iglu/kept"),
+            None,
+        );
+        assert_eq!(env[KEPT_ENV], "/var/lib/iglu/kept");
+        assert_eq!(env["CLAUDE_CONFIG_DIR"], "/var/lib/iglu/kept/claude");
+        assert_eq!(env["CODEX_HOME"], "/var/lib/iglu/kept/codex");
+        assert_eq!(env["GH_CONFIG_DIR"], "/var/lib/iglu/kept/gh");
     }
 }

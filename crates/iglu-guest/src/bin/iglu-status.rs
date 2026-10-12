@@ -13,7 +13,7 @@ use iglu_guest::paths::Dirs;
 use iglu_guest::status::{self, Report};
 
 const USAGE: &str = "usage:
-  iglu-status set <working|waiting|done|idle|exited> [summary...]
+  iglu-status set <working|waiting|done|idle> [summary...]
   iglu-status clear
   iglu-status claude-hook      (reads a Claude Code hook event on stdin)";
 
@@ -61,18 +61,17 @@ fn main() -> ExitCode {
             let Some(event) = claude::parse(&input) else {
                 return ExitCode::SUCCESS;
             };
-            match claude::attention(&event) {
-                Some((state, summary)) => {
-                    let report = Report::Set {
-                        state,
-                        summary,
-                        title: claude::title(&event),
-                        at: status::now_millis(),
-                    };
-                    record(&dirs, session, claude::thread(&input), report)
-                }
-                None => ExitCode::SUCCESS,
-            }
+            let report = match claude::attention(&event) {
+                Some(claude::Change::Set(state, summary)) => Report::Set {
+                    state,
+                    summary,
+                    title: claude::title(&event),
+                    at: status::now_millis(),
+                },
+                Some(claude::Change::Ended) => Report::Clear,
+                None => return ExitCode::SUCCESS,
+            };
+            record(&dirs, session, claude::thread(&input), report)
         }
         Some(_) | None => {
             eprintln!("{USAGE}");

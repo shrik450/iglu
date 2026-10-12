@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use iglu_devhost::config::Settings;
 use iglu_devhost::local::{LocalRuntime, SetupError};
 use iglu_domain::capacity::Bytes;
-use iglu_domain::guest::INTERFACE;
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::SecretsGeneration;
 use iglu_domain::secret::{FetchTokens, SecretTarget, SecretValue, bundle};
@@ -19,7 +18,7 @@ use iglu_hostd::conformance::{self, Fixture};
 use iglu_hostd::guest::GuestCommand;
 use iglu_hostd::host::Host;
 use iglu_hostd::runtime::Runtime;
-use iglu_proto::{BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, Limits};
+use iglu_proto::{BuildOutcome, Command, CommandOutcome, CreateSpec, Limits};
 
 const TIMEOUTS: Timeouts = Timeouts {
     operation_secs: 60,
@@ -56,6 +55,9 @@ async fn the_local_runtime_conforms() {
     let host = Host::new(runtime, TIMEOUTS);
     let fixture = Fixture {
         source: "path:/nonexistent#local".parse().expect("valid source"),
+        next: "path:/nonexistent#local-next"
+            .parse()
+            .expect("valid source"),
         boot_timeout: Duration::from_secs(10),
     };
     let outcomes = conformance::run(&host, &fixture).await;
@@ -151,59 +153,4 @@ async fn a_program_that_ignores_its_input_still_finishes() {
     let output = output.expect("the runtime reports the program's own result");
     assert!(!output.success, "{output:?}");
     assert!(elapsed < Duration::from_secs(10), "took {elapsed:?}");
-}
-
-/// A workspace recording another guest-tools interface, as one created
-/// before an upgrade would, can't start, but can still be deleted.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_workspace_from_another_iglu_is_refused() {
-    let settings = settings("older");
-    let runtime = LocalRuntime::new(&settings, TIMEOUTS)
-        .await
-        .expect("the runtime sets up");
-    let host = Host::new(runtime, TIMEOUTS);
-    let source = "path:/nonexistent#local".parse().expect("valid source");
-    let BuildOutcome::Built(image) = host.build(&source, &FetchTokens::default()).await else {
-        panic!("recording the environment failed");
-    };
-    let workspace = WorkspaceId::from_uuid(uuid::Uuid::new_v4());
-    let spec = CreateSpec {
-        owner: PrincipalId::from_uuid(uuid::Uuid::new_v4()),
-        image: image.fingerprint,
-        user: image.user,
-        limits: Limits {
-            cpus: 1,
-            memory: Bytes::new(1 << 30),
-            processes: 1024,
-            swap: Bytes::new(1 << 30),
-        },
-    };
-    let created = host.perform(workspace, Command::Create(spec)).await;
-    assert!(
-        matches!(created, CommandOutcome::Done { .. }),
-        "{created:?}"
-    );
-
-    let record = settings
-        .state_dir
-        .as_path()
-        .join("instances")
-        .join(workspace.instance_name().to_string())
-        .join("record.json");
-    let mut written: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&record).expect("read")).expect("json");
-    written["guest_interface"] = serde_json::json!(INTERFACE.get() - 1);
-    std::fs::write(&record, serde_json::to_vec(&written).expect("json")).expect("written");
-
-    let started = host.perform(workspace, Command::Start).await;
-    let deleted = host.perform(workspace, Command::Delete).await;
-    let _ = std::fs::remove_dir_all(settings.runtime_dir.as_path());
-    assert!(
-        matches!(&started, CommandOutcome::Failed(e) if e.code == ErrorCode::ImageIncompatible),
-        "{started:?}"
-    );
-    assert!(
-        matches!(deleted, CommandOutcome::Done { .. }),
-        "{deleted:?}"
-    );
 }

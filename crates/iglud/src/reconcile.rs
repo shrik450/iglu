@@ -5,19 +5,19 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use iglu_domain::activity::ActivityKind;
 use iglu_domain::capacity::Room;
 use iglu_domain::column;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::idle;
 use iglu_domain::lifecycle::{
-    AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
+    AdoptReason, Blocker, Build, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
 use iglu_domain::secret::bundle;
-use iglu_domain::terminal::SessionName;
-use iglu_domain::time::Timestamp;
+use iglu_domain::time::{Millis, Timestamp};
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
-    Limits, ProvisionSpec, SessionSpec,
+    Limits, ProvisionSpec, PruneImages, SessionSpec, UpgradeSpec,
 };
 
 use crate::app::{App, now, open_secrets};
@@ -26,6 +26,13 @@ use crate::hosts::HostClient;
 use crate::model::{Condition, PrincipalRecord, WorkspaceRecord};
 
 const INTERVAL: Duration = Duration::from_secs(2);
+
+/// How often hosts are asked to remove images nothing needs any more.
+const PRUNE_EVERY: Duration = Duration::from_secs(3600);
+
+/// An image built this recently is never removed: its build may not be
+/// recorded yet.
+const NEWLY_BUILT: Millis = Millis::from_secs(3600);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
 
 #[derive(Default)]
@@ -91,6 +98,7 @@ impl Reconciler {
 pub async fn run(app: Arc<App>) {
     let reconciler = app.reconciler.clone();
     let mut last_cleanup = Instant::now();
+    let mut last_prune: Option<Instant> = None;
     loop {
         for host in &app.hosts {
             // Observations are dated from when they were asked for.
@@ -113,6 +121,10 @@ pub async fn run(app: Arc<App>) {
                 }
             }
         }
+        if last_prune.is_none_or(|at| at.elapsed() > PRUNE_EVERY) {
+            prune_images(&app).await;
+            last_prune = Some(Instant::now());
+        }
         if last_cleanup.elapsed() > Duration::from_secs(300) {
             let _ = app.db.call(|tx| db::expire_sessions(tx, now())).await;
             last_cleanup = Instant::now();
@@ -120,6 +132,30 @@ pub async fn run(app: Arc<App>) {
         tokio::select! {
             () = tokio::time::sleep(INTERVAL) => {}
             () = reconciler.kick.notified() => {}
+        }
+    }
+}
+
+/// Asks every host to remove the images no environment or workspace needs.
+async fn prune_images(app: &App) {
+    let keep = match app.db.call(|tx| db::kept_images(tx)).await {
+        Ok(keep) => keep,
+        Err(error) => {
+            tracing::error!(%error, "listing the images still needed failed");
+            return;
+        }
+    };
+    let request = PruneImages {
+        keep,
+        older_than: NEWLY_BUILT,
+    };
+    for host in &app.hosts {
+        match host.prune_images(&request).await {
+            Ok(pruned) if pruned.removed.is_empty() => {}
+            Ok(pruned) => {
+                tracing::info!(host = %host.id, removed = ?pruned.removed, "removed unused images");
+            }
+            Err(error) => tracing::warn!(host = %host.id, %error, "removing unused images failed"),
         }
     }
 }
@@ -177,6 +213,7 @@ async fn reconcile_host(
 
     let workspaces: Vec<WorkspaceRecord> =
         live.into_iter().filter(|ws| ws.host == host.id).collect();
+    let images = app.db.call(|tx| db::workspace_images(tx)).await?;
     let mut room = Room::new(
         inventory.host.memory_available,
         app.config.workspaces.reservation,
@@ -193,7 +230,8 @@ async fn reconcile_host(
         let busy = idle::busy(
             report
                 .into_iter()
-                .flat_map(|r| &r.sessions)
+                .filter_map(|r| r.sessions.as_ref())
+                .flatten()
                 .map(|s| s.state),
         );
         if crate::idle::apply(app, &ws, busy).await? {
@@ -205,6 +243,7 @@ async fn reconcile_host(
         let desired = Desired {
             state: ws.desired,
             secrets: principal.secrets_generation,
+            build: Build::of(report.and_then(|r| r.image.as_ref()), images.get(&ws.id)),
         };
         let next = plan_within(desired, instance, &mut room);
         changed |= act(app, reconciler, host, ws, principal, next).await?;
@@ -274,7 +313,8 @@ async fn observe(
     asked_at: Timestamp,
 ) -> anyhow::Result<(Option<PrincipalRecord>, bool)> {
     let memory = report.and_then(|r| r.memory);
-    let sessions = report.map(|r| r.sessions.clone()).unwrap_or_default();
+    // Threads the host couldn't read are left as they were.
+    let sessions = report.and_then(|r| r.sessions.clone());
     let owner = ws.owner;
     let id = ws.id;
     let observed_changed = ws.observed != Some(instance) || ws.memory != memory;
@@ -289,7 +329,10 @@ async fn observe(
             if clear_offline {
                 db::set_condition(tx, id, None)?;
             }
-            let attention_changed = db::sync_attention(tx, id, &sessions)?;
+            let attention_changed = match &sessions {
+                Some(sessions) => db::sync_attention(tx, id, sessions)?,
+                None => false,
+            };
             Ok((db::principal(tx, owner)?, attention_changed))
         })
         .await?;
@@ -320,7 +363,7 @@ async fn act(
                         tx,
                         Some(id),
                         None,
-                        "deleted",
+                        ActivityKind::Deleted,
                         "the workspace was deleted",
                         now(),
                     )
@@ -361,7 +404,7 @@ async fn act(
                 .call(move |tx| {
                     let changed = db::set_desired(tx, id, state, seen)?.is_some();
                     if changed {
-                        db::add_activity(tx, Some(id), None, "adopted", detail, now())?;
+                        db::add_activity(tx, Some(id), None, ActivityKind::Adopted, detail, now())?;
                     }
                     Ok(changed)
                 })
@@ -401,17 +444,34 @@ async fn set_condition(
     Ok(true)
 }
 
-const fn effect_name(effect: Effect) -> &'static str {
+/// What doing `effect` is called, in a failure's history entry.
+const fn effect_doing(effect: Effect) -> &'static str {
     match effect {
-        Effect::Create => "created",
-        Effect::Start => "started",
-        Effect::DeliverSecrets => "secrets-delivered",
-        Effect::Provision => "provisioned",
-        Effect::OpenColumns => "columns-opened",
-        Effect::Freeze => "frozen",
-        Effect::Thaw => "thawed",
-        Effect::Stop => "stopped",
-        Effect::Delete => "removed",
+        Effect::Create => "creating it",
+        Effect::Start => "starting it",
+        Effect::DeliverSecrets => "delivering its secrets",
+        Effect::Provision => "setting it up",
+        Effect::OpenColumns => "opening its columns",
+        Effect::Freeze => "freezing it",
+        Effect::Thaw => "thawing it",
+        Effect::Stop => "stopping it",
+        Effect::Delete => "removing it from its host",
+        Effect::Upgrade => "upgrading its system to the newest build",
+    }
+}
+
+const fn effect_kind(effect: Effect) -> ActivityKind {
+    match effect {
+        Effect::Create => ActivityKind::Created,
+        Effect::Start => ActivityKind::Started,
+        Effect::DeliverSecrets => ActivityKind::SecretsDelivered,
+        Effect::Provision => ActivityKind::Provisioned,
+        Effect::OpenColumns => ActivityKind::ColumnsOpened,
+        Effect::Freeze => ActivityKind::Frozen,
+        Effect::Thaw => ActivityKind::Thawed,
+        Effect::Stop => ActivityKind::Stopped,
+        Effect::Delete => ActivityKind::Removed,
+        Effect::Upgrade => ActivityKind::Updated,
     }
 }
 
@@ -435,15 +495,6 @@ async fn perform(
         Ok(CommandOutcome::Failed(error)) | Err(error) => Err(error),
     };
     let succeeded = result.is_ok();
-    // Only the columns whose sessions are open now have started their agents.
-    let opened: Vec<SessionName> = match (&result, effect) {
-        (Ok(_), Effect::OpenColumns) => host
-            .terminals(id)
-            .await
-            .map(|open| open.into_iter().map(|t| t.name).collect())
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
     let stored = app
         .db
         .call(move |tx| {
@@ -451,13 +502,12 @@ async fn perform(
                 Ok(instance) => {
                     db::record_observation(tx, id, instance, None, now())?;
                     db::set_condition(tx, id, None)?;
-                    db::clear_prompts(tx, id, &opened)?;
                     if !matches!(effect, Effect::DeliverSecrets) {
-                        db::add_activity(tx, Some(id), None, effect_name(effect), "", now())?;
+                        db::add_activity(tx, Some(id), None, effect_kind(effect), "", now())?;
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(workspace = %id, effect = effect_name(effect), error = %error.message, "a step failed");
+                    tracing::warn!(workspace = %id, effect = %effect_kind(effect), error = %error.message, "a step failed");
                     let condition = Condition::Error {
                         code: error.code,
                         message: error.message.clone(),
@@ -468,8 +518,8 @@ async fn perform(
                         tx,
                         Some(id),
                         None,
-                        "error",
-                        &format!("{}: {}", effect_name(effect), error.message),
+                        ActivityKind::Error,
+                        &format!("{}: {}", effect_doing(effect), error.message),
                         now(),
                     )?;
                 }
@@ -483,40 +533,21 @@ async fn perform(
     succeeded
 }
 
-/// What each of a workspace's columns runs, for this boot's opening. A
-/// column whose agent the environment doesn't declare is left out, and
-/// recorded, rather than stopping the others.
+/// What each of a workspace's columns runs, for this boot's opening.
 async fn sessions_for(app: &App, ws: &WorkspaceRecord) -> Result<Vec<SessionSpec>, CommandError> {
     let id = ws.id;
-    let revision = ws.env_revision;
-    app.db
-        .call(move |tx| {
-            let columns = db::columns(tx, id)?;
-            let agents = db::revision_image(tx, revision)?
-                .map(|image| image.agents)
-                .unwrap_or_default();
-            let mut sessions = Vec::with_capacity(columns.len());
-            for column in columns {
-                let command = column::command(&column.spec.kind, &agents, column.prompt.as_ref());
-                match command {
-                    Ok(command) => sessions.push(SessionSpec {
-                        name: column.spec.name,
-                        command,
-                    }),
-                    Err(error) => db::add_activity(
-                        tx,
-                        Some(id),
-                        None,
-                        "error",
-                        &format!("{} didn't open: {error}", column.spec.name),
-                        now(),
-                    )?,
-                }
-            }
-            Ok(sessions)
-        })
+    let columns = app
+        .db
+        .call(move |tx| db::columns(tx, id))
         .await
-        .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))
+        .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))?;
+    Ok(columns
+        .into_iter()
+        .map(|column| SessionSpec {
+            command: column::command(&column.kind),
+            name: column.name,
+        })
+        .collect())
 }
 
 async fn command_for(
@@ -526,20 +557,22 @@ async fn command_for(
     effect: Effect,
 ) -> Result<Command, CommandError> {
     let internal = |e: db::DbError| CommandError::new(ErrorCode::Runtime, e.to_string());
+    let image = || async {
+        let revision = ws.env_revision;
+        app.db
+            .call(move |tx| db::revision_image(tx, revision))
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| {
+                CommandError::new(
+                    ErrorCode::ImageMissing,
+                    "the environment revision has no image",
+                )
+            })
+    };
     Ok(match effect {
         Effect::Create => {
-            let revision = ws.env_revision;
-            let image = app
-                .db
-                .call(move |tx| db::revision_image(tx, revision))
-                .await
-                .map_err(internal)?
-                .ok_or_else(|| {
-                    CommandError::new(
-                        ErrorCode::ImageMissing,
-                        "the environment revision has no image",
-                    )
-                })?;
+            let image = image().await?;
             let defaults = &app.config.workspaces;
             Command::Create(CreateSpec {
                 owner: ws.owner,
@@ -572,5 +605,12 @@ async fn command_for(
         Effect::Thaw => Command::Thaw,
         Effect::Stop => Command::Stop,
         Effect::Delete => Command::Delete,
+        Effect::Upgrade => {
+            let image = image().await?;
+            Command::Upgrade(UpgradeSpec {
+                image: image.fingerprint,
+                user: image.user,
+            })
+        }
     })
 }

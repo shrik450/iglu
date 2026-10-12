@@ -135,8 +135,7 @@ def keep_preferences(page: Page, chosen: Any) -> None:
     on_console(page)
     status = page.evaluate(
         """async (chosen) => {
-          const me = await (await fetch('/v1/me')).json();
-          const headers = { 'content-type': 'application/json', 'x-csrf-token': me.csrf_token };
+          const headers = { 'content-type': 'application/json' };
           return (await fetch('/v1/me/preferences', { method: 'PUT', headers, body: JSON.stringify(chosen) })).status;
         }""",
         chosen,
@@ -217,35 +216,6 @@ def refused_environment(page: Page) -> Any:
     expect(flake).to_be_focused()
     expect(flake).to_have_accessible_description(re.compile("invalid environment source"))
     return {"error": form.locator(".field-err").inner_text()}
-
-
-def project_agent(page: Page, project: str, agent: str) -> Any:
-    """Sets the agent a project's workspaces start, and checks that it shows,
-    survives saving other settings, and is what a new workspace offers."""
-    page.goto(f"{CONSOLE}/p/{project}")
-    settings = page.get_by_role("form", name=f"Settings for {project}")
-    starts = settings.get_by_label("Starts")
-
-    def save() -> None:
-        with page.expect_response(lambda r: r.request.method == "PUT" and "/v1/projects/" in r.url) as saved:
-            settings.get_by_role("button", name="Save").click()
-        assert saved.value.ok, saved.value.text()
-        page.reload()
-
-    starts.select_option(agent)
-    save()
-    expect(starts).to_have_value(agent)
-    # Saving something else keeps it.
-    settings.get_by_label("Previews").fill("8000")
-    save()
-    expect(starts).to_have_value(agent)
-    settings.get_by_label("Previews").fill("")
-    save()
-    page.get_by_role("button", name="New workspace").first.click()
-    form = page.get_by_role("form", name="New workspace")
-    expect(form.get_by_text(re.compile(rf"^Opens with .*\b{agent}\.$"))).to_be_visible()
-    form.get_by_role("button", name="Cancel").click()
-    return {"agent": starts.input_value()}
 
 
 def terminal(page: Page, name: str, command: str, expected: str) -> Any:
@@ -675,6 +645,14 @@ PAGE = (
 )
 
 
+def filled(screen: Locator) -> None:
+    """Waits for the browser's image to fill its screen again: a dialog
+    above it takes room while it's open, and a click lands only on the
+    image, which takes a moment to come back at the new size."""
+    fit = "c => Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1"
+    screen.page.wait_for_function(fit, arg=screen.element_handle(), timeout=10_000)
+
+
 def browses(page: Page, name: str) -> Any:
     """A browser column shows the workspace's browser: what's typed and
     clicked reaches the page, and a dialog it opens is answered from the
@@ -733,6 +711,7 @@ def browses(page: Page, name: str) -> Any:
     expect(title).to_have_text("file note.txt from here", timeout=10_000)
     expect(asking).to_have_count(0)
     # A download lands in the workspace's Downloads, and is saved from there.
+    filled(screen)
     screen.click(position={"x": 20, "y": 440})
     done = browser.get_by_role("status", name="Downloaded")
     expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)
@@ -805,7 +784,7 @@ def grants_access(page: Page, name: str) -> Any:
     with working on its own columns; a toggle there changes it, as iglud
     keeps it."""
     open_workspace(page, name)
-    page.get_by_role("button", name="Details").click()
+    page.get_by_role("button", name="Details", exact=True).click()
     own = page.get_by_role("group", name="What it may do to This workspace")
     for label, pressed in (("See", "true"), ("Type", "true"), ("Start/stop", "false")):
         expect(own.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-pressed", pressed)
@@ -821,7 +800,7 @@ def grants_access(page: Page, name: str) -> Any:
     own.get_by_role("button", name="Start/stop", exact=True).click()
     expect(own.get_by_role("button", name="Start/stop", exact=True)).to_have_attribute("aria-pressed", "false")
     assert "operate" not in access()
-    page.get_by_role("button", name="Details").click()
+    page.get_by_role("button", name="Details", exact=True).click()
     return {"granted": granted}
 
 
@@ -854,6 +833,24 @@ def mac_keys(page: Page, name: str) -> Any:
     finally:
         keep_preferences(page, kept)
         mac.close()
+
+
+def keeps_history(page: Page, name: str) -> Any:
+    """A column opened again has all of its history: the screenful just
+    above the screen was lost every time the page reattached, so scrolling
+    back jumped from the prompt into the middle of the output."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    run_in_column(page, first, f"bash -c 'n=k; for i in $(seq 1 120); do echo ${{n}}ept-{mark}-$i; done; echo done-{mark}'", f"done-{mark}")
+    page.reload()
+    at_prompt(page, first)
+    prefix(page, "s")
+    bar = page.get_by_role("search", name=re.compile(r"^Find in "))
+    bar.get_by_role("searchbox").fill(f"kept-{mark}-")
+    expect(bar).to_contain_text("120 of 120")
+    page.keyboard.press("Escape")
+    return {"found": 120}
 
 
 def finds_output(page: Page, name: str) -> Any:
@@ -1397,6 +1394,49 @@ def opening_gives_keyboard(page: Page, name: str) -> Any:
     return {"opened": name}
 
 
+def rings(page: Page, name: str) -> Any:
+    """A bell rung in a column the person isn't in marks its chip until they
+    go back to it: a program finishing or asking off screen was missed."""
+    open_workspace(page, name)
+    first, second = columns(page)[:2]
+    at_prompt(page, second)
+    page.keyboard.type("sleep 2; printf '\\a'")
+    page.keyboard.press("Enter")
+    column(page, first).locator(".term-host").click()
+    chips = page.get_by_role("navigation", name="Columns")
+    rang = chips.get_by_role("button", name=f"{second} (rang the bell)")
+    expect(rang).to_be_visible(timeout=15_000)
+    rang.click()
+    expect(rang).to_have_count(0)
+    expect(chips.get_by_role("button", name=second, exact=True)).to_be_visible()
+    return {"rang": second}
+
+
+def loads_quietly(page: Page, name: str) -> Any:
+    """A page loaded straight at a workspace waits for iglu's first word
+    rather than saying there's no such workspace, then shows it: it said
+    "No workspace called" until the list came."""
+    # iglu's first word is held back a moment, so the page has time to say
+    # the wrong thing if it would.
+    held = []
+    page.route("**/v1/events", lambda route: held.append(route))
+    page.goto(f"{CONSOLE}/w/{name}", wait_until="commit")
+    seen = []
+    released = time.monotonic() + 1.5
+    deadline = time.monotonic() + 15
+    while not page.locator(".term-host").count():
+        assert time.monotonic() < deadline, f"{name} never showed: {seen[-3:]}"
+        if time.monotonic() > released:
+            while held:
+                held.pop().continue_()
+        text = page.locator("main").inner_text() if page.locator("main").count() else ""
+        seen.append(text[:80])
+        assert "No workspace called" not in text, seen
+        time.sleep(0.05)
+    page.unroute("**/v1/events")
+    return {"polls": len(seen)}
+
+
 def labels(page: Page, name: str, project: str) -> Any:
     """What a workspace is called shows in place of its name, which stays
     its address; the new workspace form starts in the project being looked
@@ -1464,7 +1504,7 @@ def adds_at_once(page: Page, name: str) -> Any:
         """async (name) => {
           const me = await (await fetch('/v1/me')).json();
           const ws = (await (await fetch('/v1/workspaces')).json()).find((w) => w.name === name);
-          const headers = { 'content-type': 'application/json', 'x-csrf-token': me.csrf_token };
+          const headers = { 'content-type': 'application/json' };
           const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'shell' } }) });
           const answers = await Promise.all([add(), add()]);
           const made = await Promise.all(answers.map(async (a) => (a.ok ? (await a.json()).name : `${a.status} ${await a.text()}`)));
@@ -1571,9 +1611,10 @@ STEPS: dict[str, Callable[..., Any]] = {
     "approve-cli": approve_cli,
     "create": create,
     "labels": labels,
+    "loads-quietly": loads_quietly,
+    "rings": rings,
     "opening-gives-keyboard": opening_gives_keyboard,
     "refused-environment": refused_environment,
-    "project-agent": project_agent,
     "terminal": terminal,
     "new-column": new_column,
     "answers-queries": answers_queries,
@@ -1583,6 +1624,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "wheels-rows": wheels_rows,
     "copies-out": copies_out,
     "finds-output": finds_output,
+    "keeps-history": keeps_history,
     "inserts-text": inserts_text,
     "opens-links": opens_links,
     "copies-history": copies_history,

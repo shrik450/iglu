@@ -17,6 +17,7 @@
     "preact": "11.0.0"
   },
   "devDependencies": {
+    "@types/dom-navigation": "^1.0.6",
     "@types/node": "24.19.1",
     "axe-core": "4.10.3",
     "esbuild": "^0.25.0",

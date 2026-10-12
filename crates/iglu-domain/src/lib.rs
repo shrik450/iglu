@@ -6,7 +6,7 @@
 
 mod parse;
 
-pub mod agent;
+pub mod activity;
 pub mod attention;
 pub mod auth;
 pub mod capacity;
@@ -21,7 +21,6 @@ pub mod label;
 pub mod lifecycle;
 pub mod listener;
 pub mod names;
-pub mod network;
 pub mod pasted;
 pub mod port;
 pub mod preferences;

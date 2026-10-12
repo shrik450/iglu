@@ -8,6 +8,20 @@
 import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
 
+import { Icon } from "./bits.tsx";
+
+/** A dialog's title, with a button that closes it, as Escape does. */
+export function DialogHead(props: { id: string; title: string; onClose: () => void; autofocus?: boolean }) {
+  return (
+    <div class="dhead">
+      <h2 id={props.id}>{props.title}</h2>
+      <button type="button" class="btn icon" aria-label="Close" autofocus={props.autofocus} onClick={props.onClose}>
+        <Icon name="close" />
+      </button>
+    </div>
+  );
+}
+
 export function Modal(props: { label?: string; labelledby?: string; onClose: () => void; onClosed?: () => void; children: ComponentChildren }) {
   const ref = useRef<HTMLDialogElement>(null);
   const closed = useRef(props.onClosed);

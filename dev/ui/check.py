@@ -56,7 +56,7 @@ def main() -> None:
                     continue
                 inside = lambda: [ws for ws in api.get("/v1/workspaces") if ws["project"] == project["id"]]  # noqa: E731
                 for ws in inside():
-                    api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted", "expected_revision": ws["revision"]})
+                    api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted"})
                 deadline = time.monotonic() + 120
                 while inside():
                     if time.monotonic() > deadline:
@@ -67,7 +67,6 @@ def main() -> None:
             step("signed-out", browser.signed_out, page, "/settings")
             step("refused-environment", browser.refused_environment, page)
             step("create", browser.create, page, "default", repo, NAME)
-            step("project-agent", browser.project_agent, page, PROJECT, "scripted")
             step("terminal", browser.terminal, page, NAME, "printf 'one-%s\\n' 42", "one-42")
             step("answers-queries", browser.answers_queries, page, NAME)
             step("draws-blocks", browser.draws_blocks, page, NAME)
@@ -76,6 +75,7 @@ def main() -> None:
             step("wheels-rows", browser.wheels_rows, page, NAME)
             step("copies-out", browser.copies_out, page, NAME)
             step("finds-output", browser.finds_output, page, NAME)
+            step("keeps-history", browser.keeps_history, page, NAME)
             step("inserts-text", browser.inserts_text, page, NAME)
             step("opens-links", browser.opens_links, page, NAME)
             step("copies-history", browser.copies_history, page, NAME)
@@ -106,6 +106,8 @@ def main() -> None:
             step("renames-follow", browser.renames_follow, page, NAME)
             step("labels", browser.labels, page, NAME, PROJECT)
             step("opening-gives-keyboard", browser.opening_gives_keyboard, page, NAME)
+            step("loads-quietly", browser.loads_quietly, page, NAME)
+            step("rings", browser.rings, page, NAME)
             step("drafts-survive", browser.drafts_survive, page, PROJECT)
             step("adds-at-once", browser.adds_at_once, page, NAME)
             step("questions-end", browser.questions_end, page, NAME)
@@ -118,7 +120,7 @@ def main() -> None:
             assert result == {"read": "blocked", "socket": "refused"}, result
             step("visit", browser.visit, page, published["url"])
             # Leave nothing behind for a tour to show.
-            api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted", "expected_revision": api.workspace(NAME)["revision"]})
+            api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted"})
             project = next(p for p in api.get("/v1/projects") if p["name"] == PROJECT)
             deadline = time.monotonic() + 120
             while any(w["project"] == project["id"] for w in api.get("/v1/workspaces")):

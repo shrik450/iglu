@@ -27,17 +27,8 @@ const REFUSED: u16 = 4000;
 pub fn refusal(reason: &str) -> Browser {
     Browser::Close(Some(CloseFrame {
         code: REFUSED,
-        reason: close_reason(reason).into(),
+        reason: iglu_domain::terminal::close_reason(reason).into(),
     }))
-}
-
-/// As much of `text` as fits in a close frame's reason: 123 bytes.
-fn close_reason(text: &str) -> &str {
-    let mut end = text.len().min(123);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }
 
 /// Whether the person used a stream since its last lease check.
@@ -171,18 +162,5 @@ pub async fn relay(
             .await;
     } else {
         let _ = to_browser.close().await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn close_reasons_fit_a_frame_without_splitting_a_character() {
-        assert_eq!(close_reason("short"), "short");
-        let long = "é".repeat(100);
-        let cut = close_reason(&long);
-        assert!(cut.len() <= 123 && cut.chars().all(|c| c == 'é'), "{cut}");
     }
 }

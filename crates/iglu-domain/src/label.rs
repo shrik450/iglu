@@ -129,22 +129,6 @@ label_type!(
 );
 
 label_type!(
-    /// An agent an environment declares, such as `claude`. It names the
-    /// agent's columns too, so it has to be a valid session name.
-    AgentName,
-    "agent name",
-    |label| {
-        if !label.starts_with_letter() {
-            Err("must start with a letter")
-        } else if label.as_str().len() > 24 {
-            Err("must be at most 24 characters, leaving room for a column number")
-        } else {
-            Ok(())
-        }
-    }
-);
-
-label_type!(
     /// A project's name. Starts with a letter so it reads as a name.
     ProjectName,
     "project name",

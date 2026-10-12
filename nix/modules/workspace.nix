@@ -1,10 +1,10 @@
 # Makes a NixOS configuration an iglu environment: an Incus system
-# container image with the guest tools, one unprivileged workspace user, and
-# the files hostd expects.
+# container image with one unprivileged workspace user and the files hostd
+# expects. The guest tools aren't in it: hosts mount their own into every
+# workspace, so an environment works with whatever iglu its hosts run.
 #
 # An environment is `<flake>#<attr>` where `nixosConfigurations.<attr>`
 # imports this module. hostd builds `config.system.build.igluImage`.
-{ self }:
 {
   config,
   lib,
@@ -19,37 +19,26 @@ let
   account = config.users.users.${cfg.user};
   group = config.users.groups.${account.group};
   uid = toString account.uid;
-  guest = cfg.package;
 
-  # The interface comes from the installed guest tools themselves, so the
-  # image can't claim one its tools don't speak.
-  manifest =
-    pkgs.runCommand "iglu.json"
-      {
-        nativeBuildInputs = [ pkgs.jq ];
-        base = builtins.toJSON {
-          arch = pkgs.stdenv.hostPlatform.parsed.cpu.name;
-          user = {
-            name = cfg.user;
-            uid = account.uid;
-            gid = group.gid;
-            home = account.home;
-          };
-          agents = lib.mapAttrsToList (name: agent: {
-            inherit name;
-            inherit (agent) command prompt attention;
-          }) cfg.agents;
-          browser = cfg.browser.enable;
-        };
-      }
-      ''
-        jq --argjson interface "$(${guest}/bin/iglu-guest interface)" \
-          '. + { guest_interface: $interface }' <<<"$base" > $out
-      '';
+  # Where hosts mount their guest tools (iglu-domain's INSTANCE_TOOLS).
+  tools = "/var/lib/iglu/tools";
+
+  manifest = pkgs.writeText "iglu.json" (
+    builtins.toJSON {
+      arch = pkgs.stdenv.hostPlatform.parsed.cpu.name;
+      user = {
+        name = cfg.user;
+        uid = account.uid;
+        gid = group.gid;
+        home = account.home;
+      };
+      browser = cfg.browser.enable;
+    }
+  );
 
   claudeHook = {
     type = "command";
-    command = "${guest}/bin/iglu-status claude-hook";
+    command = "${tools}/bin/iglu-status claude-hook";
   };
   claudeEvents = [
     "SessionStart"
@@ -64,70 +53,31 @@ let
   ];
 in
 {
-  imports = [ "${modulesPath}/virtualisation/lxc-container.nix" ];
+  imports = [
+    "${modulesPath}/virtualisation/lxc-container.nix"
+    (lib.mkRemovedOptionModule
+      [
+        "iglu"
+        "agents"
+      ]
+      "Columns are shells and browsers now: run agents from a shell, and install them as any other package."
+    )
+    (lib.mkRemovedOptionModule [
+      "iglu"
+      "package"
+    ] "The guest tools come from the host, which mounts its own into every workspace.")
+  ];
 
   options.iglu = {
     user = lib.mkOption {
       type = lib.types.str;
       example = "dev";
       description = ''
-        The account terminals, agents and provisioning run as. iglu never
-        runs anything in a workspace as root. The account is created if the
-        configuration doesn't define it, and needs a fixed uid.
-      '';
-    };
-
-    package = lib.mkOption {
-      type = lib.types.package;
-      default = self.packages.${pkgs.stdenv.hostPlatform.system}.iglu-guest;
-      defaultText = lib.literalExpression "iglu.packages.\${system}.iglu-guest";
-      description = "The guest tools: `iglu-guest`, `iglu-status` and `caffeinate`.";
-    };
-
-    agents = lib.mkOption {
-      type = lib.types.attrsOf (
-        lib.types.submodule {
-          options = {
-            command = lib.mkOption {
-              type = lib.types.nonEmptyListOf lib.types.str;
-              example = [ "claude" ];
-              description = "The program and its arguments. Run as given, never through a shell.";
-            };
-            prompt = lib.mkOption {
-              type = lib.types.enum [
-                "argument"
-                "none"
-              ];
-              default = "argument";
-              description = ''
-                How the agent takes the prompt a workspace starts it with:
-                as one more argument, or not at all.
-              '';
-            };
-            attention = lib.mkOption {
-              type = lib.types.enum [
-                "claude-hooks"
-                "status-command"
-              ];
-              default = "status-command";
-              description = ''
-                How the agent reports whether it needs you: Claude Code's
-                hooks (see `iglu.claudeCode.hooks`), or `iglu-status set`
-                from the agent or a wrapper.
-              '';
-            };
-          };
-        }
-      );
-      default = { };
-      example = lib.literalExpression ''
-        {
-          claude = { command = [ "claude" ]; attention = "claude-hooks"; };
-        }
-      '';
-      description = ''
-        The agents this environment's workspaces can run in a column. Their
-        programs must be installed in the environment.
+        The account terminals and provisioning run as. iglu never runs
+        anything of a workspace's as root; only upgrading its system to a
+        newer build, with the host's own copy of it, runs as root. The account
+        is created if the configuration doesn't define it, and needs a fixed
+        uid.
       '';
     };
 
@@ -157,12 +107,6 @@ in
     {
       assertions = [
         {
-          assertion = lib.all (name: builtins.match "[a-z][a-z0-9-]{0,23}" name != null) (
-            lib.attrNames cfg.agents
-          );
-          message = "iglu.agents names must be 1-24 of a-z, 0-9 and '-', starting with a letter.";
-        }
-        {
           assertion = cfg.user != "root";
           message = "iglu.user must be an unprivileged account.";
         }
@@ -188,14 +132,11 @@ in
       # guest tools pass it to columns too; this is for every other login.
       environment.variables.IGLU_SOCKET = "/var/lib/iglu-api.sock";
 
-      environment.systemPackages = [
-        guest
-        self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
-        # `iglu` acts as the workspace from inside it, through its channel:
-        # agents use it to open, read and type into columns.
-        self.packages.${pkgs.stdenv.hostPlatform.system}.iglu
-        pkgs.git
-      ];
+      # The host's tools: `iglu`, which acts as the workspace from inside it
+      # through its channel, `iglu-status` and `caffeinate` for agents, and
+      # zmx and `iglu-guest`, which hostd drives.
+      environment.profiles = [ tools ];
+      environment.systemPackages = [ pkgs.git ];
 
       # hostd treats the workspace as booted once this marker exists: the
       # system is up and the user's manager is running, so the user's
@@ -214,9 +155,12 @@ in
         };
       };
 
+      # Git's own helper answers from the credentials the guest tools
+      # deliver, and only answers: what Git would store or erase there
+      # isn't its to change.
       programs.git = {
         enable = true;
-        config.credential.helper = "${guest}/bin/iglu-guest git-credential";
+        config.credential.helper = "!f() { test \"$1\" = get && exec git credential-store --file=/run/user/${uid}/iglu/secrets/git-credentials get; }; f";
       };
 
       nix.settings.experimental-features = lib.mkDefault [
@@ -227,10 +171,13 @@ in
       # A workspace isn't an installer; users bring their own flakes.
       system.installer.channel.enable = lib.mkDefault false;
 
+      # The system itself too, which workspaces from an older build upgrade
+      # to in place: kept with the image, the host has it to copy into them.
       system.build.igluImage = pkgs.runCommand "iglu-image" { } ''
         mkdir $out
         ln -s ${config.system.build.metadata}/tarball/*.tar.xz $out/metadata.tar.xz
         ln -s ${config.system.build.squashfs}/*.squashfs $out/rootfs.squashfs
+        ln -s ${config.system.build.toplevel} $out/system
         cp ${manifest} $out/iglu.json
       '';
     }
@@ -248,8 +195,6 @@ in
       };
     })
 
-    # Home Manager as a NixOS module activates the user's files from a
-    # system service. The user's manager, and so every terminal, waits for it.
     (lib.mkIf cfg.browser.enable {
       environment.systemPackages = [ pkgs.chromium ];
       # The port iglu-guest's browser listens on (iglu-domain's
@@ -261,6 +206,8 @@ in
       ];
     })
 
+    # Home Manager as a NixOS module activates the user's files from a
+    # system service. The user's manager, and so every terminal, waits for it.
     (lib.mkIf (options ? home-manager && config.home-manager.users ? ${cfg.user}) {
       systemd.services."user@${uid}" = {
         after = [ "home-manager-${cfg.user}.service" ];

@@ -17,10 +17,10 @@ your own OpenID Connect identity provider.
         ▼
 ┌─────────────── control box ────────────────┐
 │ Caddy (TLS) ─► iglud                       │     identity provider (OIDC)
-│   console · API · reconciler · previews    │ ◄── sign-in, service tokens
+│   console · API · reconciler · previews    │ ◄── sign-in
 │   SQLite: users, workspaces, secrets        │
 └──────────────┬─────────────────────────────┘
-               │  HTTPS + service token (client credentials)
+               │  HTTPS, iglud's client certificate
                ▼
 ┌────────── execution host ("dumb host") ────┐
 │ hostd ─► Incus (Btrfs) ─► workspace containers
@@ -35,11 +35,12 @@ your own OpenID Connect identity provider.
   console, the JSON API, terminal relays, and the preview gateway.
 - **hostd** is the execution host's only privileged service. It exposes a fixed
   set of typed commands and keeps no state of its own; Incus is the record of
-  what exists. Users never sign in to the host, and hostd accepts only iglud's
-  service tokens from the identity provider.
+  what exists. Users never sign in to the host, and hostd accepts only iglud,
+  by its client certificate.
 - **Workspaces** are Incus system containers running NixOS, one per task, each
   with a private Nix store. hostd runs everything in them as the workspace
-  user, never as root. Their network reaches the Internet but not the host, the
+  user, never as root, but for upgrading their system: the system's own Nix
+  tools and the new system's activation, on store paths hostd chose. Their network reaches the Internet but not the host, the
   LAN, or other private address space.
 - **Environments** are ordinary NixOS configurations in a flake that import
   `iglu.nixosModules.workspace`. hostd builds them into images with the host's
@@ -57,7 +58,8 @@ workspaces.
 
 Terminals are [zmx](https://github.com/neurosnap/zmx) sessions: they survive
 disconnects, several browsers can attach to the same one, and you can still use
-tmux inside them. Claude Code hooks, and anything else that calls
+tmux inside them. Columns are shells, where you run agents as anything else,
+and the workspace's browser. Claude Code hooks, and anything else that calls
 `iglu-status`, report whether a session is working, waiting for you, or done.
 The console sorts workspaces by what needs you.
 
@@ -72,30 +74,39 @@ Requests from other sites are refused unless they're top-level navigations.
 
 You need:
 
-- an OIDC identity provider that supports authorization code with PKCE for
-  people, and client credentials with JWT access tokens for iglud's service
-  identity (Authelia, Keycloak, Zitadel, and others do);
+- an OIDC identity provider that supports authorization code with PKCE
+  (Authelia, Keycloak, Zitadel, Pocket ID and others do);
 - a control box with DNS for the console host and a wildcard for the preview
   domain, plus a certificate covering both (a DNS-01 ACME challenge works);
 - an execution host running NixOS, with a disk or Btrfs filesystem for
   workspaces and swap for freezing.
 
-Register three clients with the identity provider:
+Register two clients with the identity provider:
 
-| client  | grant                    | redirect URI                              |
-| ------- | ------------------------ | ----------------------------------------- |
-| console | authorization code       | `https://<console host>/auth/callback`    |
-| preview | authorization code       | `https://auth.<preview domain>/callback`  |
-| worker  | client credentials (JWT) | none                                      |
+| client  | grant              | redirect URI                             |
+| ------- | ------------------ | ---------------------------------------- |
+| console | authorization code | `https://<console host>/auth/callback`   |
+| preview | authorization code | `https://auth.<preview domain>/callback` |
 
-The console and preview clients need the `email` and `email_verified` claims in
-the ID token if you admit people by email.
+They need the `email` and `email_verified` claims in the ID token if you
+admit people by email.
 
-Hosts accept the worker's tokens by their `aud` and `sub` claims. Providers
-choose these differently: some set the audience from the client's own
-settings, others from an RFC 8707 `resource` that iglud sends when
-`oidc.worker.resource` is set. Request one token for the worker client and
-decode it to see the values to give the host.
+Hosts know iglud by a client certificate from a CA kept for that alone, apart
+from the one behind hosts' own certificates, or any certificate that CA signs
+could drive a host:
+
+```sh
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+  -subj /CN=iglu-clients -keyout clients.key -out clients.crt \
+  -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=iglud \
+  -keyout iglud.key -out iglud.csr
+openssl x509 -req -in iglud.csr -CA clients.crt -CAkey clients.key -days 3650 \
+  -extfile <(printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE\n') -out iglud.crt
+```
+
+Give the control box `iglud.crt` and `iglud.key`, give hosts `clients.crt`, and
+keep `clients.key` offline.
 
 ### Control box
 
@@ -111,11 +122,8 @@ decode it to see the values to give the host.
       issuer = "https://id.example.org";
       console = { clientId = "iglu-console"; clientSecretFile = "/run/secrets/iglu-console"; };
       preview = { clientId = "iglu-preview"; clientSecretFile = "/run/secrets/iglu-preview"; };
-      worker = {
-        clientId = "iglu-worker";
-        clientSecretFile = "/run/secrets/iglu-worker";
-      };
     };
+    hostClient = { certificate = "/var/lib/iglu/iglud.crt"; key = "/run/secrets/iglud.key"; };
     signIn.emails = [ "you@example.org" ];
     hosts.host-1 = "https://host-1.lan:7443";
   };
@@ -130,11 +138,10 @@ decode it to see the values to give the host.
   services.iglu.host = {
     enable = true;
     hostId = "host-1";
-    tls = { certificate = "/var/lib/iglu/host.crt"; key = "/var/lib/iglu/host.key"; };
-    auth = {
-      issuer = "https://id.example.org";
-      audience = "iglu-hosts"; # the worker token's `aud`
-      subjects = [ "iglu-worker" ]; # the worker token's `sub`
+    tls = {
+      certificate = "/var/lib/iglu/host.crt";
+      key = "/var/lib/iglu/host.key";
+      clients = "/var/lib/iglu/clients.crt"; # the CA of iglud's certificate
     };
     storage.source = "/dev/disk/by-id/nvme-example-part3";
   };
@@ -162,16 +169,27 @@ iglu env add default github:you/iglu-env#default
 ```
 
 `iglu env build default` rebuilds it after you change the flake. New
-workspaces use the newest image; existing ones keep theirs. A build also
+workspaces use the newest image; existing ones keep theirs until you update
+them, with `iglu update <workspace>` or from the console, which offers it
+once a newer image is ready. Updating upgrades the workspace's NixOS in
+place, as `nixos-rebuild boot` would: the host copies the store paths of the
+new image's system that the workspace lacks into its store, makes it the
+system it boots, and restarts it. What was running ends; everything on its
+disk stays, and the old system is removed from its store. An image whose
+account (its name, uid, gid or home) differs can't be updated to: the
+workspace's files would be someone else's. Hosts keep each image's system in
+their Nix store for as long as they keep the image, and remove
+an image once no environment's newest build and no workspace uses it, and
+it's more than an hour old. A build also
 unpacks the image onto the host's storage, so the first workspace made from
 it starts as quickly as the rest.
 
-An environment's flake pins its own iglu, whose guest tools hosts drive.
-Each image records the version of that interface, and a host refuses
-images, and workspaces created from them, that speak another one. After
-upgrading your hosts, run `nix flake update iglu` in each environment's
-flake, push it, and rebuild the environment; recreate workspaces made from
-the old image. They can still be stopped and deleted, but not started.
+The guest tools, which hostd drives and agents use (`iglu`, `iglu-status`,
+`caffeinate`, zmx), aren't part of an environment: each host mounts its
+own static build of them, read-only, into every workspace at
+`/var/lib/iglu/tools`. Upgrading a host upgrades them in every workspace on
+it, running or not, and an environment's flake only needs `nix flake update
+iglu` for changes to the workspace module itself.
 
 The flake can be private. Builds use your Git credential secrets (see
 [Using it](#using-it)) as Nix access tokens, so the token that lets a
@@ -198,7 +216,8 @@ iglud copies its database to `/var/lib/iglud/backups` at every start, before
 any migration, and every six hours, keeping the newest 28
 (`services.iglu.control.backups`). Ship that directory off the box. The copies
 hold stored secrets sealed with `/var/lib/iglud/secret-key`, which they don't
-include: back the key up once, separately.
+include: back the key up once, separately. People's kept directories (see
+[Using it](#using-it)) are on the execution host, not in these copies.
 
 To restore, stop `iglud`, replace `/var/lib/iglud/iglu.db` with a copy and
 delete any `iglu.db-wal` and `iglu.db-shm` beside it, then start `iglud`.
@@ -211,7 +230,7 @@ copy come back, freshly cloned.
 ```sh
 iglu project add --repo https://github.com/acme/app.git   # a project named app
 iglu new app --wait                                  # a workspace on a new branch
-iglu new general "Tidy my notes"                     # an agent with a prompt, no repository
+iglu new general --label "Tidy my notes"             # no repository, named tidy-my-notes
 iglu attach <workspace> [column]                     # a column in this terminal; Ctrl-] detaches
 iglu ls
 iglu port <workspace> 3000                           # publish a preview
@@ -234,6 +253,19 @@ which is the Git credential helper for HTTPS remotes. For Claude Code, run
 `claude setup-token` and store the result as `CLAUDE_CODE_OAUTH_TOKEN`. That
 token is meant for sharing across machines; copied OAuth login files aren't.
 
+Claude Code, Codex and GitHub's `gh` keep their configuration in your kept
+directory, one per person on each host, which all your workspaces share,
+whatever their environment. Sign in, finish onboarding, trust a checkout and
+change a setting once, and every workspace has it. Sessions find the
+directory in `IGLU_KEPT`, and `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
+`GH_CONFIG_DIR` point into it, so these programs don't read their files in
+your home directory, from Home Manager or otherwise. Being shared, a hook or
+MCP server an agent adds there runs in all your workspaces, and two agents
+saving settings at the same moment can lose one change. Codex replaces its sign-in token as it uses it, so a
+workspace's Codex may find itself signed out after another's refreshed it;
+sign in again there. On a host it's the Incus volume
+`iglu-kept-<your id>-<uid>` in the `iglu` pool, which hostd never deletes.
+
 Every command takes `--json`.
 
 ### From inside a workspace
@@ -244,9 +276,9 @@ Agents use it to open, read and type into the workspace's columns:
 
 ```sh
 iglu whoami
-iglu column new --agent claude --prompt "Review the diff"
-iglu column output claude --lines 50
-iglu column send shell "make test" --enter
+iglu column new --name tests
+iglu column send tests "make test" --enter
+iglu column output tests --lines 50
 ```
 
 A workspace reaches another of yours only as far as you allow, in its

@@ -17,16 +17,14 @@ use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{
     BuildOutcome, BuildRequest, Command, CommandError, CommandOutcome, ErrorCode, GUEST_WORKSPACE,
-    Inventory, KeptFile, PROTOCOL_VERSION, SessionSpec, TUNNEL_UPGRADE, TerminalInfo,
-    TerminalOutput, TerminalTyping, path,
+    Inventory, KeptFile, PROTOCOL_VERSION, PruneImages, PrunedImages, SessionSpec, TUNNEL_UPGRADE,
+    TerminalInfo, TerminalOutput, TerminalTyping, path,
 };
 use serde::de::DeserializeOwned;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 use url::Url;
-
-use crate::oidc::WorkerTokens;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
@@ -36,15 +34,13 @@ pub enum HostError {
     Protocol(u32),
     #[error("{0}")]
     Command(CommandError),
-    #[error("couldn't get a service token: {0}")]
-    Token(String),
 }
 
 impl HostError {
     pub fn into_command_error(self) -> CommandError {
         match self {
             Self::Command(error) => error,
-            Self::Unreachable(_) | Self::Protocol(_) | Self::Token(_) => {
+            Self::Unreachable(_) | Self::Protocol(_) => {
                 CommandError::new(ErrorCode::Runtime, self.to_string())
             }
         }
@@ -56,7 +52,6 @@ pub struct HostClient {
     base: Url,
     http: reqwest::Client,
     tls: Arc<rustls::ClientConfig>,
-    tokens: Arc<WorkerTokens>,
 }
 
 pub type Terminal = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -67,14 +62,12 @@ impl HostClient {
         base: Url,
         http: reqwest::Client,
         tls: Arc<rustls::ClientConfig>,
-        tokens: Arc<WorkerTokens>,
     ) -> Self {
         Self {
             id,
             base,
             http,
             tls,
-            tokens,
         }
     }
 
@@ -84,23 +77,18 @@ impl HostClient {
             .map_err(|e| HostError::Unreachable(e.to_string()))
     }
 
-    async fn bearer(&self) -> Result<String, HostError> {
-        self.tokens
-            .token()
+    async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, HostError> {
+        request
+            .send()
             .await
-            .map(|t| format!("Bearer {t}"))
-            .map_err(|e| HostError::Token(e.to_string()))
+            .map_err(|e| HostError::Unreachable(e.to_string()))
     }
 
     async fn json<T: DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<T, HostError> {
-        let response = request
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        let response = self.send(request).await?;
         let status = response.status();
         if status.is_success() {
             return response
@@ -134,7 +122,8 @@ impl HostClient {
         command: &Command,
     ) -> Result<CommandOutcome, HostError> {
         let timeout = match command {
-            Command::Provision(_) => Duration::from_secs(1900),
+            // Both can move a lot: a repository, or a new system.
+            Command::Provision(_) | Command::Upgrade(_) => Duration::from_secs(1900),
             Command::Create(_)
             | Command::Start
             | Command::DeliverSecrets(_)
@@ -208,12 +197,7 @@ impl HostClient {
 
     /// Sends a request that answers with nothing but whether it worked.
     async fn empty(&self, request: reqwest::RequestBuilder) -> Result<(), HostError> {
-        let response = request
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .timeout(Duration::from_secs(60))
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        let response = self.send(request.timeout(Duration::from_secs(60))).await?;
         if response.status().is_success() {
             Ok(())
         } else {
@@ -222,6 +206,16 @@ impl HostClient {
                 Err(e) => HostError::Unreachable(e.to_string()),
             })
         }
+    }
+
+    pub async fn prune_images(&self, request: &PruneImages) -> Result<PrunedImages, HostError> {
+        self.json(
+            self.http
+                .post(self.url(path::IMAGE_PRUNE)?)
+                .json(request)
+                .timeout(Duration::from_secs(600)),
+        )
+        .await
     }
 
     pub async fn build(
@@ -253,17 +247,10 @@ impl HostClient {
         let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
         url.set_scheme(scheme)
             .map_err(|()| HostError::Unreachable("bad host URL".into()))?;
-        let mut request = url
+        let request = url
             .as_str()
             .into_client_request()
             .map_err(|e| HostError::Unreachable(e.to_string()))?;
-        let bearer = self.bearer().await?;
-        request.headers_mut().insert(
-            http::header::AUTHORIZATION,
-            bearer
-                .parse()
-                .map_err(|_| HostError::Token("unusable token".into()))?,
-        );
         let (socket, _) = tokio_tungstenite::connect_async_tls_with_config(
             request,
             None,
@@ -337,13 +324,7 @@ impl HostClient {
             .map_err(|()| HostError::Unreachable("the host's address can't have a path".into()))?
             .pop_if_empty()
             .push(name.as_str());
-        let response = self
-            .http
-            .get(url)
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        let response = self.send(self.http.get(url)).await?;
         let status = response.status();
         if status.is_success() {
             return Ok(Some(response));
@@ -363,14 +344,13 @@ impl HostClient {
         &self,
     ) -> Result<Option<(WorkspaceId, reqwest::Upgraded)>, HostError> {
         let response = self
-            .http
-            .get(self.url(path::GUEST_CONNECTIONS)?)
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .header(reqwest::header::CONNECTION, "upgrade")
-            .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+            .send(
+                self.http
+                    .get(self.url(path::GUEST_CONNECTIONS)?)
+                    .header(reqwest::header::CONNECTION, "upgrade")
+                    .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE),
+            )
+            .await?;
         match response.status() {
             reqwest::StatusCode::NO_CONTENT => return Ok(None),
             reqwest::StatusCode::SWITCHING_PROTOCOLS => {}
@@ -398,14 +378,13 @@ impl HostClient {
         port: GuestPort,
     ) -> Result<reqwest::Upgraded, HostError> {
         let response = self
-            .http
-            .get(self.url(&path::tunnel(workspace, port))?)
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .header(reqwest::header::CONNECTION, "upgrade")
-            .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+            .send(
+                self.http
+                    .get(self.url(&path::tunnel(workspace, port))?)
+                    .header(reqwest::header::CONNECTION, "upgrade")
+                    .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE),
+            )
+            .await?;
         if response.status() != reqwest::StatusCode::SWITCHING_PROTOCOLS {
             return Err(match response.json::<CommandError>().await {
                 Ok(error) => HostError::Command(error),
