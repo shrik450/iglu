@@ -959,7 +959,9 @@ function lossText(ws: WorkspaceView): string {
   if (ws.phase !== "running") return `It's ${ws.phase}, so unpushed work can't be checked. Its files are lost.`;
   const live = inside.value[ws.id];
   if (!live) return "Its files are lost; push your work first.";
-  return live.unsaved ? `It has ${unsavedText(live.unsaved)}, which would be lost.` : "Everything is committed and pushed.";
+  if (live.unsaved) return `It has ${unsavedText(live.unsaved)}, which would be lost.`;
+  // Its checkout should be there; without it, nothing says what's pushed.
+  return live.git ? "Everything is committed and pushed." : "Its files are lost; push your work first.";
 }
 
 function Details({ ws }: { ws: WorkspaceView }) {

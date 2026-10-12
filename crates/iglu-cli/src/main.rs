@@ -817,6 +817,13 @@ async fn check_nothing_lost(client: &Client, ws: &WorkspaceView) -> anyhow::Resu
             unsaved_text(unsaved)
         );
     }
+    // Its checkout should be there; without it, nothing says what's pushed.
+    if live.git.is_none() {
+        bail!(
+            "{}'s checkout is missing, so unsaved work can't be checked; pass --force to delete anyway",
+            ws.name
+        );
+    }
     Ok(())
 }
 

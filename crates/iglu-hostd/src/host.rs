@@ -377,7 +377,9 @@ impl<R: Runtime> Host<R> {
                 "reading the Git state failed",
             )
             .await?;
-        Ok(guest::parse_git_state(&output.stdout))
+        guest::parse_git_state(&output.stdout).map_err(|e| {
+            CommandError::new(ErrorCode::GuestFailed, format!("unreadable Git state: {e}"))
+        })
     }
 
     /// Ends a terminal session and everything running in it.
