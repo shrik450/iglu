@@ -169,7 +169,7 @@ async fn other_interface_refused(host: &Host<IncusRuntime>, guest: &Guest) -> Re
             .incus
             .update_instance(
                 guest.name,
-                |instance| instance["config"][keys::GUEST_INTERFACE] = json!(interface),
+                &json!({ "config": { keys::GUEST_INTERFACE: interface } }),
                 Duration::from_secs(60),
             )
             .await

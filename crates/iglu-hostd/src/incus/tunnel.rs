@@ -50,9 +50,7 @@ pub async fn connect(
     incus
         .update_instance(
             name,
-            |instance| {
-                instance["devices"][key.as_str()] = device;
-            },
+            &json!({ "devices": { key.as_str(): device } }),
             timeout,
         )
         .await

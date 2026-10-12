@@ -404,12 +404,11 @@ impl Runtime for IncusRuntime {
         self.incus
             .update_instance(
                 name,
-                |instance| {
-                    let config = &mut instance["config"];
-                    config[keys::GUEST_INTERFACE] = json!(guest_tools::INTERFACE.to_string());
-                    config[keys::IMAGE] = json!(spec.image.to_string());
-                    config[keys::SYSTEM] = json!(system);
-                },
+                &json!({ "config": {
+                    keys::GUEST_INTERFACE: guest_tools::INTERFACE.to_string(),
+                    keys::IMAGE: spec.image.to_string(),
+                    keys::SYSTEM: system,
+                } }),
                 self.timeouts.operation(),
             )
             .await
@@ -420,9 +419,7 @@ impl Runtime for IncusRuntime {
         self.incus
             .update_instance(
                 name,
-                |instance| {
-                    instance["config"][keys::PROVISIONED] = json!("true");
-                },
+                &json!({ "config": { keys::PROVISIONED: "true" } }),
                 self.timeouts.operation(),
             )
             .await

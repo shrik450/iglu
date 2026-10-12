@@ -261,19 +261,18 @@ impl Incus {
         self.get("/1.0/instances?recursion=2").await
     }
 
-    /// Replaces an instance's writable configuration, keeping everything else.
+    /// Merges config keys and devices into an instance's, as Incus's PATCH
+    /// does, so a concurrent change to others isn't lost.
     pub async fn update_instance(
         &self,
         name: InstanceName,
-        update: impl FnOnce(&mut Value),
+        patch: &Value,
         timeout: Duration,
     ) -> Result<(), IncusError> {
-        let mut current: Value = self.get(&format!("/1.0/instances/{name}")).await?;
-        update(&mut current);
         self.run(
-            Method::PUT,
+            Method::PATCH,
             &format!("/1.0/instances/{name}"),
-            Some(&current),
+            Some(patch),
             timeout,
         )
         .await
