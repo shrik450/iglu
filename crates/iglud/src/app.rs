@@ -10,7 +10,9 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use iglu_api::{ErrorBody, ErrorKind, Field, WorkspaceView};
-use iglu_domain::auth::{self, Action, Decision, DenyReason, Grant, Resource, authorize};
+use iglu_domain::auth::{
+    self, Action, Decision, DenyReason, Grant, PrincipalStatus, Resource, authorize,
+};
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
 use iglu_domain::preview::{
@@ -456,7 +458,8 @@ impl Actor {
     }
 }
 
-/// Looks up a session token of `kind` and checks it's still valid.
+/// Looks up a session token of `kind` and checks it's still valid. A
+/// disabled person's sessions are over, wherever they're used.
 pub async fn session_principal(
     app: &App,
     token: &str,
@@ -479,7 +482,7 @@ pub async fn session_principal(
             db::principal(tx, row.principal)
         })
         .await?;
-    Ok(found)
+    Ok(found.filter(|principal| principal.status == PrincipalStatus::Active))
 }
 
 impl FromRequestParts<Arc<App>> for Caller {
