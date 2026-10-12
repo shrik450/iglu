@@ -258,13 +258,23 @@ directory, one per person on each host, which all your workspaces share,
 whatever their environment. Sign in, finish onboarding, trust a checkout and
 change a setting once, and every workspace has it. Sessions find the
 directory in `IGLU_KEPT`, and `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
-`GH_CONFIG_DIR` point into it, so these programs don't read their files in
-your home directory, from Home Manager or otherwise. Being shared, a hook or
-MCP server an agent adds there runs in all your workspaces, and two agents
-saving settings at the same moment can lose one change. Codex replaces its sign-in token as it uses it, so a
-workspace's Codex may find itself signed out after another's refreshed it;
-sign in again there. On a host it's the Incus volume
+`GH_CONFIG_DIR` point into it. Being shared, a hook or MCP server an agent
+adds there runs in all your workspaces, and two agents saving settings at
+the same moment can lose one change. Codex replaces its sign-in token as it
+uses it, so a workspace's Codex may find itself signed out after another's
+refreshed it; sign in again there. On a host it's the Incus volume
 `iglu-kept-<your id>-<uid>` in the `iglu` pool, which hostd never deletes.
+
+So these programs don't read their directories in your home: what an
+environment puts in `~/.claude`, `~/.codex` or `~/.config/gh`, with Home
+Manager or otherwise, goes unread. An environment declares its agents'
+configuration in their system layers instead, which every workspace on it
+reads alongside what you keep: Claude Code's `/etc/claude-code` (a
+`CLAUDE.md`, skills in `.claude/skills`, settings in `managed-settings.d`),
+and Codex's `/etc/codex` (skills, rules, and `requirements.toml`, whose
+`additional_developer_instructions` stand in for an `AGENTS.md`). Codex
+skips rules files that are symlinks, so write those with `mode = "0444"`.
+gh has no system layer: its settings are yours, kept with its sign-in.
 
 Every command takes `--json`.
 
