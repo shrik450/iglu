@@ -915,6 +915,79 @@ def copies_out(page: Page, name: str) -> Any:
     return {"column": first}
 
 
+def copies_from_programs(page: Page, name: str) -> Any:
+    """A program that copies by running xclip or xsel, as gh copies its
+    sign-in code, reaches the page's clipboard. Neither reads it back: a
+    workspace mustn't learn what the person copied elsewhere."""
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+
+    def copied(text: str) -> None:
+        deadline = time.monotonic() + 10
+        while page.evaluate("navigator.clipboard.readText()") != text:
+            assert time.monotonic() < deadline, page.evaluate("navigator.clipboard.readText()")
+            time.sleep(0.2)
+
+    run_in_column(page, first, f"printf xclip-{mark} | xclip -selection clipboard && echo one-$((6*7))", "one-42")
+    copied(f"xclip-{mark}")
+    run_in_column(page, first, f"echo xsel-{mark} | xsel --input --clipboard --trim && echo two-$((6*7))", "two-42")
+    copied(f"xsel-{mark}")
+    run_in_column(page, first, "xclip -o -selection clipboard; echo read-$((6*7))-$?", "read-42-1")
+    return {"column": first}
+
+
+def opens_from_programs(page: Page, name: str) -> Any:
+    """A program that opens an address by running xdg-open, as gh's sign-in
+    does, offers it in its column, and the person's browser opens it on a
+    click. One on the workspace's loopback isn't offered to the person's
+    browser, which can't reach it."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    mark = str(time.time_ns())
+    url = f"{CONSOLE}/opened-{mark}"
+    run_in_column(page, first, f"xdg-open {url} && echo web-$((6*7))", "web-42")
+    offer = column(page, first).get_by_role("group", name="A program asks to open an address")
+    expect(offer).to_contain_text(url)
+    with page.context.expect_page() as opened:
+        offer.get_by_role("link", name="Open").click()
+    tab = opened.value
+    try:
+        assert tab.url == url, {"opened": tab.url, "asked": url}
+    finally:
+        tab.close()
+    expect(offer).to_have_count(0)
+    local = f"http://localhost:9/callback-{mark}"
+    run_in_column(page, first, f"xdg-open {local} && echo local-$((6*7))", "local-42")
+    expect(offer).to_contain_text(local)
+    expect(offer.get_by_role("link", name="Open")).to_have_count(0)
+    offer.get_by_role("button", name="Don't open it").click()
+    expect(offer).to_have_count(0)
+    return {"url": url, "local": local}
+
+
+def opens_in_workspace(page: Page, name: str) -> Any:
+    """What only the workspace reaches, such as a sign-in's callback on its
+    loopback, opens in the workspace's browser, whose column opens for it.
+    It's asked from a session of its own, without the terminal, as programs
+    start browsers."""
+    open_workspace(page, name)
+    first = columns(page)[0]
+    assert "browser" not in columns(page), columns(page)
+    mark = str(time.time_ns())
+    local = f"http://localhost:9/callback-{mark}"
+    run_in_column(page, first, f"setsid -w xdg-open {local} </dev/null >/dev/null 2>&1 && echo asked-$((6*7))", "asked-42")
+    offer = column(page, first).get_by_role("group", name="A program asks to open an address")
+    offer.get_by_role("button", name="Open in the workspace's browser").click()
+    browser = column(page, "browser")
+    expect(browser.locator(".browser-address")).to_have_value(local, timeout=90_000)
+    # A fresh browser's blank tab is used, not left behind: with one tab,
+    # the column shows no tabs.
+    expect(browser.get_by_role("tablist")).to_have_count(0)
+    return {"local": local}
+
+
 def lands_on_waiting(page: Page, name: str, waiting: str, other: str) -> Any:
     """Coming back to a workspace where an agent waits lands on that agent's
     column, whichever column you were in when you left."""
@@ -1627,6 +1700,9 @@ STEPS: dict[str, Callable[..., Any]] = {
     "keeps-history": keeps_history,
     "inserts-text": inserts_text,
     "opens-links": opens_links,
+    "copies-from-programs": copies_from_programs,
+    "opens-from-programs": opens_from_programs,
+    "opens-in-workspace": opens_in_workspace,
     "copies-history": copies_history,
     "mac-keys": mac_keys,
     "selected-keys": selected_keys,

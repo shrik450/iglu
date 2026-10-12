@@ -18,6 +18,7 @@ import {
   loadLive,
   markActive,
   moveColumn,
+  openInBrowser,
   placeColumn,
   publish,
   remove,
@@ -64,7 +65,7 @@ import { unreachable, unsavedText } from "../state/unsaved.ts";
 import { gibibytes, situation } from "../state/situation.ts";
 import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
-import { ctrlHeld, newCore, panes, rang, TerminalPane, titles } from "../terminal.ts";
+import { ctrlHeld, newCore, offers, panes, rang, setOffer, TerminalPane, titles } from "../terminal.ts";
 import { called } from "../state/naming.ts";
 
 export function Workspace({ ws }: { ws: WorkspaceView | null }) {
@@ -596,6 +597,55 @@ function Finding({ ws, name, title }: { ws: WorkspaceView; name: string; title: 
   );
 }
 
+/** What a program in the column asked to open, offered where it can go:
+ * a page opens on the person's click, never on a program's say-so. The
+ * person's browser is where they're signed in; the workspace's reaches what
+ * listens in the workspace, such as a sign-in's callback. */
+function Offering({ ws, name }: { ws: WorkspaceView; name: string }) {
+  const key = `${ws.id}/${name}`;
+  const asked = offers.value.get(key);
+  if (!asked) return null;
+  const places = asked.places.filter((place) => place !== "workspace" || ws.browser);
+  const done = () => setOffer(key, null);
+  return (
+    <div class="col-offer" role="group" aria-label="A program asks to open an address">
+      <span class="what" translate={false} title={asked.url}>
+        {asked.url}
+      </span>
+      {places.includes("here") ? (
+        <a class="btn" href={asked.url} target="_blank" rel="noopener noreferrer" onClick={done}>
+          Open
+        </a>
+      ) : null}
+      {places.includes("workspace") ? (
+        <button
+          type="button"
+          class="btn"
+          onClick={() => {
+            done();
+            void openInBrowser(ws, asked.url);
+          }}
+        >
+          Open in the workspace's browser
+        </button>
+      ) : null}
+      {places.length === 0 ? <span class="why">Only the workspace's browser reaches this, and its environment has none.</span> : null}
+      <button
+        type="button"
+        class="x"
+        aria-label="Don't open it"
+        title="Don't open it"
+        onClick={() => {
+          done();
+          focusColumn(ws, name);
+        }}
+      >
+        <Icon name="close" size={11} />
+      </button>
+    </div>
+  );
+}
+
 /** Where finding has got to: which match of how many, counted from the oldest. */
 function foundText(found: { count: number; activeIndex: number; searching: boolean; limited: boolean } | null): string {
   if (!found) return "";
@@ -773,6 +823,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
         )}
       </header>
       {finding ? <Finding ws={ws} name={name} title={title} /> : null}
+      <Offering ws={ws} name={name} />
       {listing && threads.length > 1 ? (
         <ul class="threads" aria-label={`Threads in ${title}`}>
           {threads.map((t) => {

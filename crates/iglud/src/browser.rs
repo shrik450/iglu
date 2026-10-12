@@ -211,6 +211,9 @@ enum Pending {
 struct Shown {
     tab: String,
     session: Option<String>,
+    /// Where it was asked to go before it was attached, as a fresh
+    /// browser's tab is: it goes there once it is.
+    going: Option<String>,
 }
 
 /// The console's view of the browser: which tab it shows, at what size.
@@ -292,10 +295,13 @@ impl Screen {
                 let params = json!({ "expression": SELECTION, "returnByValue": true });
                 out.extend(self.on_page("Runtime.evaluate", params, Some(Pending::Copied)));
             }
-            BrowserInput::Navigate { address: typed } => {
-                let params = json!({ "url": address(&typed) });
-                out.extend(self.on_page("Page.navigate", params, None));
-            }
+            BrowserInput::Navigate { address: typed } => match &mut self.shown {
+                Some(shown) if shown.session.is_none() => shown.going = Some(address(&typed)),
+                _ => {
+                    let params = json!({ "url": address(&typed) });
+                    out.extend(self.on_page("Page.navigate", params, None));
+                }
+            },
             BrowserInput::Back => out.extend(self.step(-1)),
             BrowserInput::Forward => out.extend(self.step(1)),
             BrowserInput::Reload => out.extend(self.on_page("Page.reload", json!({}), None)),
@@ -304,9 +310,9 @@ impl Screen {
                 out.extend(self.show(tab));
             }
             BrowserInput::Show { .. } => out.push(self.tabs_event()),
-            BrowserInput::Open => out.push(self.call(
+            BrowserInput::Open { address: typed } => out.push(self.call(
                 "Target.createTarget",
-                json!({ "url": "about:blank" }),
+                json!({ "url": typed.as_deref().map_or_else(|| "about:blank".to_owned(), address) }),
                 None,
                 Some(Pending::Opened),
             )),
@@ -575,54 +581,10 @@ impl Screen {
                 out
             }
             Pending::Attached { tab } => {
-                let Some(session) = result["sessionId"].as_str().map(str::to_owned) else {
+                let Some(session) = result["sessionId"].as_str() else {
                     return Vec::new();
                 };
-                match &mut self.shown {
-                    Some(shown) if shown.tab == tab && shown.session.is_none() => {
-                        shown.session = Some(session.clone());
-                        // The script goes with this session: pages aren't
-                        // changed for agents when no one's watching. It's
-                        // added before its binding, which otherwise misses
-                        // the page shown now, and Runtime is enabled for
-                        // the binding to work on pages after it.
-                        self.attaches += 1;
-                        self.binding = format!("{MENU_BINDING}{}", self.attaches);
-                        let source = format!("{PAGE_SCRIPT}({:?})", self.binding);
-                        let script =
-                            json!({ "source": source, "worldName": WORLD, "runImmediately": true });
-                        let binding =
-                            json!({ "name": self.binding, "executionContextName": WORLD });
-                        let mut out = vec![
-                            self.call("Page.enable", json!({}), Some(&session), None),
-                            // The page's file inputs ask the console.
-                            self.call(
-                                "Page.setInterceptFileChooserDialog",
-                                json!({ "enabled": true }),
-                                Some(&session),
-                                None,
-                            ),
-                            self.call(
-                                "Page.addScriptToEvaluateOnNewDocument",
-                                script,
-                                Some(&session),
-                                None,
-                            ),
-                            self.call("Runtime.addBinding", binding, Some(&session), None),
-                            self.call("Runtime.enable", json!({}), Some(&session), None),
-                        ];
-                        out.extend(self.cast(&session));
-                        out
-                    }
-                    // Another tab was asked for meanwhile, or this one twice
-                    // and it's attached already.
-                    _ => vec![self.call(
-                        "Target.detachFromTarget",
-                        json!({ "sessionId": session }),
-                        None,
-                        None,
-                    )],
-                }
+                self.attached(&tab, session)
             }
             Pending::History { step } => {
                 let Ok(history) = serde_json::from_value::<History>(result.clone()) else {
@@ -707,6 +669,63 @@ impl Screen {
         vec![Out::Event(BrowserEvent::Files { multiple, accept })]
     }
 
+    /// Starts showing `tab`, now attached as `session`, if it's still the
+    /// one asked for.
+    fn attached(&mut self, tab: &str, session: &str) -> Vec<Out> {
+        match &mut self.shown {
+            Some(shown) if shown.tab == tab && shown.session.is_none() => {
+                shown.session = Some(session.to_owned());
+                let going = shown.going.take();
+                // The script goes with this session: pages aren't changed for
+                // agents when no one's watching. It's added before its
+                // binding, which otherwise misses the page shown now, and
+                // Runtime is enabled for the binding to work on pages after it.
+                self.attaches += 1;
+                self.binding = format!("{MENU_BINDING}{}", self.attaches);
+                let source = format!("{PAGE_SCRIPT}({:?})", self.binding);
+                let script =
+                    json!({ "source": source, "worldName": WORLD, "runImmediately": true });
+                let binding = json!({ "name": self.binding, "executionContextName": WORLD });
+                let mut out = vec![
+                    self.call("Page.enable", json!({}), Some(session), None),
+                    // The page's file inputs ask the console.
+                    self.call(
+                        "Page.setInterceptFileChooserDialog",
+                        json!({ "enabled": true }),
+                        Some(session),
+                        None,
+                    ),
+                    self.call(
+                        "Page.addScriptToEvaluateOnNewDocument",
+                        script,
+                        Some(session),
+                        None,
+                    ),
+                    self.call("Runtime.addBinding", binding, Some(session), None),
+                    self.call("Runtime.enable", json!({}), Some(session), None),
+                ];
+                if let Some(url) = going {
+                    out.push(self.call(
+                        "Page.navigate",
+                        json!({ "url": url }),
+                        Some(session),
+                        None,
+                    ));
+                }
+                out.extend(self.cast(session));
+                out
+            }
+            // Another tab was asked for meanwhile, or this one twice
+            // and it's attached already.
+            _ => vec![self.call(
+                "Target.detachFromTarget",
+                json!({ "sessionId": session }),
+                None,
+                None,
+            )],
+        }
+    }
+
     /// Shows `tab`: attaches to it, and leaves the one shown before.
     fn show(&mut self, tab: String) -> Vec<Out> {
         if self.shown.as_ref().is_some_and(|s| s.tab == tab) {
@@ -741,7 +760,11 @@ impl Screen {
                 .cloned()
                 .unwrap_or(BrowserEvent::DialogClosed),
         ));
-        self.shown = Some(Shown { tab, session: None });
+        self.shown = Some(Shown {
+            tab,
+            session: None,
+            going: None,
+        });
         self.told = None;
         out.push(self.tabs_event());
         out.push(Out::Event(BrowserEvent::Loading { loading: false }));
@@ -1704,6 +1727,43 @@ mod tests {
             json!({ "id": create["id"], "result": { "targetId": "t9" } }),
         ));
         assert!(methods(&out).contains(&"Target.attachToTarget".to_owned()));
+    }
+
+    #[test]
+    fn a_new_tab_opens_blank_or_where_its_asked_to_and_comes_to_the_front() {
+        let mut screen = showing();
+        let blank = screen.input(BrowserInput::Open { address: None });
+        assert_eq!(sent(&blank)[0]["params"]["url"], "about:blank");
+        let asked = screen.input(BrowserInput::Open {
+            address: Some("localhost:8085/callback?code=x".into()),
+        });
+        let create = sent(&asked).remove(0);
+        assert_eq!(create["method"], "Target.createTarget");
+        assert_eq!(
+            create["params"]["url"],
+            "http://localhost:8085/callback?code=x"
+        );
+        let out = answer(&mut screen, &create, json!({ "targetId": "t9" }));
+        assert!(attaches(&out, "t9").is_some());
+    }
+
+    #[test]
+    fn an_address_asked_for_while_the_tab_attaches_is_gone_to_once_it_has() {
+        let (mut screen, _) = Screen::new(SIZE);
+        screen.devtools(page("t1", None));
+        let out = screen.devtools(incoming(json!({ "id": 1, "result": {} })));
+        let attach = attaches(&out, "t1").expect("attaching");
+        let early = screen.input(BrowserInput::Navigate {
+            address: "localhost:8085/callback".into(),
+        });
+        assert!(!methods(&early).contains(&"Page.navigate".to_owned()));
+        let attached = answer(&mut screen, &attach, json!({ "sessionId": "s1" }));
+        let navigate = sent(&attached)
+            .into_iter()
+            .find(|m| m["method"] == "Page.navigate")
+            .expect("navigating once attached");
+        assert_eq!(navigate["params"]["url"], "http://localhost:8085/callback");
+        assert_eq!(navigate["sessionId"], "s1");
     }
 
     #[test]

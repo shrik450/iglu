@@ -4,6 +4,7 @@
 import { effect, untracked } from "@preact/signals";
 
 import { api, failure } from "./api/client.ts";
+import { BrowserPane, openOnceShown } from "./browser.ts";
 import { keyboardFree } from "./focus.ts";
 import type { ColumnKind } from "./generated/ColumnKind.ts";
 import type { ColumnSpec } from "./generated/ColumnSpec.ts";
@@ -336,6 +337,27 @@ async function openColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
 /** openColumn for buttons and keys. */
 export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<void> {
   await attempt(() => openColumn(ws, kind));
+}
+
+/** Opens `address` in the workspace's browser, and shows it: in the browser
+ * column, which is opened first if there isn't one. */
+export async function openInBrowser(ws: WorkspaceView, address: string): Promise<void> {
+  const column = columnsOf(ws).find((c) => c.kind.kind === "browser");
+  const pane = column && panes.get(`${ws.id}/${column.name}`);
+  if (column && pane instanceof BrowserPane) {
+    pane.open(address);
+    focusColumn(ws, column.name);
+    return;
+  }
+  openOnceShown(ws.id, address);
+  if (column && column.state !== "ended") {
+    focusColumn(ws, column.name);
+    return;
+  }
+  const started = await attempt(() => (column ? api.restartColumn(ws.id, column.name) : openColumn(ws, { kind: "browser" })));
+  // A browser that didn't start mustn't open it when one next does.
+  if (!started) openOnceShown(ws.id, null);
+  else if (column) await loadColumns(ws);
 }
 
 export async function restartColumn(ws: WorkspaceView, name: string): Promise<void> {

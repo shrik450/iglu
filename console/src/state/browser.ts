@@ -1,6 +1,7 @@
 // The workspace's browser as a column shows it: where on the page a point
 // on the screen is, and what a key or a click is to the browser.
 
+import type { BrowserInput } from "../generated/BrowserInput.ts";
 import type { BrowserTab } from "../generated/BrowserTab.ts";
 import type { KeyInput } from "../generated/KeyInput.ts";
 import type { MenuOption } from "../generated/MenuOption.ts";
@@ -141,6 +142,14 @@ export function wheelPixels(delta: number, mode: number, pageHeight: number): nu
  * offers to take an address instead. */
 export function addressOf(tab: BrowserTab | undefined): string {
   return !tab || tab.url === "about:blank" ? "" : tab.url;
+}
+
+/** How to open `address`: in the one tab of a browser that's only just
+ * started, which is blank, or else in a tab of its own, so a page an agent
+ * or the person has open stays. */
+export function openingOf(tabs: BrowserTab[], address: string): BrowserInput {
+  const [only, ...others] = tabs;
+  return only?.url === "about:blank" && others.length === 0 ? { type: "navigate", address } : { type: "open", address };
 }
 
 /** A tab's name: its title, or where it is while it has none. */

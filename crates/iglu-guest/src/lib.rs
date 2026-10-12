@@ -6,11 +6,14 @@
 
 pub mod browser;
 pub mod claude;
+pub mod clipboard;
 pub mod git;
 pub mod listeners;
+pub mod open;
 pub mod pasted;
 pub mod paths;
 pub mod provision;
 pub mod secrets;
 pub mod session;
 pub mod status;
+pub mod tty;

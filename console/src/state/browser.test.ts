@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { addressOf, buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, pagePoint, screenRect, stepOption, tabName, typedOption, wheelPixels } from "./browser.ts";
+import { addressOf, buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, openingOf, pagePoint, screenRect, stepOption, tabName, typedOption, wheelPixels } from "./browser.ts";
 
 test("a point on the screen is the point on the page under it", () => {
   // A 1600×1200 image of an 800×600 page, shown in a 400×400 box: 400×300 from the top left.
@@ -97,4 +97,14 @@ test("arrows and typing go to options that can be chosen", () => {
   assert.equal(typedOption(options, 0, "b"), 2);
   assert.equal(typedOption(options, 3, "a"), 0);
   assert.equal(typedOption(options, 0, "z"), null);
+});
+
+test("an address opens in a fresh browser's blank tab, and otherwise in a tab of its own", () => {
+  const blank = { id: "t1", title: "", url: "about:blank" };
+  const page = { id: "t2", title: "App", url: "http://localhost:3000/" };
+  const address = "http://localhost:8085/callback";
+  assert.deepEqual(openingOf([blank], address), { type: "navigate", address });
+  assert.deepEqual(openingOf([page], address), { type: "open", address });
+  assert.deepEqual(openingOf([blank, page], address), { type: "open", address });
+  assert.deepEqual(openingOf([], address), { type: "open", address });
 });

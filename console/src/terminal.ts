@@ -12,6 +12,7 @@ import WASM from "@wterm/ghostty/ghostty-vt.wasm";
 import { api, failure } from "./api/client.ts";
 import { keyboardFree } from "./focus.ts";
 import { withCtrl } from "./state/keys.ts";
+import { type Offer, offer } from "./state/opening.ts";
 import { MAX_FILE_BYTES, pastedPath } from "./state/paste.ts";
 import { programTitle } from "./state/program.ts";
 import { scan } from "./state/replies.ts";
@@ -105,6 +106,18 @@ export function setTitle(key: string, title: string): void {
   titles.value = next;
 }
 
+/** What a program in each pane, by `workspace/session`, last asked to open,
+ * until the person opens it or puts it away. */
+export const offers = signal<ReadonlyMap<string, Offer>>(new Map());
+
+export function setOffer(key: string, asked: Offer | null): void {
+  if (!asked && !offers.peek().has(key)) return;
+  const next = new Map(offers.peek());
+  if (asked) next.set(key, asked);
+  else next.delete(key);
+  offers.value = next;
+}
+
 /** Panes, by `workspace/session`, whose program rang the bell while the
  * person was elsewhere: their chips say so until they go back. */
 export const rang = signal<ReadonlySet<string>>(new Set());
@@ -196,7 +209,9 @@ export class TerminalPane implements Pane {
       },
       // Mouse reports in the older encodings aren't text.
       onBinary: (data) => this.send(data),
-      onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => undefined),
+      // A browser may refuse a copy the person didn't just ask for, as one
+      // a program makes while the page is in the background.
+      onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => say("What a program copied couldn't reach your clipboard.")),
       onPasteFiles: (files) => void this.pasteFiles(files),
       onTitle: (title) => setTitle(this.key, programTitle(title)),
       onBell: () => {
@@ -331,10 +346,15 @@ export class TerminalPane implements Pane {
   }
 
   /** Shows output, answering the queries wterm leaves in the order they were
-   * asked, interleaved with the ones it answers itself as it reads. */
+   * asked, interleaved with the ones it answers itself as it reads, and
+   * keeping the last address a program asked to open. */
   private output(bytes: Uint8Array): void {
-    const { replies, carry } = scan(this.carry, bytes, this.theme.cursor);
+    const { replies, opens, carry } = scan(this.carry, bytes, this.theme.cursor);
     this.carry = carry;
+    for (const address of opens) {
+      const asked = offer(address);
+      if (asked) setOffer(this.key, asked);
+    }
     let shown = 0;
     for (const reply of replies) {
       if (reply.end > shown) this.term.write(bytes.subarray(shown, reply.end));
@@ -398,6 +418,7 @@ export class TerminalPane implements Pane {
     this.socket = null;
     panes.delete(this.key);
     setTitle(this.key, "");
+    setOffer(this.key, null);
     if (lastFocused === this) lastFocused = null;
     ring(this.key, false);
     this.sight.disconnect();
