@@ -21,7 +21,6 @@ pub mod label;
 pub mod lifecycle;
 pub mod listener;
 pub mod names;
-pub mod network;
 pub mod pasted;
 pub mod port;
 pub mod preferences;

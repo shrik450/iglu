@@ -1,17 +1,36 @@
-//! Keeps the workspace bridge's egress policy in place.
-//!
-//! Incus ACLs are allow-lists with a default action, so "the Internet except
-//! private space" becomes one allow rule per prefix of the complement,
-//! computed in the core.
+//! Keeps the workspace bridge's egress policy in place: the Internet, but
+//! not the host, the LAN or anything else private. Incus applies an ACL's
+//! reject rules before its allow rules, whatever their order, and lets DNS
+//! and DHCP reach the bridge before any of them.
 
 use hyper::Method;
-use iglu_domain::network::{allowed_ipv4, default_denied_ipv4};
 use serde_json::{Value, json};
 
 use super::client::{Incus, IncusError};
 
-/// Creates or replaces the ACL and attaches it to the bridge with a default
-/// egress action of reject. DNS to the bridge's own resolver stays allowed.
+/// Destinations guests may never reach: this network, private and shared
+/// address space (which covers VPN and Tailscale ranges), loopback,
+/// link-local (which covers cloud metadata), documentation, benchmarking,
+/// multicast and reserved space.
+const DENIED: &[&str] = &[
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+];
+
+/// Creates or replaces the ACL and attaches it to the bridge, rejecting
+/// whatever it doesn't allow, which with IPv6 off is nothing else.
 pub async fn ensure(
     incus: &Incus,
     network: &str,
@@ -19,35 +38,20 @@ pub async fn ensure(
     timeout: std::time::Duration,
 ) -> Result<(), IncusError> {
     let bridge: Value = incus.get(&format!("/1.0/networks/{network}")).await?;
-    let gateway = bridge["config"]["ipv4.address"]
-        .as_str()
-        .and_then(|cidr| cidr.split('/').next())
-        .ok_or_else(|| IncusError::Protocol(format!("network {network} has no IPv4 address")))?
-        .to_owned();
-
-    let allowed: Vec<String> = allowed_ipv4(&default_denied_ipv4())
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    let mut egress: Vec<Value> = ["udp", "tcp"]
-        .iter()
-        .map(|protocol| {
-            json!({
-                "action": "allow",
-                "state": "enabled",
-                "description": "DNS to the bridge resolver",
-                "destination": format!("{gateway}/32"),
-                "protocol": protocol,
-                "destination_port": "53",
-            })
-        })
-        .collect();
-    egress.push(json!({
-        "action": "allow",
-        "state": "enabled",
-        "description": "the public Internet",
-        "destination": allowed.join(","),
-    }));
+    let egress = json!([
+        {
+            "action": "reject",
+            "state": "enabled",
+            "description": "the host and private networks",
+            "destination": DENIED.join(","),
+        },
+        {
+            "action": "allow",
+            "state": "enabled",
+            "description": "the public Internet",
+            "destination": "0.0.0.0/0",
+        },
+    ]);
     let rules = json!({
         "description": "iglu workspace egress: the Internet, never the host or private networks",
         "egress": egress,
@@ -93,6 +97,6 @@ pub async fn ensure(
             timeout,
         )
         .await?;
-    tracing::info!(%network, %acl, prefixes = allowed.len(), "workspace egress policy in place");
+    tracing::info!(%network, %acl, "workspace egress policy in place");
     Ok(())
 }
