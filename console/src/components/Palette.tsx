@@ -2,7 +2,6 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 
-import { api } from "../api/client.ts";
 import {
   activeOf,
   addColumn,
@@ -15,9 +14,10 @@ import {
   open,
   restartColumn,
   setState,
+  signOut,
   toggleFreeze,
-  update,
   toggleZoom,
+  update,
   zoomedIn,
 } from "../actions.ts";
 import { afterPrefix, keysFor, touchOnly } from "../keyboard.ts";
@@ -125,7 +125,7 @@ function items(): Item[] {
       label: "Turn on notifications",
       run: () => void enableNotifications().then((p) => say(p === "granted" ? "Notifications are on." : "Notifications are blocked in this browser.")),
     },
-    { label: "Sign out", run: () => void api.logout().then(() => location.assign("/")) },
+    { label: "Sign out", run: () => void signOut() },
   );
   return list;
 }

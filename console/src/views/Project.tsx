@@ -287,10 +287,7 @@ function Remove({ project, live }: { project: ProjectView; live: number }) {
         type="button"
         class="btn danger"
         onClick={() =>
-          void attempt(async () => {
-            await api.removeProject(project.id);
-            return true;
-          }).then((done) => {
+          void attempt(() => api.removeProject(project.id)).then((done) => {
             if (done) navigate({ view: "overview" });
           })
         }
