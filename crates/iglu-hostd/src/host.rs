@@ -35,7 +35,6 @@ impl From<RuntimeError> for CommandError {
         let code = match error {
             RuntimeError::NotFound => ErrorCode::NotFound,
             RuntimeError::ImageMissing => ErrorCode::ImageMissing,
-            RuntimeError::ImageIncompatible(_) => ErrorCode::ImageIncompatible,
             RuntimeError::Refused(_) => ErrorCode::InvalidState,
             RuntimeError::Failed(_) => ErrorCode::Runtime,
         };
@@ -130,12 +129,6 @@ impl<R: Runtime> Host<R> {
         rules::guest(self.runtime.instance(name).await?.as_ref())
     }
 
-    /// The running guest, for a command its guest tools must know: an
-    /// instance from another iglu is refused with what to do about it.
-    async fn tools_guest(&self, name: InstanceName) -> Result<Guest, CommandError> {
-        rules::tools_guest(self.runtime.instance(name).await?.as_ref())
-    }
-
     async fn run(
         &self,
         guest: &Guest,
@@ -170,7 +163,7 @@ impl<R: Runtime> Host<R> {
         name: InstanceName,
         bundle: &SecretBundle,
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(name).await?;
+        let guest = self.guest(name).await?;
         self.run(
             &guest,
             &GuestCommand::InstallSecrets(bundle),
@@ -186,7 +179,7 @@ impl<R: Runtime> Host<R> {
         name: InstanceName,
         spec: &ProvisionSpec,
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(name).await?;
+        let guest = self.guest(name).await?;
         self.run(
             &guest,
             &GuestCommand::Provision(spec),
@@ -204,7 +197,7 @@ impl<R: Runtime> Host<R> {
         name: InstanceName,
         sessions: &[SessionSpec],
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(name).await?;
+        let guest = self.guest(name).await?;
         self.run(
             &guest,
             &GuestCommand::Open(sessions, Opening::Boot),
@@ -419,7 +412,7 @@ impl<R: Runtime> Host<R> {
         session: &SessionName,
         lines: OutputLines,
     ) -> Result<TerminalOutput, CommandError> {
-        let guest = self.tools_guest(workspace.instance_name()).await?;
+        let guest = self.guest(workspace.instance_name()).await?;
         let output = self
             .run(
                 &guest,
@@ -448,7 +441,7 @@ impl<R: Runtime> Host<R> {
         session: &SessionName,
         text: &TerminalInput,
     ) -> Result<(), CommandError> {
-        let guest = self.tools_guest(workspace.instance_name()).await?;
+        let guest = self.guest(workspace.instance_name()).await?;
         self.run(
             &guest,
             &GuestCommand::Input(session, text),
@@ -470,7 +463,7 @@ impl<R: Runtime> Host<R> {
         name: &FileName,
         bytes: &[u8],
     ) -> Result<GuestPath, CommandError> {
-        let guest = self.tools_guest(workspace.instance_name()).await?;
+        let guest = self.guest(workspace.instance_name()).await?;
         let output = self
             .run(
                 &guest,

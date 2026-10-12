@@ -1,10 +1,10 @@
 # Makes a NixOS configuration an iglu environment: an Incus system
-# container image with the guest tools, one unprivileged workspace user, and
-# the files hostd expects.
+# container image with one unprivileged workspace user and the files hostd
+# expects. The guest tools aren't in it: hosts mount their own into every
+# workspace, so an environment works with whatever iglu its hosts run.
 #
 # An environment is `<flake>#<attr>` where `nixosConfigurations.<attr>`
 # imports this module. hostd builds `config.system.build.igluImage`.
-{ self }:
 {
   config,
   lib,
@@ -19,33 +19,26 @@ let
   account = config.users.users.${cfg.user};
   group = config.users.groups.${account.group};
   uid = toString account.uid;
-  guest = cfg.package;
 
-  # The interface comes from the installed guest tools themselves, so the
-  # image can't claim one its tools don't speak.
-  manifest =
-    pkgs.runCommand "iglu.json"
-      {
-        nativeBuildInputs = [ pkgs.jq ];
-        base = builtins.toJSON {
-          arch = pkgs.stdenv.hostPlatform.parsed.cpu.name;
-          user = {
-            name = cfg.user;
-            uid = account.uid;
-            gid = group.gid;
-            home = account.home;
-          };
-          browser = cfg.browser.enable;
-        };
-      }
-      ''
-        jq --argjson interface "$(${guest}/bin/iglu-guest interface)" \
-          '. + { guest_interface: $interface }' <<<"$base" > $out
-      '';
+  # Where hosts mount their guest tools (iglu-domain's INSTANCE_TOOLS).
+  tools = "/var/lib/iglu/tools";
+
+  manifest = pkgs.writeText "iglu.json" (
+    builtins.toJSON {
+      arch = pkgs.stdenv.hostPlatform.parsed.cpu.name;
+      user = {
+        name = cfg.user;
+        uid = account.uid;
+        gid = group.gid;
+        home = account.home;
+      };
+      browser = cfg.browser.enable;
+    }
+  );
 
   claudeHook = {
     type = "command";
-    command = "${guest}/bin/iglu-status claude-hook";
+    command = "${tools}/bin/iglu-status claude-hook";
   };
   claudeEvents = [
     "SessionStart"
@@ -69,6 +62,10 @@ in
       ]
       "Columns are shells and browsers now: run agents from a shell, and install them as any other package."
     )
+    (lib.mkRemovedOptionModule [
+      "iglu"
+      "package"
+    ] "The guest tools come from the host, which mounts its own into every workspace.")
   ];
 
   options.iglu = {
@@ -82,13 +79,6 @@ in
         is created if the configuration doesn't define it, and needs a fixed
         uid.
       '';
-    };
-
-    package = lib.mkOption {
-      type = lib.types.package;
-      default = self.packages.${pkgs.stdenv.hostPlatform.system}.iglu-guest;
-      defaultText = lib.literalExpression "iglu.packages.\${system}.iglu-guest";
-      description = "The guest tools: `iglu-guest`, `iglu-status` and `caffeinate`.";
     };
 
     browser.enable = lib.mkOption {
@@ -142,14 +132,11 @@ in
       # guest tools pass it to columns too; this is for every other login.
       environment.variables.IGLU_SOCKET = "/var/lib/iglu-api.sock";
 
-      environment.systemPackages = [
-        guest
-        self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
-        # `iglu` acts as the workspace from inside it, through its channel:
-        # agents use it to open, read and type into columns.
-        self.packages.${pkgs.stdenv.hostPlatform.system}.iglu
-        pkgs.git
-      ];
+      # The host's tools: `iglu`, which acts as the workspace from inside it
+      # through its channel, `iglu-status` and `caffeinate` for agents, and
+      # zmx and `iglu-guest`, which hostd drives.
+      environment.profiles = [ tools ];
+      environment.systemPackages = [ pkgs.git ];
 
       # hostd treats the workspace as booted once this marker exists: the
       # system is up and the user's manager is running, so the user's
@@ -170,7 +157,7 @@ in
 
       programs.git = {
         enable = true;
-        config.credential.helper = "${guest}/bin/iglu-guest git-credential";
+        config.credential.helper = "${tools}/bin/iglu-guest git-credential";
       };
 
       nix.settings.experimental-features = lib.mkDefault [

@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use hyper::Method;
 use iglu_domain::env::{Arch, BuiltImage, EnvSource, GuestUser, ImageFingerprint};
-use iglu_domain::guest::{self, INTERFACE, Incompatible, Interface};
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::time::Timestamp;
 use serde::Deserialize;
@@ -23,28 +22,12 @@ use tokio::process::Command;
 use super::client::{Incus, IncusError};
 use crate::config;
 
-/// The interface alone, read before the rest of `iglu.json`: an image from
-/// another iglu may say what this one doesn't know, and should be told to
-/// update rather than that.
-#[derive(Deserialize)]
-struct Speaks {
-    /// The guest-tools interface the image's tools speak. Images from
-    /// before it was recorded don't say.
-    #[serde(default)]
-    guest_interface: Option<Interface>,
-}
-
 /// `iglu.json` in the image output, written by the workspace module.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ImageManifest {
     arch: Arch,
     user: GuestUser,
-    /// Checked through [`Speaks`] before the rest is read; here so it isn't
-    /// an unknown field.
-    #[serde(default)]
-    #[expect(dead_code, reason = "read through Speaks")]
-    guest_interface: Option<Interface>,
     /// Whether the environment has the browser, `iglu.browser.enable`.
     #[serde(default)]
     browser: bool,
@@ -56,8 +39,6 @@ pub enum BuildError {
     Failed(String),
     #[error("the build produced an unusable image: {0}")]
     BadOutput(String),
-    #[error(transparent)]
-    Incompatible(#[from] Incompatible),
     #[error("importing the image failed: {0}")]
     Import(String),
 }
@@ -93,9 +74,6 @@ async fn import_output(
     let manifest_bytes = tokio::fs::read(store_path.join("iglu.json"))
         .await
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
-    let speaks: Speaks = serde_json::from_slice(&manifest_bytes)
-        .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
-    guest::compatible(speaks.guest_interface)?;
     let manifest: ImageManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
     let metadata = store_path.join("metadata.tar.xz");
@@ -291,11 +269,6 @@ async fn warm(
     Ok(())
 }
 
-/// The image property recording which guest-tools interface an image's
-/// tools speak, so creating from an image can check it. Every image hostd
-/// built has it.
-pub const INTERFACE_PROPERTY: &str = "iglu.guest-interface";
-
 /// The image property recording the NixOS system the image is of, which a
 /// workspace from an older build upgrades to in place.
 pub const SYSTEM_PROPERTY: &str = "iglu.system";
@@ -335,15 +308,6 @@ pub fn recorded_build(image: &serde_json::Value) -> Option<Timestamp> {
         .map(Timestamp::from_unix_millis)
 }
 
-/// The interface an imported image records, if it records one.
-pub fn recorded_interface(image: &serde_json::Value) -> Option<Interface> {
-    image["properties"][INTERFACE_PROPERTY]
-        .as_str()?
-        .parse()
-        .ok()
-        .map(Interface::new)
-}
-
 /// Keeps the build in the host's store while its image is on the host.
 async fn keep(fingerprint: &ImageFingerprint, store_path: &Path) -> Result<(), BuildError> {
     let root = root_of(fingerprint);
@@ -356,8 +320,8 @@ async fn keep(fingerprint: &ImageFingerprint, store_path: &Path) -> Result<(), B
         .map_err(|e| BuildError::Import(format!("keeping the build: {e}")))
 }
 
-/// Records on the image that its tools speak this host's interface, which
-/// the build just checked, and the system it is of.
+/// Records on the image when it was built, which also marks it as hostd's,
+/// and the system it is of.
 async fn record(
     incus: &Incus,
     fingerprint: &ImageFingerprint,
@@ -369,7 +333,6 @@ async fn record(
         .get(&path)
         .await
         .map_err(|e| BuildError::Import(e.to_string()))?;
-    image["properties"][INTERFACE_PROPERTY] = serde_json::json!(INTERFACE.to_string());
     let built = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis());

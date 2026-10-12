@@ -28,13 +28,35 @@
               zmx
               ;
           };
+          # Static, so they run in any workspace, whatever its system: hosts
+          # mount them into every instance. Zig links zmx with musl itself.
+          static = import ./nix/packages.nix {
+            inherit (pkgs.pkgsStatic)
+              lib
+              rustPlatform
+              buildNpmPackage
+              zmx
+              ;
+          };
+          zmx = all.zmx.overrideAttrs (old: {
+            zigBuildFlags = (old.zigBuildFlags or [ ]) ++ [
+              "-Dtarget=${pkgs.stdenv.hostPlatform.parsed.cpu.name}-linux-musl"
+            ];
+          });
+          guest-tools = pkgs.runCommand "iglu-guest-tools" { } ''
+            mkdir -p $out/bin
+            cp ${static.iglu-guest}/bin/* ${static.iglu}/bin/iglu ${zmx}/bin/zmx $out/bin/
+          '';
         in
         # Off Linux, only the CLI, and zmx for the local runtime.
-        if pkgs.stdenv.hostPlatform.isLinux then all else { inherit (all) iglu zmx; }
+        if pkgs.stdenv.hostPlatform.isLinux then
+          all // { inherit guest-tools; }
+        else
+          { inherit (all) iglu zmx; }
       );
 
       nixosModules = {
-        workspace = import ./nix/modules/workspace.nix { inherit self; };
+        workspace = ./nix/modules/workspace.nix;
         host = import ./nix/modules/host.nix { inherit self; };
         control = import ./nix/modules/control.nix { inherit self; };
       };

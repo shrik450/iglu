@@ -90,7 +90,8 @@ impl<'a> Program<'a> {
             (
                 "PATH",
                 format!(
-                    "/run/wrappers/bin:/etc/profiles/per-user/{}/bin:/run/current-system/sw/bin",
+                    "{}/bin:/run/wrappers/bin:/etc/profiles/per-user/{}/bin:/run/current-system/sw/bin",
+                    iglu_domain::guest::INSTANCE_TOOLS,
                     user.name
                 ),
             ),

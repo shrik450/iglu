@@ -179,9 +179,7 @@ impl IntoResponse for Failure {
         let status = match self.0.code {
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict | ErrorCode::InvalidState => StatusCode::CONFLICT,
-            ErrorCode::ImageMissing | ErrorCode::ImageIncompatible | ErrorCode::GuestFailed => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            ErrorCode::ImageMissing | ErrorCode::GuestFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::Timeout => StatusCode::GATEWAY_TIMEOUT,
             ErrorCode::Runtime => StatusCode::BAD_GATEWAY,
         };

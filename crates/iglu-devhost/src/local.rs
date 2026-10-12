@@ -145,11 +145,9 @@ fn system_gitconfig(tools: &Path, localhost_ca: Option<&Path>) -> String {
     }
 }
 
-/// A local environment's fingerprint: the same source with the same guest
-/// tools is the same image, and a build after the tools' interface changed
-/// is a new one, which workspaces update to.
+/// A local environment's fingerprint: the same source is the same image.
 fn fingerprint(source: &EnvSource) -> ImageFingerprint {
-    let digest = Sha256::digest(format!("iglu-devhost:{}:{source}", guest_tools::INTERFACE));
+    let digest = Sha256::digest(format!("iglu-devhost:{source}"));
     hex::encode(digest)
         .parse()
         .expect("a SHA-256 in hex is a fingerprint")
@@ -426,7 +424,6 @@ impl LocalRuntime {
                 Provisioning::Pending
             },
             state: store::state(boots, self.machine, remains),
-            guest_interface: record.guest_interface,
             image: Some(record.image),
             memory: None,
         })
@@ -548,8 +545,6 @@ impl LocalRuntime {
             image: spec.image.clone(),
             provisioned: false,
             slot,
-            // The image was just checked to speak this host's interface.
-            guest_interface: Some(guest_tools::INTERFACE),
         };
         store::write_json(&staging.join("record.json"), &record).await?;
         store::write_json(&staging.join("power.json"), &Boots::NEVER).await?;
@@ -654,7 +649,6 @@ impl Runtime for LocalRuntime {
         let fingerprint = fingerprint(source);
         let image = Image {
             source: source.clone(),
-            guest_interface: Some(guest_tools::INTERFACE),
         };
         store::write_json(&self.layout.image(&fingerprint), &image)
             .await
@@ -671,14 +665,13 @@ impl Runtime for LocalRuntime {
     }
 
     async fn create(&self, name: InstanceName, spec: &CreateSpec) -> Result<(), RuntimeError> {
-        let image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
+        let _image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
             Ok(image) => image,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(RuntimeError::ImageMissing);
             }
             Err(error) => return Err(RuntimeError::failed(error)),
         };
-        guest_tools::compatible(image.guest_interface)?;
         let slot = self.allocate_slot().await?;
         self.make(name, spec, slot)
             .await
@@ -741,14 +734,13 @@ impl Runtime for LocalRuntime {
     /// the machine's, so moving it to another image is only a new record.
     async fn upgrade(&self, name: InstanceName, spec: &UpgradeSpec) -> Result<(), RuntimeError> {
         self.ensure_exists(name).await?;
-        let image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
+        let _image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
             Ok(image) => image,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(RuntimeError::ImageMissing);
             }
             Err(error) => return Err(RuntimeError::failed(error)),
         };
-        guest_tools::compatible(image.guest_interface)?;
         let mut record = self.record(name).await?;
         // Its home is rewritten to its own directory; the account is the rest.
         if (&record.user.name, record.user.uid, record.user.gid)
@@ -762,7 +754,6 @@ impl Runtime for LocalRuntime {
             return Ok(());
         }
         record.image = spec.image.clone();
-        record.guest_interface = image.guest_interface;
         store::write_json(&self.layout.record(name), &record)
             .await
             .map_err(RuntimeError::failed)?;

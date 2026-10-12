@@ -49,6 +49,9 @@ const CHANNEL_DEVICE: &str = "iglu-channel";
 /// The disk device that is the owner's kept directory.
 const KEPT_DEVICE: &str = "iglu-kept";
 
+/// The disk device that mounts the host's guest tools into an instance.
+const TOOLS_DEVICE: &str = "iglu-tools";
+
 /// The volume that holds a person's kept directory on this host. Its files
 /// belong to the workspace account's uid, so an environment whose account
 /// has another gets a volume of its own.
@@ -227,7 +230,6 @@ impl Runtime for IncusRuntime {
             Err(error) if error.is_not_found() => return Err(RuntimeError::ImageMissing),
             Err(error) => return Err(failed(error)),
         };
-        guest_tools::compatible(build::recorded_interface(&image))?;
         let system = build::recorded_system(&image).unwrap_or_default();
         let guest_user = serde_json::to_string(&spec.user).map_err(RuntimeError::failed)?;
         let kept = kept_volume(spec.owner, &spec.user);
@@ -260,8 +262,6 @@ impl Runtime for IncusRuntime {
                 keys::WORKSPACE: name.workspace().to_string(),
                 keys::OWNER: spec.owner.to_string(),
                 keys::GUEST_USER: guest_user,
-                // The image was just checked to speak this host's interface.
-                keys::GUEST_INTERFACE: guest_tools::INTERFACE.to_string(),
                 keys::IMAGE: spec.image.to_string(),
                 keys::SYSTEM: system,
             },
@@ -272,6 +272,12 @@ impl Runtime for IncusRuntime {
                     "pool": self.settings.pool,
                     "source": kept,
                     "path": guest_tools::INSTANCE_KEPT,
+                },
+                TOOLS_DEVICE: {
+                    "type": "disk",
+                    "source": self.settings.guest_tools,
+                    "path": guest_tools::INSTANCE_TOOLS,
+                    "readonly": "true",
                 },
             },
         });
@@ -350,7 +356,6 @@ impl Runtime for IncusRuntime {
             Err(error) if error.is_not_found() => return Err(RuntimeError::ImageMissing),
             Err(error) => return Err(failed(error)),
         };
-        guest_tools::compatible(build::recorded_interface(&image))?;
         let refuse = |why: &str| {
             RuntimeError::Refused(format!(
                 "{why}; build the environment again to update to it"
@@ -400,12 +405,10 @@ impl Runtime for IncusRuntime {
                 tracing::info!(%name, %error, "removing the old system failed; it stays on disk");
             }
         }
-        // Its tools were just checked to speak this host's interface.
         self.incus
             .update_instance(
                 name,
                 &json!({ "config": {
-                    keys::GUEST_INTERFACE: guest_tools::INTERFACE.to_string(),
                     keys::IMAGE: spec.image.to_string(),
                     keys::SYSTEM: system,
                 } }),
@@ -509,7 +512,7 @@ impl Runtime for IncusRuntime {
             .map_err(failed)?;
         Ok(images
             .iter()
-            .filter(|image| build::recorded_interface(image).is_some())
+            .filter(|image| build::recorded_build(image).is_some())
             .filter_map(|image| {
                 Some(StoredImage {
                     fingerprint: image["fingerprint"].as_str()?.parse().ok()?,

@@ -16,7 +16,6 @@ use bytes::Bytes;
 use iglu_domain::capacity;
 use iglu_domain::download::DownloadName;
 use iglu_domain::env::{BuiltImage, EnvSource, GuestUser, ImageFingerprint};
-use iglu_domain::guest::Interface;
 use iglu_domain::id::{InstanceName, PrincipalId};
 use iglu_domain::lifecycle::Provisioning;
 use iglu_domain::port::GuestPort;
@@ -191,9 +190,6 @@ pub struct Observed {
     pub user: GuestUser,
     pub provisioning: Provisioning,
     pub state: State,
-    /// The guest-tools interface recorded on the instance when it was
-    /// created, if any: an instance from before it was recorded says nothing.
-    pub guest_interface: Option<Interface>,
     /// The image its root is from, when the runtime records it.
     pub image: Option<ImageFingerprint>,
     /// Resident memory, when the runtime measures it.
@@ -315,8 +311,6 @@ pub enum RuntimeError {
     NotFound,
     #[error("the environment's image isn't on this host")]
     ImageMissing,
-    #[error(transparent)]
-    ImageIncompatible(#[from] iglu_domain::guest::Incompatible),
     /// The runtime won't do it, for a reason the owner can act on.
     #[error("{0}")]
     Refused(String),

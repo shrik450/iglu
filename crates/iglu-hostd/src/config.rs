@@ -82,6 +82,9 @@ pub struct Incus {
     pub network: String,
     /// The ACL hostd maintains on that bridge.
     pub acl: String,
+    /// The guest tools, a directory with their static build in its `bin`,
+    /// mounted read-only into every instance.
+    pub guest_tools: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]

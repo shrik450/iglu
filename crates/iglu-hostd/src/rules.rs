@@ -4,7 +4,6 @@
 //!
 //! Every command is idempotent: one that already took effect takes no steps.
 
-use iglu_domain::guest as guest_tools;
 use iglu_domain::lifecycle::{
     Columns, Instance, Present, Readiness, Running, Runtime, SecretsGeneration,
 };
@@ -69,10 +68,7 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
     match command {
         Step::Create(_) => Ok(vec![]),
         Step::Start => match state {
-            State::Stopped | State::Failed => {
-                speaks_this_hosts_interface(observed)?;
-                Ok(vec![Step::Start])
-            }
+            State::Stopped | State::Failed => Ok(vec![Step::Start]),
             State::Running { .. } | State::Frozen | State::Transitioning => Ok(vec![]),
         },
         Step::Freeze => match state {
@@ -101,8 +97,7 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
                 Ok(vec![Step::Stop, Step::Delete])
             }
         },
-        // The runtime brings it up to upgrade it: only system tools run, so
-        // an instance whose own tools speak another interface still can be.
+        // The runtime brings it up to upgrade it.
         Step::Upgrade(spec) => match state {
             State::Stopped | State::Running { .. } | State::Frozen => Ok(vec![Step::Upgrade(spec)]),
             State::Failed => Ok(vec![Step::Stop, Step::Upgrade(spec)]),
@@ -125,37 +120,6 @@ pub fn guest(found: Option<&Claim>) -> Result<Guest, CommandError> {
             running(observed).ok_or_else(|| invalid("the workspace isn't running"))
         }
     }
-}
-
-/// The guest hostd may run the guest tools in: a running one whose tools
-/// speak this host's interface.
-///
-/// # Errors
-///
-/// As for [`guest`], and when the instance's tools speak another
-/// interface, or it doesn't record one.
-pub fn tools_guest(found: Option<&Claim>) -> Result<Guest, CommandError> {
-    if let Some(Ok(observed)) = found {
-        speaks_this_hosts_interface(observed)?;
-    }
-    guest(found)
-}
-
-/// Whether an instance's guest tools speak this host's interface. Only
-/// starting it and running its tools need them to; stopping and deleting
-/// an old workspace still work, and nothing ever runs an old tool.
-fn speaks_this_hosts_interface(observed: &Observed) -> Result<(), CommandError> {
-    guest_tools::compatible(observed.guest_interface).map_err(|incompatible| {
-        CommandError::new(
-            ErrorCode::ImageIncompatible,
-            format!(
-                "this workspace's image was built with a different iglu ({}) than this host's \
-                 (interface {}): rebuild its environment with this iglu, then update the workspace",
-                incompatible.found,
-                guest_tools::INTERFACE
-            ),
-        )
-    })
 }
 
 /// The guest of an instance, if it's running.
@@ -301,7 +265,6 @@ mod tests {
             )
             .expect("valid user"),
             provisioning: Provisioning::Pending,
-            guest_interface: Some(guest_tools::INTERFACE),
             image: None,
             state,
             memory: None,
@@ -440,55 +403,6 @@ mod tests {
             Err(ErrorCode::Conflict)
         );
         assert_eq!(guest(None).map_err(|e| e.code), Err(ErrorCode::NotFound));
-    }
-
-    #[test]
-    fn an_instance_from_another_iglu_can_be_stopped_but_not_started_or_used() {
-        let older = guest_tools::Interface::new(guest_tools::INTERFACE.get() - 1);
-        let refused = |result: Result<(), CommandError>| {
-            result.map_err(|e| (e.code, e.message.contains("update the workspace")))
-        };
-        for recorded in [Some(older), None] {
-            let instance = |state| {
-                Ok(Observed {
-                    guest_interface: recorded,
-                    ..observed(state)
-                })
-            };
-            assert_eq!(
-                refused(decide(Step::Start, Some(&instance(State::Stopped))).map(|_| ())),
-                Err((ErrorCode::ImageIncompatible, true)),
-                "{recorded:?}"
-            );
-            // Updating is how it gets tools this host speaks.
-            let spec = UpgradeSpec {
-                image: "a".repeat(64).parse().expect("a fingerprint"),
-                user: observed(State::Stopped).user,
-            };
-            assert_eq!(
-                decide(Step::Upgrade(&spec), Some(&instance(State::Stopped))),
-                Ok(vec![Step::Upgrade(&spec)]),
-                "{recorded:?}"
-            );
-            assert_eq!(
-                refused(tools_guest(Some(&instance(RUNNING))).map(|_| ())),
-                Err((ErrorCode::ImageIncompatible, true)),
-                "{recorded:?}"
-            );
-            assert_eq!(
-                decide(Step::Stop, Some(&instance(RUNNING))),
-                Ok(vec![Step::Stop])
-            );
-            assert_eq!(
-                decide(Step::Delete, Some(&instance(State::Stopped))),
-                Ok(vec![Step::Delete])
-            );
-            assert!(
-                guest(Some(&instance(RUNNING))).is_ok(),
-                "terminals still work"
-            );
-        }
-        assert!(tools_guest(Some(&Ok(observed(RUNNING)))).is_ok());
     }
 
     #[test]

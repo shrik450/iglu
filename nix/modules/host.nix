@@ -15,6 +15,9 @@ let
   incus = config.virtualisation.incus;
   settingsFormat = pkgs.formats.json { };
   runtimeDir = "/run/iglu-hostd";
+  # The guest tools every instance mounts, copied out of the store, which
+  # instances can't see into.
+  guestTools = "/var/lib/iglu-hostd/guest-tools";
 
   settings = {
     host_id = cfg.hostId;
@@ -32,6 +35,7 @@ let
       pool = "iglu";
       network = cfg.network.name;
       acl = "iglu-egress";
+      guest_tools = guestTools;
     };
     build = {
       nix = lib.getExe' config.nix.package "nix";
@@ -50,6 +54,17 @@ in
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.hostd;
       defaultText = lib.literalExpression "iglu.packages.\${system}.hostd";
+    };
+
+    guestTools = lib.mkOption {
+      type = lib.types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.guest-tools;
+      defaultText = lib.literalExpression "iglu.packages.\${system}.guest-tools";
+      description = ''
+        The tools hostd runs in workspaces and their users run, a static
+        build mounted read-only into every one: they're always this host's,
+        whatever iglu an environment was built with.
+      '';
     };
 
     hostId = lib.mkOption {
@@ -256,6 +271,22 @@ in
         RuntimeDirectory = baseNameOf runtimeDir;
         # Proxy devices keep listening on sockets here across hostd restarts.
         RuntimeDirectoryPreserve = true;
+        StateDirectory = "iglu-hostd";
+        # Each tool replaced by a rename, so running workspaces, which mount
+        # this directory, see whole files and the new ones at once.
+        ExecStartPre = pkgs.writeShellScript "iglu-guest-tools" ''
+          set -eu
+          dir=${guestTools}/bin
+          mkdir -p "$dir"
+          for tool in ${cfg.guestTools}/bin/*; do
+            name=$(basename "$tool")
+            install -m 0555 "$tool" "$dir/.$name.new"
+            mv -f "$dir/.$name.new" "$dir/$name"
+          done
+          for old in "$dir"/*; do
+            [ -e "${cfg.guestTools}/bin/$(basename "$old")" ] || rm -f "$old"
+          done
+        '';
       };
     };
   };

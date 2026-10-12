@@ -61,6 +61,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0011_shells_and_browsers.sql")),
     Migration::Sql(include_str!("migrations/0012_activity_kinds.sql")),
     Migration::Sql(include_str!("migrations/0013_no_csrf.sql")),
+    Migration::Sql(include_str!("migrations/0014_no_guest_interface.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]

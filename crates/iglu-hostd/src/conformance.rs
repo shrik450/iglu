@@ -14,7 +14,6 @@ use iglu_domain::attention::{AttentionState, SessionStatus};
 use iglu_domain::capacity;
 use iglu_domain::column::{Arg, Argv};
 use iglu_domain::env::{BuiltImage, EnvSource, ImageFingerprint, Uid};
-use iglu_domain::guest as guest_tools;
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::{
     Columns, Instance, Present, Provisioning, Readiness, Running, Runtime as Status,
@@ -70,7 +69,7 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check(
-                "creating is idempotent and records the interface",
+                "creating is idempotent and lists the instance with its owner",
                 Suite::creates,
             )
             .await,
@@ -388,18 +387,6 @@ impl<'a, R: Runtime> Suite<'a, R> {
                 || format!("created: {instance:?}"),
             )?;
         }
-        let recorded = match self
-            .host
-            .runtime()
-            .instance(workspace.instance_name())
-            .await
-        {
-            Ok(Some(Ok(observed))) => observed.guest_interface,
-            other => return Err(format!("the created instance: {other:?}")),
-        };
-        ensure(recorded == Some(guest_tools::INTERFACE), || {
-            format!("the instance records interface {recorded:?}")
-        })?;
         let inventory = self.host.inventory().await.map_err(|e| e.to_string())?;
         ensure(
             inventory

@@ -179,12 +179,12 @@ it's more than an hour old. A build also
 unpacks the image onto the host's storage, so the first workspace made from
 it starts as quickly as the rest.
 
-An environment's flake pins its own iglu, whose guest tools hosts drive.
-Each image records the version of that interface, and a host refuses
-images, and workspaces created from them, that speak another one. After
-upgrading your hosts, run `nix flake update iglu` in each environment's
-flake, push it, rebuild the environment, and update its workspaces. Until
-then they can be stopped, deleted and updated, but not started.
+The guest tools, which hostd drives and agents use (`iglu`, `iglu-status`,
+`caffeinate`, zmx), aren't part of an environment: each host mounts its
+own static build of them, read-only, into every workspace at
+`/var/lib/iglu/tools`. Upgrading a host upgrades them in every workspace on
+it, running or not, and an environment's flake only needs `nix flake update
+iglu` for changes to the workspace module itself.
 
 The flake can be private. Builds use your Git credential secrets (see
 [Using it](#using-it)) as Nix access tokens, so the token that lets a

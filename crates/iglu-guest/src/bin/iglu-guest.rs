@@ -24,8 +24,7 @@ const USAGE: &str = "usage:
   iglu-guest input <session>      (types what's on stdin into it)
   iglu-guest keep <file-name>     (keeps a pasted file from stdin; prints its path)
   iglu-guest browser              (runs the workspace's browser, for a browser column)
-  iglu-guest git-credential <get|store|erase>
-  iglu-guest interface             (the version of the interface hosts use)";
+  iglu-guest git-credential <get|store|erase>";
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
     eprintln!("iglu-guest: {message}");
@@ -71,10 +70,6 @@ fn main() -> ExitCode {
         return fail(USAGE);
     };
     let rest = &args[1..];
-    if command == "interface" {
-        println!("{}", iglu_domain::guest::INTERFACE);
-        return ExitCode::SUCCESS;
-    }
     if command == "git-credential" {
         return git_credential(rest);
     }

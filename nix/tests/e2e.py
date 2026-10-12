@@ -163,11 +163,9 @@ try:
             timeout=900,
         )
 
-    with subtest("the image records the guest tools' interface, and hostd checks it"):
-        manifest = json.loads(host.succeed(f"cat {IMAGE}/iglu.json"))
-        images = json.loads(host.succeed("incus query '/1.0/images?recursion=1'"))
-        recorded = {i["properties"].get("iglu.guest-interface") for i in images}
-        assert recorded == {str(manifest["guest_interface"])}, (manifest, recorded)
+    with subtest("the guest tools are the host's, not the image's"):
+        host.fail(f"nix-store --query --requisites $(readlink {IMAGE}/system) | grep -e iglu-guest -e '-zmx-'")
+        host.succeed("test -x /var/lib/iglu-hostd/guest-tools/bin/iglu-guest")
 
     with subtest("Incus passes the runtime conformance suite and its isolation checks"):
         # Its own workspaces, beside iglud's; iglud leaves instances it never made alone.

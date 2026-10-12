@@ -65,12 +65,6 @@ pub struct ListenerReport {
 /// workspace's columns.
 pub const COLUMNS_OPENED: &str = "iglu/columns-opened";
 
-/// The version of the interface between hosts and the guest tools: the
-/// tools' command line and the files above. An image records the version
-/// its tools speak, and a host only uses images that speak its own. Bump it
-/// with any change either side would notice.
-pub const INTERFACE: Interface = Interface(5);
-
 /// Where a workspace's processes reach iglu: a socket that only that
 /// workspace's channel answers on, so whatever connects is that workspace.
 /// The guest tools get its path in [`CHANNEL_ENV`] and pass it on to every
@@ -92,6 +86,11 @@ pub const KEPT_ENV: &str = "IGLU_KEPT";
 /// volume is mounted.
 pub const INSTANCE_KEPT: &str = "/var/lib/iglu/kept";
 
+/// Where the guest tools are inside an Incus instance, in its `bin`: the
+/// host's own build, mounted read-only, so they're always the tools that
+/// host speaks to, whatever iglu the environment was built with.
+pub const INSTANCE_TOOLS: &str = "/var/lib/iglu/tools";
+
 /// What agents and tools keep in the kept directory: each variable names a
 /// directory of the program's own there, which it takes as its
 /// configuration directory. Sign-in, onboarding, trust and settings are then made once,
@@ -104,92 +103,3 @@ pub const KEPT_DIRS: [(&str, &str); 3] = [
 
 /// Claude Code's directory in the kept directory.
 pub const CLAUDE_KEPT: &str = "claude";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub struct Interface(u32);
-
-impl Interface {
-    #[must_use]
-    pub const fn new(version: u32) -> Self {
-        Self(version)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-impl std::fmt::Display for Interface {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// An image whose guest tools a host can't drive. The message is for the
-/// environment's owner.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "the environment was built with a different iglu ({found}) than this host's (interface {INTERFACE}); \
-     run `nix flake update iglu` in the environment's flake, push it, and rebuild the environment"
-)]
-pub struct Incompatible {
-    /// What the image says, if it says anything.
-    pub found: Found,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Found {
-    /// Images from before interfaces were recorded.
-    Unrecorded,
-    Other(Interface),
-}
-
-impl std::fmt::Display for Found {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unrecorded => f.write_str("no interface recorded"),
-            Self::Other(interface) => write!(f, "interface {interface}"),
-        }
-    }
-}
-
-/// Whether a host can use an image whose tools speak `recorded`.
-///
-/// # Errors
-///
-/// When the image records another interface, or none.
-pub fn compatible(recorded: Option<Interface>) -> Result<(), Incompatible> {
-    match recorded {
-        Some(interface) if interface == INTERFACE => Ok(()),
-        Some(interface) => Err(Incompatible {
-            found: Found::Other(interface),
-        }),
-        None => Err(Incompatible {
-            found: Found::Unrecorded,
-        }),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_images_speaking_this_hosts_interface_are_used() {
-        assert_eq!(compatible(Some(INTERFACE)), Ok(()));
-        let older = Interface(INTERFACE.get() - 1);
-        assert_eq!(
-            compatible(Some(older)),
-            Err(Incompatible {
-                found: Found::Other(older)
-            })
-        );
-        let unrecorded = compatible(None).expect_err("an unrecorded image is refused");
-        assert!(
-            unrecorded.to_string().contains("nix flake update iglu"),
-            "{unrecorded}"
-        );
-    }
-}

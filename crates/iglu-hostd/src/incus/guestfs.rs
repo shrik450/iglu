@@ -12,8 +12,9 @@ pub mod paths {
 
     /// Written by `iglu-ready.service` once the system finished booting.
     pub const READY: &str = "run/iglu/ready";
-    /// The guest tool, installed by the platform module.
-    pub const GUEST_TOOL: &str = "/run/current-system/sw/bin/iglu-guest";
+    /// The guest tool, in the host's tools mounted into every instance
+    /// (iglu-domain's `INSTANCE_TOOLS`).
+    pub const GUEST_TOOL: &str = "/var/lib/iglu/tools/bin/iglu-guest";
 
     /// The user's runtime directory, which systemd-logind creates at boot
     /// for the lingering workspace user.
