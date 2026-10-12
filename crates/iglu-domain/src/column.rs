@@ -194,12 +194,23 @@ impl ColumnKind {
 }
 
 /// Where a workspace's browser takes Chrome's debugging protocol (CDP), on the
-/// workspace's own loopback: where the console's view of it, and agents,
-/// reach it.
+/// workspace's own loopback: where agents drive it, and where iglu hears of
+/// its downloads.
 pub const BROWSER_DEBUG_PORT: u16 = 9222;
 
-/// Why the browser's port can't be published as a preview.
-pub const BROWSER_PORT_PRIVATE: &str = "can't be 9222: that's the workspace browser's DevTools port, and a preview of it would let anyone with the link drive the browser";
+/// Where the browser's display is served over VNC, on the workspace's own
+/// loopback: what the console shows the person.
+pub const BROWSER_DISPLAY_PORT: u16 = 5900;
+
+/// Whether `port` is one of the browser's own, which only iglu reaches from
+/// outside the workspace.
+#[must_use]
+pub fn browsers_port(port: u16) -> bool {
+    port == BROWSER_DEBUG_PORT || port == BROWSER_DISPLAY_PORT
+}
+
+/// Why the browser's ports can't be published as previews.
+pub const BROWSER_PORT_PRIVATE: &str = "can't be 9222 or 5900: those are the workspace browser's DevTools port and its display, and a preview of either would let anyone with the link drive the browser";
 
 /// What a column's session runs; `None` is the login shell.
 #[must_use]

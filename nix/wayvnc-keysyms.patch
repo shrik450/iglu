@@ -1,0 +1,296 @@
+wayvnc types what the person types, whatever their keyboard layout: keysyms,
+not key positions, and keysyms outside its keymap on spare keys it sends a
+new keymap for, as Xvnc does. Keycodes above 255, which Chromium drops, are
+never used. Set WAYVNC_KEYCODES to take QEMU extended key events again.
+
+--- a/include/keyboard.h
++++ b/include/keyboard.h
+@@ -19,6 +19,7 @@
+ #include <stdlib.h>
+ #include <xkbcommon/xkbcommon.h>
+ #include <stdbool.h>
++#include <stdint.h>
+ #include <neatvnc.h>
+ 
+ #include "intset.h"
+@@ -41,6 +42,16 @@
+ 	struct intset key_state;
+ 
+ 	int last_sent_group;
++
++	/* Keysyms that aren't in the layout get keycodes that have no
++	 * symbols in it, least recently used first, and the keymap is sent
++	 * again: like Xvnc, any keysym can be typed whatever the layout. */
++	char* base_keymap_string;
++	int n_spare;
++	xkb_keycode_t spare_code[64];
++	xkb_keysym_t spare_sym[64];
++	uint64_t spare_tick[64];
++	uint64_t tick;
+ };
+ 
+ int keyboard_init(struct keyboard* self, const struct xkb_rule_names* rule_names);
+--- a/src/keyboard.c
++++ b/src/keyboard.c
+@@ -83,6 +83,11 @@
+ 	struct keyboard* self = ctx->kb;
+ 	int group = ctx->group;
+ 
++	/* Clients such as Chromium drop keys above X11's 255 (e.g. <I442>
++	 * dollar, <I443> EuroSign in evdev keymaps), so never type with them. */
++	if (code > 255)
++		return;
++
+ 	size_t n_levels = xkb_keymap_num_levels_for_key(map, code, group);
+ 
+ 	for (size_t level = 0; level < n_levels; level++) {
+@@ -179,6 +184,166 @@
+ {
+ 	for (size_t i = 0; i < self->lookup_table_length; i++)
+ 		keyboard__dump_entry(self, &self->lookup_table[i]);
++}
++
++static int upload_keymap(struct keyboard* self, const char* keymap_string)
++{
++	size_t keymap_size = strlen(keymap_string) + 1;
++
++	int keymap_fd = shm_alloc_fd(keymap_size);
++	if (keymap_fd < 0)
++		return -1;
++
++	size_t written = 0;
++	while (written < keymap_size) {
++		ssize_t ret = write(keymap_fd, keymap_string + written, keymap_size - written);
++		if (ret == -1 && errno == EINTR)
++			continue;
++		if (ret == -1) {
++			close(keymap_fd);
++			return -1;
++		}
++		written += ret;
++	}
++
++	zwp_virtual_keyboard_v1_keymap(self->virtual_keyboard,
++	                               WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
++	                               keymap_fd, keymap_size);
++	close(keymap_fd);
++	return 0;
++}
++
++/* Keys whose evdev codes clients map to a DOM key code (Chromium drops key
++ * events with an unknown code), but which nobody types through VNC: their
++ * symbols are overridden with keysyms that aren't in the layout. */
++static const char* spare_key_names[] = {
++	"FK13", "FK14", "FK15", "FK16", "FK17", "FK18", "FK19", "FK20",
++	"FK21", "FK22", "FK23", "FK24", "AB11", "AE13",
++};
++
++static void find_spare_keycodes(struct keyboard* self)
++{
++	self->n_spare = 0;
++	for (size_t i = 0; i < sizeof(spare_key_names) / sizeof(spare_key_names[0]); ++i) {
++		xkb_keycode_t code = xkb_keymap_key_by_name(self->keymap, spare_key_names[i]);
++		if (code == XKB_KEYCODE_INVALID || code > 255)
++			continue;
++		self->spare_code[self->n_spare] = code;
++		self->spare_sym[self->n_spare] = XKB_KEY_NoSymbol;
++		self->spare_tick[self->n_spare] = 0;
++		self->n_spare++;
++	}
++	nvnc_log(NVNC_LOG_DEBUG, "%d spare keycodes for keysyms outside the layout",
++			self->n_spare);
++}
++
++/* The base keymap, with a key for each keysym assigned to a spare keycode,
++ * added to the end of its xkb_symbols section. */
++static char* compose_keymap_string(struct keyboard* self)
++{
++	const char* base = self->base_keymap_string;
++	const char* end = NULL;
++	for (const char* p = strstr(base, "};"); p; p = strstr(p + 1, "};"))
++		end = p;
++	if (!end)
++		return NULL;
++	const char* sym_end = NULL;
++	for (const char* p = strstr(base, "};"); p && p < end; p = strstr(p + 1, "};"))
++		sym_end = p;
++	if (!sym_end)
++		return NULL;
++
++	size_t extra_size = 0;
++	char line[512];
++	for (int i = 0; i < self->n_spare; ++i)
++		if (self->spare_sym[i] != XKB_KEY_NoSymbol)
++			extra_size += sizeof(line);
++
++	size_t size = strlen(base) + extra_size + 1;
++	char* out = malloc(size);
++	if (!out)
++		return NULL;
++
++	size_t prefix = sym_end - base;
++	memcpy(out, base, prefix);
++	size_t pos = prefix;
++	for (int i = 0; i < self->n_spare; ++i) {
++		if (self->spare_sym[i] == XKB_KEY_NoSymbol)
++			continue;
++		char name[128];
++		if (xkb_keysym_get_name(self->spare_sym[i], name, sizeof(name)) < 0)
++			continue;
++		int n = snprintf(line, sizeof(line), "\toverride key <%s> { type= \"ONE_LEVEL\", [ %s ] };\n",
++				xkb_keymap_key_get_name(self->keymap, self->spare_code[i]),
++				name);
++		memcpy(out + pos, line, n);
++		pos += n;
++	}
++	strcpy(out + pos, sym_end);
++	return out;
++}
++
++static int create_lookup_table(struct keyboard* self);
++static void keyboard_send_mods(struct keyboard* self);
++
++static int keyboard_assign_spare(struct keyboard* self, xkb_keysym_t symbol)
++{
++	int slot = -1;
++	for (int i = 0; i < self->n_spare; ++i) {
++		if (intset_is_set(&self->key_state, self->spare_code[i]))
++			continue;
++		if (slot < 0 || self->spare_tick[i] < self->spare_tick[slot])
++			slot = i;
++	}
++	if (slot < 0)
++		return -1;
++
++	self->spare_sym[slot] = symbol;
++	self->spare_tick[slot] = ++self->tick;
++
++	char* keymap_string = compose_keymap_string(self);
++	if (!keymap_string)
++		goto failure;
++
++	struct xkb_keymap* keymap = xkb_keymap_new_from_string(self->context,
++			keymap_string, XKB_KEYMAP_FORMAT_TEXT_V1, 0);
++	if (!keymap) {
++		nvnc_log(NVNC_LOG_ERROR, "Failed to compile keymap with spare keysyms");
++		free(keymap_string);
++		goto failure;
++	}
++
++	struct xkb_state* state = xkb_state_new(keymap);
++	xkb_state_update_mask(state,
++			xkb_state_serialize_mods(self->state, XKB_STATE_MODS_DEPRESSED),
++			xkb_state_serialize_mods(self->state, XKB_STATE_MODS_LATCHED),
++			xkb_state_serialize_mods(self->state, XKB_STATE_MODS_LOCKED),
++			0, 0,
++			xkb_state_serialize_layout(self->state, XKB_STATE_LAYOUT_EFFECTIVE));
++
++	/* Spare keycodes were found in the old keymap, which has the same
++	 * keycodes section: names stay valid. */
++	xkb_state_unref(self->state);
++	xkb_keymap_unref(self->keymap);
++	self->keymap = keymap;
++	self->state = state;
++
++	free(self->lookup_table);
++	create_lookup_table(self);
++
++	upload_keymap(self, keymap_string);
++	free(keymap_string);
++	keyboard_send_mods(self);
++
++	char name[128];
++	xkb_keysym_get_name(symbol, name, sizeof(name));
++	nvnc_log(NVNC_LOG_DEBUG, "Assigned keysym %s to spare keycode %d",
++			name, self->spare_code[slot]);
++	return 0;
++
++failure:
++	self->spare_sym[slot] = XKB_KEY_NoSymbol;
++	return -1;
+ }
+ 
+ int keyboard_init(struct keyboard* self, const struct xkb_rule_names* rule_names)
+@@ -203,42 +368,22 @@
+ 
+ //	keyboard_dump_lookup_table(self);
+ 
+-	char* keymap_string =
++	self->base_keymap_string =
+ 		xkb_keymap_get_as_string(self->keymap,
+ 		                         XKB_KEYMAP_FORMAT_TEXT_V1);
+-	if (!keymap_string)
++	if (!self->base_keymap_string)
+ 		goto keymap_string_failure;
+ 
+-	size_t keymap_size = strlen(keymap_string) + 1;
++	self->tick = 0;
++	find_spare_keycodes(self);
+ 
+-	int keymap_fd = shm_alloc_fd(keymap_size);
+-	if (keymap_fd < 0)
+-		goto fd_failure;
+-
+-	size_t written = 0;
+-	while (written < keymap_size) {
+-		ssize_t ret = write(keymap_fd, keymap_string + written, keymap_size - written);
+-		if (ret == -1 && errno == EINTR)
+-			continue;
+-		if (ret == -1)
+-			goto write_failure;
+-		written += ret;
+-	}
+-
+-	free(keymap_string);
+-
+-	zwp_virtual_keyboard_v1_keymap(self->virtual_keyboard,
+-	                               WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
+-	                               keymap_fd, keymap_size);
+-
+-	close(keymap_fd);
++	if (upload_keymap(self, self->base_keymap_string) < 0)
++		goto upload_failure;
+ 
+ 	return 0;
+ 
+-write_failure:
+-	close(keymap_fd);
+-fd_failure:
+-	free(keymap_string);
++upload_failure:
++	free(self->base_keymap_string);
+ keymap_string_failure:
+ 	free(self->lookup_table);
+ table_failure:
+@@ -256,6 +401,7 @@
+ {
+ 	zwp_virtual_keyboard_v1_destroy(self->virtual_keyboard);
+ 	free(self->lookup_table);
++	free(self->base_keymap_string);
+ 	xkb_state_unref(self->state);
+ 	xkb_keymap_unref(self->keymap);
+ 	intset_destroy(&self->key_state);
+@@ -471,6 +617,8 @@
+ void keyboard_feed(struct keyboard* self, xkb_keysym_t symbol, bool is_pressed)
+ {
+ 	struct table_entry* entry = keyboard_find_symbol(self, symbol);
++	if (!entry && is_pressed && keyboard_assign_spare(self, symbol) == 0)
++		entry = keyboard_find_symbol(self, symbol);
+ 	if (!entry) {
+ 		char name[256];
+ 		nvnc_log(NVNC_LOG_ERROR, "Failed to look up keyboard symbol: %s",
+--- a/src/main.c
++++ b/src/main.c
+@@ -1303,7 +1303,11 @@
+ 	nvnc_set_normalised_pointer_fn(self->nvnc, on_pointer_event);
+ 
+ 	nvnc_set_key_fn(self->nvnc, on_key_event);
+-	nvnc_set_key_code_fn(self->nvnc, on_key_code_event);
++	/* Type keysyms even when the client sends QEMU extended key events,
++	 * so text follows the client's layout rather than key positions on
++	 * ours (keyboard.c finds keycodes for any keysym). */
++	if (getenv("WAYVNC_KEYCODES"))
++		nvnc_set_key_code_fn(self->nvnc, on_key_code_event);
+ 
+ 	nvnc_set_new_client_fn(self->nvnc, on_nvnc_client_new);
+ 	nvnc_set_cut_text_fn(self->nvnc, on_client_cut_text);

@@ -34,7 +34,8 @@ let
       network = cfg.network.name;
       acl = "iglu-egress";
       guest_tools = guestTools;
-    };
+    }
+    // lib.optionalAttrs (cfg.gpu != null) { inherit (cfg) gpu; };
     build = {
       nix = lib.getExe' config.nix.package "nix";
       uid = cfg.build.uid;
@@ -62,6 +63,20 @@ in
         The tools hostd runs in workspaces and their users run, a static
         build mounted read-only into every one: they're always this host's,
         whatever iglu an environment was built with.
+      '';
+    };
+
+    gpu = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/dev/dri/renderD128";
+      description = ''
+        A GPU render node to give every workspace, which its browser column
+        draws on and encodes H.264 with, where its environment has the
+        drivers (`iglu.browser.gpu.enable`). Workspaces share it, and its
+        kernel driver is then reachable from code running in them. Without
+        one, browser columns draw on the CPU and are sent losslessly.
+        Workspaces get or lose it when they next start.
       '';
     };
 

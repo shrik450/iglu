@@ -103,6 +103,14 @@ impl Dirs {
         self.runtime.join(guest::SECRETS_GENERATION)
     }
 
+    /// The browser's display's own runtime directory: its Wayland and sway
+    /// sockets are here, apart from the user's, so programs in terminals
+    /// don't take it for a desktop of theirs.
+    #[must_use]
+    pub fn display(&self) -> PathBuf {
+        self.runtime.join("iglu/display")
+    }
+
     #[must_use]
     pub fn status_file(&self) -> PathBuf {
         self.runtime.join(guest::STATUS)

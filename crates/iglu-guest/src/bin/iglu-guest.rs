@@ -3,6 +3,7 @@
 use std::io::Read;
 use std::process::ExitCode;
 
+use iglu_domain::display::DisplayScale;
 use iglu_domain::guest::OutputReport;
 use iglu_domain::pasted::{self, FileName};
 use iglu_domain::repo::{BranchName, RepoUrl};
@@ -22,7 +23,8 @@ const USAGE: &str = "usage:
   iglu-guest output <session> --lines <n>   (its last lines, as JSON)
   iglu-guest input <session>      (types what's on stdin into it)
   iglu-guest keep <file-name>     (keeps a pasted file from stdin; prints its path)
-  iglu-guest browser              (runs the workspace's browser, for a browser column)";
+  iglu-guest browser              (runs the workspace's browser, for a browser column)
+  iglu-guest browser-display --scale <n>   (draws the browser at a screen's pixel ratio)";
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
     eprintln!("iglu-guest: {message}");
@@ -119,7 +121,18 @@ fn main() -> ExitCode {
         "output" => output(&dirs, rest),
         "input" => input(&dirs, rest),
         "keep" => keep(&dirs, rest),
-        "browser" => fail(iglu_guest::browser::run(&dirs)),
+        "browser" => match iglu_guest::browser::run(&dirs) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => fail(error),
+        },
+        "browser-display" => match flag(rest, "--scale").map(|s| s.parse::<DisplayScale>()) {
+            Some(Ok(scale)) => match iglu_guest::browser::set_scale(&dirs, scale) {
+                Ok(report) => print_json(&report),
+                Err(error) => fail(error),
+            },
+            Some(Err(error)) => fail(error),
+            None => fail(USAGE),
+        },
         _ => fail(USAGE),
     }
 }

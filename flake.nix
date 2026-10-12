@@ -47,16 +47,23 @@
             mkdir -p $out/bin
             cp ${static.iglu-guest}/bin/* ${static.iglu}/bin/iglu ${zmx}/bin/zmx $out/bin/
           '';
+          # The browser column's VNC server, which workspaces take from here
+          # so the patch meets the version it was written for. It types
+          # keysyms: text follows the person's keyboard layout, and any
+          # character can be typed.
+          wayvnc = pkgs.wayvnc.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [ ./nix/wayvnc-keysyms.patch ];
+          });
         in
         # Off Linux, only the CLI, and zmx for the local runtime.
         if pkgs.stdenv.hostPlatform.isLinux then
-          all // { inherit guest-tools; }
+          all // { inherit guest-tools wayvnc; }
         else
           { inherit (all) iglu zmx; }
       );
 
       nixosModules = {
-        workspace = ./nix/modules/workspace.nix;
+        workspace = import ./nix/modules/workspace.nix { inherit self; };
         host = import ./nix/modules/host.nix { inherit self; };
         control = import ./nix/modules/control.nix { inherit self; };
       };
@@ -130,47 +137,44 @@
         in
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              cargo
-              rustc
-              clippy
-              rustfmt
-              rust-analyzer
-              nodejs
-              sqlite
-              just
-              nixfmt
-              actionlint
-              shellcheck
-              # The local runtime runs workspaces with these.
-              self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
-              git
-              netcat
-              lsof
-              # Local browser columns run `chromium`: nixpkgs' on Linux, and on
-              # a Mac the Chrome for Testing Playwright already brings. A local
-              # workspace has a home of its own, without the account's
-              # Keychain, and Chrome there waits on it forever to keep cookies.
-              (
-                if stdenv.hostPlatform.isDarwin then
-                  writeShellScriptBin "chromium" ''
-                    for app in ${playwrightBrowsers}/chromium-*/chrome-mac*/"Google Chrome for Testing.app"; do
-                      exec "$app/Contents/MacOS/Google Chrome for Testing" --use-mock-keychain "$@"
-                    done
-                  ''
-                else
-                  chromium
-              )
-              # The dev stack's clients. The Docker daemon is yours to run.
-              docker-client
-              openssl
-              # Seeding, touring and checking the console in real browsers;
-              # see DEVELOPMENT.md.
-              (python3.withPackages (ps: [
-                ps.playwright
-                ps.pillow
-              ]))
-            ];
+            packages =
+              with pkgs;
+              [
+                cargo
+                rustc
+                clippy
+                rustfmt
+                rust-analyzer
+                nodejs
+                sqlite
+                just
+                nixfmt
+                actionlint
+                shellcheck
+                # The local runtime runs workspaces with these.
+                self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
+                git
+                netcat
+                lsof
+              ]
+              # Local browser columns run Chromium on a headless sway, shown
+              # over wayvnc, which only Linux has.
+              ++ lib.optionals stdenv.hostPlatform.isLinux [
+                chromium
+                sway-unwrapped
+                self.packages.${pkgs.stdenv.hostPlatform.system}.wayvnc
+              ]
+              ++ [
+                # The dev stack's clients. The Docker daemon is yours to run.
+                docker-client
+                openssl
+                # Seeding, touring and checking the console in real browsers;
+                # see DEVELOPMENT.md.
+                (python3.withPackages (ps: [
+                  ps.playwright
+                  ps.pillow
+                ]))
+              ];
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
             PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsers;
             # NixOS has none of the paths Playwright checks for; empty elsewhere.

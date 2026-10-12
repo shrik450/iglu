@@ -299,19 +299,29 @@ It can't touch secrets, environments or projects.
 ### The browser
 
 A browser column (Add a column, then Browser) shows a Chromium that runs in
-the workspace, so `localhost:3000` is the workspace's own server. Agents
-drive the same browser over Chrome's debugging protocol at `$IGLU_BROWSER`,
-for example with `npx @playwright/mcp --cdp-endpoint $IGLU_BROWSER`, and you
-watch what they do. A workspace has one browser. It keeps sign-ins in
-`~/.cache/iglu/browser` and starts each time with one blank tab. Copying and
-pasting go through your own clipboard. The console shows a page's `<select>`
-menus and asks you for the files a file input wants, which go to the
-workspace as pasted files do, under names safe for a shell. Downloads go to
+the workspace, so `localhost:3000` is the workspace's own server. It's the
+whole browser, with its own tabs, address bar, menus, dialogs and file
+chooser, drawn on a headless Wayland display (sway) and shown over VNC.
+Agents drive the same browser over Chrome's debugging protocol at
+`$IGLU_BROWSER`, for example with
+`npx @playwright/mcp --cdp-endpoint $IGLU_BROWSER`, and you watch what they
+do. A workspace has one browser. It keeps sign-ins in `~/.cache/iglu/browser`.
+
+The display is drawn at your screen's pixel ratio, so text is as sharp as
+the console's. Copying and pasting go through your own clipboard, and on a
+Mac, Command works as Control does in it. Pasting files keeps them in the
+workspace, where the browser's file chooser finds them. Downloads go to
 `~/Downloads` in the workspace, and you save them from there with Save to
 this computer; while the column is open, an agent's own choice of where
-downloads go is overridden. Date and color pickers, and pages that ask for
-files with `showOpenFilePicker`, don't work. Turn it off with
-`iglu.browser.enable = false` in your environment.
+downloads go is overridden.
+Turn it off with `iglu.browser.enable = false` in your environment.
+
+By default the display is drawn on the CPU and sent losslessly. To draw it
+on the host's GPU and send it as H.264 instead, give hostd the GPU's render
+node, `services.iglu.host.gpu = "/dev/dri/renderD128";`, and turn on
+`iglu.browser.gpu.enable` in the environment, which adds Mesa and Intel's
+VA-API driver to its image. Workspaces on hosts without a GPU, or whose
+GPU the display can't use, fall back to the CPU.
 
 ## Developing
 

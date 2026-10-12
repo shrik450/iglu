@@ -13,8 +13,9 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use hyper_util::rt::TokioIo;
+use iglu_domain::display::{DisplayReport, DisplayScale};
 use iglu_domain::download::DownloadName;
 use iglu_domain::env::Arch;
 use iglu_domain::git::GitState;
@@ -143,6 +144,7 @@ fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
             "/v1/workspaces/{workspace}/downloads/{name}",
             get(download::<R>),
         )
+        .route("/v1/workspaces/{workspace}/display", put(display::<R>))
         .route(path::GUEST_CONNECTIONS, get(guest_connection::<R>))
         .with_state(app)
 }
@@ -332,6 +334,24 @@ async fn keep<R: Runtime>(
         .keep(workspace, &params.name, &bytes)
         .await
         .map(|path| Json(KeptFile { path }))
+        .map_err(Failure)
+}
+
+#[derive(serde::Deserialize)]
+struct DisplayParams {
+    scale: DisplayScale,
+}
+
+/// Draws the workspace's browser at the scale asked for.
+async fn display<R: Runtime>(
+    State(app): State<Arc<App<R>>>,
+    Path(workspace): Path<WorkspaceId>,
+    Query(params): Query<DisplayParams>,
+) -> Result<Json<DisplayReport>, Failure> {
+    app.host
+        .display(workspace, params.scale)
+        .await
+        .map(Json)
         .map_err(Failure)
 }
 

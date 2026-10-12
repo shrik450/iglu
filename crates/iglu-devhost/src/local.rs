@@ -653,8 +653,11 @@ impl Runtime for LocalRuntime {
             fingerprint,
             arch: iglu_hostd::host_arch().map_err(|e| BuildFailure(e.to_string()))?,
             user: self.user.clone(),
-            // Local workspaces use the machine's own; the dev shell has one.
-            browser: on_path(self.inherited.get("PATH"), "chromium"),
+            // Local workspaces use the machine's own, which has the browser
+            // only with the display it's shown on: Linux, with sway and wayvnc.
+            browser: ["chromium", "sway", "wayvnc"]
+                .iter()
+                .all(|program| on_path(self.inherited.get("PATH"), program)),
             // Nothing was built.
             store_path: String::new(),
         })
