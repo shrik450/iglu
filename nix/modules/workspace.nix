@@ -155,9 +155,12 @@ in
         };
       };
 
+      # Git's own helper answers from the credentials the guest tools
+      # deliver, and only answers: what Git would store or erase there
+      # isn't its to change.
       programs.git = {
         enable = true;
-        config.credential.helper = "${tools}/bin/iglu-guest git-credential";
+        config.credential.helper = "!f() { test \"$1\" = get && exec git credential-store --file=/run/user/${uid}/iglu/secrets/git-credentials get; }; f";
       };
 
       nix.settings.experimental-features = lib.mkDefault [
@@ -192,8 +195,6 @@ in
       };
     })
 
-    # Home Manager as a NixOS module activates the user's files from a
-    # system service. The user's manager, and so every terminal, waits for it.
     (lib.mkIf cfg.browser.enable {
       environment.systemPackages = [ pkgs.chromium ];
       # The port iglu-guest's browser listens on (iglu-domain's
@@ -205,6 +206,8 @@ in
       ];
     })
 
+    # Home Manager as a NixOS module activates the user's files from a
+    # system service. The user's manager, and so every terminal, waits for it.
     (lib.mkIf (options ? home-manager && config.home-manager.users ? ${cfg.user}) {
       systemd.services."user@${uid}" = {
         after = [ "home-manager-${cfg.user}.service" ];

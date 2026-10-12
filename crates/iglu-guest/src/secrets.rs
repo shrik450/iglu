@@ -4,19 +4,18 @@
 //! Runs as the workspace user, so it can only ever touch what the user can.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 
-use iglu_domain::secret::{HomePath, SecretBundle};
+use iglu_domain::secret::{GitCredential, HomePath, SecretBundle};
 use serde::Deserialize;
 
-use crate::credential::Stored;
 use crate::paths::Dirs;
 use crate::status::write_atomic;
 
-/// What hostd hands over. The user field is informational; the tool acts as
-/// whoever runs it.
+/// What hostd hands over. The tool installs it for whoever runs it.
 #[derive(Deserialize)]
 pub struct InstallRequest {
     pub bundle: SecretBundle,
@@ -173,16 +172,10 @@ pub fn install(dirs: &Dirs, request: &[u8]) -> Result<(), InstallError> {
         .collect();
     write_private(&dirs.secrets_env(), &serde_json::to_vec(&env)?)?;
 
-    let git: Vec<Stored> = bundle
-        .git
-        .iter()
-        .map(|c| Stored {
-            host: c.host.clone(),
-            username: c.username.clone(),
-            password: c.password.clone(),
-        })
-        .collect();
-    write_private(&dirs.git_credentials(), &serde_json::to_vec(&git)?)?;
+    write_private(
+        &dirs.git_credentials(),
+        credential_store(&bundle.git).as_bytes(),
+    )?;
 
     for old in &plan.stale {
         remove_stale(&home.join(old.as_str()), &secrets);
@@ -209,9 +202,56 @@ pub fn install(dirs: &Dirs, request: &[u8]) -> Result<(), InstallError> {
         .map_err(io_at(&generation))
 }
 
+/// Git credentials in `git credential-store`'s file format, which Git's
+/// own helper answers from: a URL per credential, its parts
+/// percent-encoded.
+fn credential_store(credentials: &[GitCredential]) -> String {
+    let mut lines = String::new();
+    for c in credentials {
+        lines.push_str("https://");
+        encode(&mut lines, &c.username.to_string());
+        lines.push(':');
+        encode(&mut lines, c.password.expose());
+        lines.push('@');
+        lines.push_str(c.host.as_str());
+        lines.push('\n');
+    }
+    lines
+}
+
+/// Percent-encodes all but URL-unreserved characters onto `out`.
+fn encode(out: &mut String, text: &str) {
+    for b in text.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(char::from(b));
+            }
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credentials_are_urls_git_reads_back() {
+        let credential = |username: &str, password: &str| GitCredential {
+            host: "github.com".parse().expect("a host"),
+            username: username.parse().expect("a username"),
+            password: SecretValue::try_from(password.to_owned()).expect("a value"),
+        };
+        assert_eq!(
+            credential_store(&[
+                credential("x-access-token", "ghp_abc"),
+                credential("al@ice", "p@ss:w/rd\nnext"),
+            ]),
+            "https://x-access-token:ghp_abc@github.com\nhttps://al%40ice:p%40ss%3Aw%2Frd%0Anext@github.com\n"
+        );
+    }
     use iglu_domain::lifecycle::SecretsGeneration;
     use iglu_domain::secret::{SecretTarget, SecretValue, bundle};
 

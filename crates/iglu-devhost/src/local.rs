@@ -123,14 +123,13 @@ fn guest_path(path: &Path) -> Result<GuestPath, String> {
         .map_err(|e| format!("{e}"))
 }
 
-/// The Git configuration every workspace gets: the guest tools' credential
-/// helper, and, when given, a CA that Git trusts for `https://*.localhost`
-/// alone. A URL-scoped `sslCAInfo` replaces Git's trust only for those hosts.
-fn system_gitconfig(tools: &Path, localhost_ca: Option<&Path>) -> String {
-    let credential = format!(
-        "[credential]\n\thelper = {}/iglu-guest git-credential\n",
-        tools.display()
-    );
+/// The Git configuration every workspace gets: Git's own helper, answering
+/// only, from the credentials the guest tools deliver into the workspace's
+/// runtime directory, and, when given, a CA that Git trusts for
+/// `https://*.localhost` alone. A URL-scoped `sslCAInfo` replaces Git's
+/// trust only for those hosts.
+fn system_gitconfig(localhost_ca: Option<&Path>) -> String {
+    let credential = "[credential]\n\thelper = \"!f() { test \\\"$1\\\" = get && exec git credential-store --file=\\\"$XDG_RUNTIME_DIR/iglu/secrets/git-credentials\\\" get; }; f\"\n".to_owned();
     match localhost_ca {
         None => credential,
         Some(ca) => {
@@ -243,10 +242,7 @@ impl LocalRuntime {
         let gitconfig = layout.gitconfig();
         tokio::fs::write(
             &gitconfig,
-            system_gitconfig(
-                &tools,
-                settings.localhost_ca.as_ref().map(AbsolutePath::as_path),
-            ),
+            system_gitconfig(settings.localhost_ca.as_ref().map(AbsolutePath::as_path)),
         )
         .await
         .map_err(io_at(&gitconfig))?;
@@ -951,12 +947,8 @@ mod tests {
 
     #[test]
     fn workspaces_trust_a_localhost_ca_only_for_localhost() {
-        let tools = Path::new("/tools");
-        assert_eq!(
-            system_gitconfig(tools, None),
-            "[credential]\n\thelper = /tools/iglu-guest git-credential\n"
-        );
-        let with_ca = system_gitconfig(tools, Some(Path::new("/dev ca/\"ca\".crt")));
+        assert!(!system_gitconfig(None).contains("sslCAInfo"));
+        let with_ca = system_gitconfig(Some(Path::new("/dev ca/\"ca\".crt")));
         assert!(with_ca.ends_with(
             "[http \"https://*.localhost\"]\n\tsslCAInfo = \"/dev ca/\\\"ca\\\".crt\"\n"
         ));

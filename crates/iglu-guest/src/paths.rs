@@ -94,7 +94,7 @@ impl Dirs {
 
     #[must_use]
     pub fn git_credentials(&self) -> PathBuf {
-        self.secrets().join("git-credentials.json")
+        self.secrets().join("git-credentials")
     }
 
     /// Written last by `install-secrets`; hosts read it to know what the guest holds.

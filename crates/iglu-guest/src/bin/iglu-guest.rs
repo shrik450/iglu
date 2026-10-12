@@ -7,7 +7,6 @@ use iglu_domain::guest::OutputReport;
 use iglu_domain::pasted::{self, FileName};
 use iglu_domain::repo::{BranchName, RepoUrl};
 use iglu_domain::terminal::{self, OutputLines, SessionName, TerminalInput};
-use iglu_guest::credential::{self, Stored};
 use iglu_guest::paths::Dirs;
 use iglu_guest::{git, listeners, provision, secrets, session};
 
@@ -23,8 +22,7 @@ const USAGE: &str = "usage:
   iglu-guest output <session> --lines <n>   (its last lines, as JSON)
   iglu-guest input <session>      (types what's on stdin into it)
   iglu-guest keep <file-name>     (keeps a pasted file from stdin; prints its path)
-  iglu-guest browser              (runs the workspace's browser, for a browser column)
-  iglu-guest git-credential <get|store|erase>";
+  iglu-guest browser              (runs the workspace's browser, for a browser column)";
 
 fn fail(message: impl std::fmt::Display) -> ExitCode {
     eprintln!("iglu-guest: {message}");
@@ -70,9 +68,6 @@ fn main() -> ExitCode {
         return fail(USAGE);
     };
     let rest = &args[1..];
-    if command == "git-credential" {
-        return git_credential(rest);
-    }
     if command == "listeners" {
         return print_json(&listeners::scan(std::path::Path::new("/proc")));
     }
@@ -227,26 +222,4 @@ fn open(dirs: &Dirs, rest: &[String]) -> ExitCode {
         }
         Err(error) => fail(error),
     }
-}
-
-/// Only `get` answers; `store` and `erase` are no-ops because credentials
-/// come from the control plane. Without the delivered secrets there's
-/// nothing to answer with, which Git takes as "ask the next helper".
-fn git_credential(rest: &[String]) -> ExitCode {
-    if rest.first().map(String::as_str) != Some("get") {
-        return ExitCode::SUCCESS;
-    }
-    let mut input = String::new();
-    if std::io::stdin().read_to_string(&mut input).is_err() {
-        return ExitCode::SUCCESS;
-    }
-    let stored: Vec<Stored> = Dirs::from_env()
-        .ok()
-        .and_then(|dirs| std::fs::read(dirs.git_credentials()).ok())
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default();
-    if let Some(answer) = credential::answer(&credential::parse_request(&input), &stored) {
-        print!("{answer}");
-    }
-    ExitCode::SUCCESS
 }
