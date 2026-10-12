@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use iglu_domain::capacity::Bytes;
+use iglu_domain::display::{DisplayReport, DisplayScale};
 use iglu_domain::download::DownloadName;
 use iglu_domain::env::{EnvSource, GuestPath};
 use iglu_domain::git::GitState;
@@ -145,7 +146,8 @@ impl<R: Runtime> Host<R> {
             | GuestCommand::Close(_)
             | GuestCommand::Output(..)
             | GuestCommand::Input(..)
-            | GuestCommand::Keep(..) => self.timeouts.operation(),
+            | GuestCommand::Keep(..)
+            | GuestCommand::Display(_) => self.timeouts.operation(),
         };
         let output = self.runtime.run(guest, command, timeout).await?;
         if output.success {
@@ -478,6 +480,34 @@ impl<R: Runtime> Host<R> {
             .trim_end()
             .parse()
             .map_err(|e| CommandError::new(ErrorCode::GuestFailed, format!("unreadable path: {e}")))
+    }
+
+    /// Draws the workspace's browser at `scale`, and says what its display
+    /// draws with.
+    ///
+    /// # Errors
+    ///
+    /// When the workspace isn't running, its browser isn't, or the guest
+    /// tool fails.
+    pub async fn display(
+        &self,
+        workspace: WorkspaceId,
+        scale: DisplayScale,
+    ) -> Result<DisplayReport, CommandError> {
+        let guest = self.guest(workspace.instance_name()).await?;
+        let output = self
+            .run(
+                &guest,
+                &GuestCommand::Display(scale),
+                "the browser's display failed",
+            )
+            .await?;
+        serde_json::from_str(output.stdout.trim()).map_err(|e| {
+            CommandError::new(
+                ErrorCode::GuestFailed,
+                format!("unreadable display report: {e}"),
+            )
+        })
     }
 
     /// A file the workspace's browser downloaded, opened to stream to the

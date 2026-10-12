@@ -86,13 +86,11 @@ What's different from a real host:
   workspaces wait for room.
 - **Freezing** pauses a workspace's processes with `SIGSTOP`. A process that
   leaves the workspace's process tree and clears its environment escapes it.
-- **One browser at a time.** A browser column runs the dev shell's
-  `chromium`, which on a Mac is the Chrome for Testing that Playwright
-  brings, on port 9222 of the shared loopback, so only one local workspace
-  can have one. Chrome on a Mac also opens real, invisible menus and panels
-  for some shortcuts, and stops answering until it's restarted; close and
-  add the column again. Linux workspaces have neither problem, and the VM
-  test checks the browser there.
+- **Browser columns need Linux.** A local browser column runs the dev
+  shell's Chromium on a headless sway, shown over wayvnc, and sway is
+  Linux's: on a Mac, environments have no browser. Only one local workspace
+  can have one, since its debugging port, 9222, and its display's, 5900, are
+  on the shared loopback. The VM test checks the browser.
 - **Restarting your Mac** stops every workspace, like a host restart. A
   workspace whose runtime directory is deleted while it runs reads as failed
   until you start it again, which ends what was left of it first.

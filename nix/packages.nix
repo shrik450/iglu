@@ -110,7 +110,7 @@ in
         ../console/vendor
       ];
     };
-    npmDepsHash = "sha256-tcfjxMmgIJw0MNiWZVQKNCh/NjeaEGovaH3F4WoMaDE=";
+    npmDepsHash = "sha256-0QCamQhjUlVDehgz6JA+HhYnaVdIwlTRrcl6oWT9spE=";
     installPhase = ''
       runHook preInstall
       cp -r dist $out

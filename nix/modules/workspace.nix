@@ -5,6 +5,7 @@
 #
 # An environment is `<flake>#<attr>` where `nixosConfigurations.<attr>`
 # imports this module. hostd builds `config.system.build.igluImage`.
+{ self }:
 {
   config,
   lib,
@@ -85,9 +86,22 @@ in
       type = lib.types.bool;
       default = true;
       description = ''
-        Install Chromium and fonts for its pages, so a workspace can open a
-        browser column: a browser the console shows and agents drive over
-        the DevTools protocol at `$IGLU_BROWSER` (http://127.0.0.1:9222).
+        Install Chromium, fonts for its pages, and the display the console
+        shows it on, so a workspace can open a browser column: a browser the
+        person uses from the console and agents drive over the DevTools
+        protocol at `$IGLU_BROWSER` (http://127.0.0.1:9222).
+      '';
+    };
+
+    browser.gpu.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Install GPU drivers, so the browser column draws and encodes on the
+        host's GPU where the host gives workspaces one
+        (`services.iglu.host.gpu`). Without them, or on a host without a
+        GPU, it draws on the CPU. They add about 900 MB to the image: Mesa,
+        and Intel's video driver for encoding.
       '';
     };
 
@@ -201,7 +215,13 @@ in
     })
 
     (lib.mkIf cfg.browser.enable {
-      environment.systemPackages = [ pkgs.chromium ];
+      # The browser column runs Chromium in a headless sway, which wayvnc
+      # shows the console; iglu-guest starts all three.
+      environment.systemPackages = [
+        pkgs.chromium
+        pkgs.sway-unwrapped
+        self.packages.${pkgs.stdenv.hostPlatform.system}.wayvnc
+      ];
       # The port iglu-guest's browser listens on (iglu-domain's
       # BROWSER_DEBUG_PORT), for Playwright, chrome-devtools-mcp and the like.
       environment.variables.IGLU_BROWSER = "http://127.0.0.1:9222";
@@ -209,6 +229,13 @@ in
         pkgs.noto-fonts
         pkgs.noto-fonts-color-emoji
       ];
+    })
+
+    (lib.mkIf (cfg.browser.enable && cfg.browser.gpu.enable) {
+      hardware.graphics = {
+        enable = true;
+        extraPackages = [ pkgs.intel-media-driver ];
+      };
     })
 
     # Home Manager as a NixOS module activates the user's files from a

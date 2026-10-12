@@ -626,93 +626,90 @@ def pastes_files(page: Page, name: str) -> Any:
     return {"screen": shown}
 
 
-# A page to drive without a server: a field that names the page after what's
-# typed in it, and a button that asks, each where a click can find it.
+# A page to drive without a server, typed into the browser's own address
+# bar: a field, a button that asks, and a download, each a band across the
+# bottom of the page, where a click finds it however tall the browser's tabs
+# and address bar above it are.
 PAGE = (
-    "data:text/html,<title>Blank</title><style>*{margin:0}</style>"
-    "<input style='position:fixed;left:0;top:0;width:300px;height:60px' "
-    "onkeydown=\"if(event.key==='Enter')document.title='typed '+this.value\">"
-    "<button style='position:fixed;left:0;top:100px;width:300px;height:60px' "
-    "onclick=\"document.title=confirm('Sure?')?'confirmed':'refused'\">Ask</button>"
-    "<a href='about:blank' target='_blank' style='position:fixed;left:0;top:200px;width:300px;height:60px'>Open</a>"
-    "<select style='position:fixed;left:0;top:300px;width:300px;height:40px' "
-    "onchange=\"document.title='chose '+this.value\"><option value=a>Apple"
-    "<optgroup label=Stone><option value=b disabled>Banana<option value=c>Cherry</optgroup></select>"
-    "<input type=file accept='.txt' style='position:fixed;left:0;top:360px;width:300px;height:40px' "
-    "onchange=\"this.files[0].text().then((t)=>document.title='file '+this.files[0].name+' '+t)\">"
-    "<a download='note.txt' href='data:text/plain,saved%20here' "
-    "style='position:fixed;left:0;top:420px;width:300px;height:40px'>Get</a>"
+    "data:text/html,<title>Blank</title><style>*{margin:0}body{position:fixed;inset:auto 0 0 0}"
+    "body>*{display:block;width:100%;height:120px;font-size:24px}</style>"
+    "<input onkeydown=\"if(event.key==='Enter')document.title='typed '+this.value\">"
+    "<button onclick=\"document.title=confirm('Sure?')?'confirmed '+document.querySelector('input').value:'refused'\">Ask</button>"
+    "<a download='note.txt' href='data:text/plain,saved%20here'>Get</a>"
 )
+# How far above the bottom of the screen each is.
+FIELD, BUTTON, DOWNLOAD = 300, 180, 60
 
 
 def filled(screen: Locator) -> None:
-    """Waits for the browser's image to fill its screen again: a dialog
-    above it takes room while it's open, and a click lands only on the
-    image, which takes a moment to come back at the new size."""
+    """Waits for the browser's display to fill its screen: drawn in the
+    screen's device pixels, at the column's size, so a point on the screen
+    is the same point in the browser. A dialog above it takes room while
+    it's open, and the display takes a moment to follow."""
     fit = "c => Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1"
     screen.page.wait_for_function(fit, arg=screen.element_handle(), timeout=10_000)
 
 
+def browser_screen(page: Page, name: str) -> Locator:
+    """The browser column's screen, shown and filled."""
+    open_workspace(page, name)
+    return shown_screen(page)
+
+
+def shown_screen(page: Page) -> Locator:
+    """The browser column's screen in the workspace on the page, once it's
+    shown and filled."""
+    browser = column(page, "browser")
+    # A browser starting afresh takes a while to show.
+    screen = browser.locator("canvas")
+    screen.wait_for(timeout=90_000)
+    browser.locator(".browser-wait").wait_for(state="detached", timeout=90_000)
+    filled(screen)
+    return screen
+
+
+def click_above_bottom(screen: Locator, height: int) -> None:
+    box = screen.bounding_box()
+    assert box is not None
+    screen.click(position={"x": 100, "y": box["height"] - height})
+
+
 def browses(page: Page, name: str) -> Any:
-    """A browser column shows the workspace's browser: what's typed and
-    clicked reaches the page, and a dialog it opens is answered from the
-    console. Agents in the workspace drive the same browser."""
+    """A browser column shows the workspace's browser, which draws its own
+    tabs and address bar: an address typed there is gone to. Agents in the
+    workspace drive the same browser."""
     open_workspace(page, name)
     page.get_by_role("button", name="Add a column").click()
-    page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser").click()
-    browser = column(page, "browser")
-    browser.locator(".browser-wait").wait_for(state="detached", timeout=90_000)
-    address = browser.locator(".browser-address")
-    address.fill(PAGE)
-    address.press("Enter")
-    title = browser.locator(".col-h .ct")
-    expect(title).to_have_text("Blank", timeout=30_000)
-    screen = browser.locator("canvas")
-    screen.click(position={"x": 20, "y": 20})
+    with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/columns"), timeout=90_000) as added:
+        page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser").click()
+    assert added.value.ok, f"{added.value.status} {added.value.text()}"
+    screen = shown_screen(page)
+    screen.click()
+    page.keyboard.press("Control+l")
+    page.keyboard.type(PAGE)
+    page.keyboard.press("Enter")
+    return {}
+
+
+def browser_answers(page: Page, name: str) -> Any:
+    """What's clicked and typed reaches the page, and the browser shows the
+    dialog the page opens, which is answered there."""
+    screen = browser_screen(page, name)
+    click_above_bottom(screen, FIELD)
     page.keyboard.type("hello")
+    click_above_bottom(screen, BUTTON)
+    # The dialog holds the page, so it's waited for here, not seen.
+    time.sleep(1)
     page.keyboard.press("Enter")
-    expect(title).to_have_text("typed hello", timeout=10_000)
-    screen.click(position={"x": 20, "y": 120})
-    asking = browser.get_by_role("alertdialog")
-    expect(asking).to_contain_text("Sure?", timeout=10_000)
-    asking.get_by_role("button", name="OK").click()
-    expect(title).to_have_text("confirmed", timeout=10_000)
-    # A link to a new tab opens it in front; closing it goes back.
-    screen.click(position={"x": 20, "y": 220})
-    tabs = browser.get_by_role("tab")
-    expect(tabs).to_have_count(2, timeout=10_000)
-    expect(title).to_have_text("New tab")
-    browser.get_by_role("button", name="Close New tab").click()
-    expect(title).to_have_text("confirmed", timeout=10_000)
-    # A select's own menu never shows in the screen's images, so the console
-    # shows its options, and what's chosen there is chosen on the page.
-    # Clicked again until it opens: closing the tab above shows this one
-    # again, and a click before its page is attached to goes nowhere.
-    menu = browser.get_by_role("listbox", name="Options")
-    deadline = time.monotonic() + 15
-    while not menu.count():
-        assert time.monotonic() < deadline, "no menu for the select"
-        screen.click(position={"x": 20, "y": 320})
-        time.sleep(1)
-    expect(menu).to_be_focused()
-    expect(menu.get_by_role("option")).to_have_count(3)
-    page.keyboard.press("ArrowDown")
-    page.keyboard.press("Enter")
-    expect(title).to_have_text("chose c", timeout=10_000)
-    expect(menu).to_have_count(0)
-    # So does a file input's picker: the file is chosen here, sent to the
-    # workspace, and given to the page from there.
-    screen.click(position={"x": 20, "y": 380})
-    asking = browser.get_by_role("alertdialog", name="The page asks for files")
-    with page.expect_file_chooser() as chooser:
-        asking.get_by_role("button", name="Choose a file…").click()
-    assert chooser.value.element.get_attribute("accept") == ".txt"
-    chooser.value.set_files({"name": "note.txt", "mimeType": "text/plain", "buffer": b"from here"})
-    expect(title).to_have_text("file note.txt from here", timeout=10_000)
-    expect(asking).to_have_count(0)
-    # A download lands in the workspace's Downloads, and is saved from there.
-    filled(screen)
-    screen.click(position={"x": 20, "y": 440})
+    return {}
+
+
+def browser_keeps(page: Page, name: str) -> Any:
+    """A download lands in the workspace's Downloads, and is saved from
+    there; copying and pasting go through this computer's clipboard."""
+    screen = browser_screen(page, name)
+    browser = column(page, "browser")
+    click_above_bottom(screen, DOWNLOAD)
     done = browser.get_by_role("status", name="Downloaded")
     expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)
     with page.expect_download() as saving:
@@ -720,11 +717,9 @@ def browses(page: Page, name: str) -> Any:
     assert saving.value.suggested_filename == "note.txt", saving.value.suggested_filename
     assert Path(saving.value.path()).read_text() == "saved here"
     expect(done).to_have_count(0)
-    # A right click reaches the page without a menu the screen can't show,
-    # which would hold the browser; copying and pasting go through this
-    # clipboard, not the browser's own.
+    filled(screen)
     page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
-    screen.click(position={"x": 20, "y": 20}, button="right")
+    click_above_bottom(screen, FIELD)
     page.keyboard.press("Control+a")
     page.keyboard.press("Control+c")
     deadline = time.monotonic() + 10
@@ -735,12 +730,11 @@ def browses(page: Page, name: str) -> Any:
     page.keyboard.press("Control+a")
     page.keyboard.press("Control+v")
     page.keyboard.press("Enter")
-    expect(title).to_have_text("typed pasted", timeout=10_000)
     # A second browser would want the same port: asking again goes to this one.
     page.get_by_role("button", name="Add a column").click()
     expect(page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser")).to_contain_text("open")
     page.keyboard.press("Escape")
-    return {"title": title.inner_text()}
+    return {}
 
 
 # A query's answer, read back raw from the terminal, then printed quoted on
@@ -981,10 +975,8 @@ def opens_in_workspace(page: Page, name: str) -> Any:
     offer = column(page, first).get_by_role("group", name="A program asks to open an address")
     offer.get_by_role("button", name="Open in the workspace's browser").click()
     browser = column(page, "browser")
-    expect(browser.locator(".browser-address")).to_have_value(local, timeout=90_000)
-    # A fresh browser's blank tab is used, not left behind: with one tab,
-    # the column shows no tabs.
-    expect(browser.get_by_role("tablist")).to_have_count(0)
+    browser.locator("canvas").wait_for(timeout=90_000)
+    browser.locator(".browser-wait").wait_for(state="detached", timeout=90_000)
     return {"local": local}
 
 
@@ -1711,6 +1703,8 @@ STEPS: dict[str, Callable[..., Any]] = {
     "names-itself": names_itself,
     "pastes-files": pastes_files,
     "browses": browses,
+    "browser-answers": browser_answers,
+    "browser-keeps": browser_keeps,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,
@@ -1747,12 +1741,31 @@ def main() -> None:
         context = browser.new_context(storage_state=STATE if STATE.exists() else None)
         context.set_default_timeout(30_000)
         page = context.new_page()
+        # What the console logged, told when a step fails.
+        logged: list[str] = []
+        page.on("console", lambda message: logged.append(f"{message.type}: {message.text}"))
+        page.on("websocket", lambda socket: logged.append(f"websocket: {socket.url}"))
         try:
             result = STEPS[step](page, *args)
         except Exception:
             SHOTS.mkdir(parents=True, exist_ok=True)
             for index, open_page in enumerate(context.pages):
                 open_page.screenshot(path=SHOTS / f"{step}-{index}.png")
+            print("\n".join(["console:", *logged[-60:]]), file=sys.stderr)
+            for shown in page.locator("section[data-column]").all():
+                print(f"column {shown.get_attribute('data-column')}: {shown.inner_text()[:300]!r}", file=sys.stderr)
+            print(f"page: {page.locator('body').inner_text()[:1500]!r}", file=sys.stderr)
+            # What iglud has: each workspace's columns, and its sessions.
+            told = page.evaluate(
+                """async () => {
+                  const listed = await (await fetch('/v1/workspaces')).json();
+                  return Promise.all(listed.map(async (w) => ({
+                    name: w.name, columns: w.columns,
+                    sessions: await (await fetch(`/v1/workspaces/${w.id}/columns`)).json(),
+                  })));
+                }"""
+            )
+            print(f"iglud: {json.dumps(told)}", file=sys.stderr)
             raise
         finally:
             context.storage_state(path=STATE)

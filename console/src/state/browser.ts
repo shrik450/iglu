@@ -1,100 +1,110 @@
-// The workspace's browser as a column shows it: where on the page a point
-// on the screen is, and what a key or a click is to the browser.
+// The workspace's browser as a column shows it, over VNC: what a key is to
+// the browser, as an X keysym, which modifiers it's pressed with, and how
+// the display is drawn for the screen it's shown on.
 
-import type { BrowserInput } from "../generated/BrowserInput.ts";
-import type { BrowserTab } from "../generated/BrowserTab.ts";
-import type { KeyInput } from "../generated/KeyInput.ts";
-import type { MenuOption } from "../generated/MenuOption.ts";
-import type { Modifiers } from "../generated/Modifiers.ts";
-import type { MouseButton } from "../generated/MouseButton.ts";
+/** Keysyms of the keys a KeyboardEvent names, by location where the left
+ * and right ones differ. */
+const NAMED: Record<string, number | [left: number, right: number]> = {
+  Backspace: 0xff08,
+  Tab: 0xff09,
+  Enter: 0xff0d,
+  Pause: 0xff13,
+  ScrollLock: 0xff14,
+  Escape: 0xff1b,
+  Home: 0xff50,
+  ArrowLeft: 0xff51,
+  ArrowUp: 0xff52,
+  ArrowRight: 0xff53,
+  ArrowDown: 0xff54,
+  PageUp: 0xff55,
+  PageDown: 0xff56,
+  End: 0xff57,
+  PrintScreen: 0xff61,
+  Insert: 0xff63,
+  ContextMenu: 0xff67,
+  NumLock: 0xff7f,
+  Delete: 0xffff,
+  Shift: [0xffe1, 0xffe2],
+  Control: [0xffe3, 0xffe4],
+  Alt: [0xffe9, 0xffea],
+  Meta: [0xffeb, 0xffec],
+  AltGraph: 0xfe03,
+};
 
-interface Size {
-  width: number;
-  height: number;
+export const SHIFT = 0xffe1;
+export const CONTROL = 0xffe3;
+export const ALT = 0xffe9;
+export const SUPER = 0xffeb;
+const RETURN = 0xff0d;
+const TAB = 0xff09;
+const KP_ENTER = 0xff8d;
+const F1 = 0xffbe;
+const LOCATION_RIGHT = 2;
+const LOCATION_NUMPAD = 3;
+
+/** The keysym of a character: Latin-1 ones are their own code points, the
+ * rest are Unicode keysyms. */
+export function charKeysym(char: string): number {
+  const point = char.codePointAt(0) ?? 0;
+  if ((point >= 0x20 && point <= 0x7e) || (point >= 0xa0 && point <= 0xff)) return point;
+  return 0x0100_0000 + point;
 }
 
-/** Where on the page a point in the screen's box is, in the page's CSS
- * pixels, or null when it's off the image. The image is shown whole, from
- * the top left, as large as the box allows; `page` is the size it shows. */
-export function pagePoint(box: Size, image: Size, page: Size, x: number, y: number): { x: number; y: number } | null {
-  if (!image.width || !image.height || !box.width || !box.height) return null;
-  const shown = Math.min(box.width / image.width, box.height / image.height);
-  const width = image.width * shown;
-  const height = image.height * shown;
-  if (x < 0 || y < 0 || x > width || y > height) return null;
-  return { x: (x / width) * page.width, y: (y / height) * page.height };
+/** Whether a key is a modifier, which the browser is told of by holding
+ * it (see `modifiersFor`) rather than as a key of its own. */
+export function isModifier(key: string): boolean {
+  return key === "Shift" || key === "Control" || key === "Alt" || key === "Meta" || key === "AltGraph" || key === "CapsLock";
 }
 
-/** Where in the screen's box a rectangle on the page is shown, as
- * `pagePoint` shows the page: the inverse of it. Null before there's an
- * image. */
-export function screenRect(
-  box: Size,
-  image: Size,
-  page: Size,
-  rect: { left: number; top: number; width: number; height: number },
-): { left: number; top: number; width: number; height: number } | null {
-  if (!image.width || !image.height || !page.width || !page.height) return null;
-  const shown = Math.min(box.width / image.width, box.height / image.height);
-  const x = (image.width * shown) / page.width;
-  const y = (image.height * shown) / page.height;
-  return { left: rect.left * x, top: rect.top * y, width: rect.width * x, height: rect.height * y };
+/** The keysym of a key as a KeyboardEvent names it, or null for one the
+ * browser has no use for. */
+export function keysymOf(key: string, location: number): number | null {
+  if (key === "Enter" && location === LOCATION_NUMPAD) return KP_ENTER;
+  const named = NAMED[key];
+  if (named !== undefined) return typeof named === "number" ? named : named[location === LOCATION_RIGHT ? 1 : 0];
+  const f = /^F([1-9]|1\d|2[0-4])$/.exec(key);
+  if (f) return F1 + Number(f[1]) - 1;
+  return [...key].length === 1 ? charKeysym(key) : null;
 }
 
-/** The option an arrow key goes to from `from`, `step` at a time, past the
- * ones that can't be chosen; `from` itself when there's none that way. */
-export function stepOption(options: readonly MenuOption[], from: number, step: 1 | -1): number {
-  for (let i = from + step; i >= 0 && i < options.length; i += step) {
-    if (!options[i]?.disabled) return i;
-  }
-  return from;
+interface Held {
+  key: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
 }
 
-/** The first option after `from` whose label starts with what's typed, as
- * a select finds one, going round; null when none does. */
-export function typedOption(options: readonly MenuOption[], from: number, typed: string): number | null {
-  const wanted = typed.toLowerCase();
-  for (let n = 1; n <= options.length; n++) {
-    const i = (from + n) % options.length;
-    const option = options[i];
-    if (option && !option.disabled && option.label.toLowerCase().startsWith(wanted)) return i;
-  }
-  return null;
+/** Whether a key types a character, as its KeyboardEvent names it. */
+function printable(key: string): boolean {
+  return [...key].length === 1;
 }
 
-/** The modifiers held, as the browser should take them. It runs on Linux,
- * where shortcuts use Control, so a Mac's Command is sent as Control. */
-export function modifiersOf(event: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }, mac: boolean): Modifiers {
-  return {
-    alt: event.altKey,
-    ctrl: event.ctrlKey || (mac && event.metaKey),
-    meta: !mac && event.metaKey,
-    shift: event.shiftKey,
-  };
+/** The modifiers the browser should see held with a key. It runs on
+ * Linux, where shortcuts use Control, so a Mac's Command is Control; and a
+ * Mac's Option that typed a character typed it, so isn't held as Alt. */
+export function modifiersFor(event: Held, mac: boolean): number[] {
+  const held: number[] = [];
+  if (event.shiftKey) held.push(SHIFT);
+  if (event.ctrlKey || (mac && event.metaKey)) held.push(CONTROL);
+  if (event.altKey && !(mac && printable(event.key))) held.push(ALT);
+  if (event.metaKey && !mac) held.push(SUPER);
+  return held;
 }
 
-/** A key for the browser, or null for one an input method is composing
- * with, whose text comes when it's done. */
-export function keyOf(event: KeyboardEvent, mac: boolean): KeyInput | null {
-  if (event.isComposing || event.key === "Process" || event.key === "Unidentified" || event.key === "Dead") return null;
-  // Command is Control to the browser, so the key itself is too.
-  const command = mac && event.key === "Meta";
-  return {
-    action: event.type === "keyup" ? "release" : "press",
-    key: command ? "Control" : event.key,
-    code: command ? event.code.replace("Meta", "Control") : event.code,
-    repeat: event.repeat,
-    location: event.location,
-    modifiers: modifiersOf(event, mac),
-  };
+/** The key a key event presses, as the browser should take it: a Mac
+ * names a letter lowercase while Command is held, Shift or not. */
+export function keyFor(event: Held, mac: boolean): string {
+  return mac && event.metaKey && event.shiftKey && /^[a-z]$/.test(event.key) ? event.key.toUpperCase() : event.key;
 }
 
-/** What a shortcut held with `key` does to the clipboard: the browser's
- * clipboard isn't this one, so copying asks for the selection, and pasting
- * is left to the paste that follows. */
-export function clipboardAction(modifiers: Modifiers, key: string): "copy" | "paste" | null {
-  if (!modifiers.ctrl || modifiers.alt || modifiers.meta) return null;
-  switch (key.toLowerCase()) {
+/** What a shortcut does with the clipboard: the browser's clipboard isn't
+ * this one, so a paste is left to the paste event that follows, which
+ * brings this clipboard's text. */
+export function clipboardShortcut(event: Held, mac: boolean): "copy" | "paste" | null {
+  const command = mac ? event.metaKey || event.ctrlKey : event.ctrlKey;
+  if (!command || event.altKey) return null;
+  switch (event.key.toLowerCase()) {
     case "c":
     case "x":
       return "copy";
@@ -105,61 +115,39 @@ export function clipboardAction(modifiers: Modifiers, key: string): "copy" | "pa
   }
 }
 
-/** The button a `PointerEvent.button` names. */
-export function buttonOf(button: number): MouseButton {
-  return (["left", "middle", "right", "back", "forward"] as const)[button] ?? "none";
-}
-
-/** A press, for counting a double or triple click. */
-export interface Press {
-  at: number;
-  x: number;
-  y: number;
-  button: number;
-  clicks: number;
-}
-
-/** How many presses in a row a press makes: one more than the last when
- * it's the same button, soon after and close by. */
-export function clicksAfter(last: Press | null, now: Omit<Press, "clicks">): number {
-  const again = last !== null && last.button === now.button && now.at - last.at < 500 && Math.hypot(now.x - last.x, now.y - last.y) < 5;
-  return again ? Math.min(last.clicks + 1, 3) : 1;
-}
-
-/** A wheel's turn in CSS pixels, whichever unit it came in. */
-export function wheelPixels(delta: number, mode: number, pageHeight: number): number {
-  switch (mode) {
-    case 1:
-      return delta * 16;
-    case 2:
-      return delta * pageHeight;
-    default:
-      return delta;
+/** The keysyms that type `text`, each pressed and let go in turn; null
+ * when it can only be pasted: keysyms past Unicode's first plane, as most
+ * emoji are, don't reach the browser whole. */
+export function typing(text: string): number[] | null {
+  const keys: number[] = [];
+  for (const char of text.replaceAll("\r\n", "\n")) {
+    if ((char.codePointAt(0) ?? 0) > 0xffff) return null;
+    keys.push(char === "\n" ? RETURN : char === "\t" ? TAB : charKeysym(char));
   }
+  return keys;
 }
 
-/** What a tab's address bar shows: nothing for a blank page, where it
- * offers to take an address instead. */
-export function addressOf(tab: BrowserTab | undefined): string {
-  return !tab || tab.url === "about:blank" ? "" : tab.url;
+/** The scale the display is drawn at for a screen with this pixel ratio:
+ * as the display takes it, between 1 and 4 in hundredths. */
+export function scaleOf(ratio: number): number {
+  return Math.min(4, Math.max(1, Math.round(ratio * 100) / 100));
 }
 
-/** How to open `address`: in the one tab of a browser that's only just
- * started, which is blank, or else in a tab of its own, so a page an agent
- * or the person has open stays. */
-export function openingOf(tabs: BrowserTab[], address: string): BrowserInput {
-  const [only, ...others] = tabs;
-  return only?.url === "about:blank" && others.length === 0 ? { type: "navigate", address } : { type: "open", address };
+/** How large the display should be for a box of this size, in CSS pixels,
+ * at `scale`: in device pixels, so the browser draws as sharp as the
+ * screen shows. */
+export function displaySize(box: { w: number; h: number }, scale: number): { w: number; h: number } {
+  return { w: Math.round(box.w * scale), h: Math.round(box.h * scale) };
 }
 
-/** A tab's name: its title, or where it is while it has none. */
-export function tabName(tab: BrowserTab): string {
-  if (tab.title && tab.title !== tab.url) return tab.title;
-  if (tab.url === "about:blank" || !tab.url) return "New tab";
-  try {
-    const url = new URL(tab.url);
-    return url.host || tab.url;
-  } catch {
-    return tab.url;
-  }
+/** RFB encodings, as noVNC numbers them. */
+const ZRLE = 16;
+const H264 = 50;
+
+/** The encodings to offer the display, most wanted first: H.264 when the
+ * display encodes on the host's GPU; otherwise ZRLE, which is lossless,
+ * and smallest for text. */
+export function preferred(encodings: readonly number[], hardware: boolean): number[] {
+  const first = (hardware ? [H264, ZRLE] : [ZRLE]).filter((e) => encodings.includes(e));
+  return [...first, ...encodings.filter((e) => !first.includes(e))];
 }

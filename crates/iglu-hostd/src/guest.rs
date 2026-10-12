@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use iglu_domain::attention::{self, AttentionState, SessionStatus, ThreadKey};
+use iglu_domain::display::DisplayScale;
 use iglu_domain::git::{GitState, ObservedBranch};
 use iglu_domain::guest::{GitReport, ListenerReport, StatusEntry};
 use iglu_domain::lifecycle::SecretsGeneration;
@@ -40,6 +41,9 @@ pub enum GuestCommand<'a> {
     Input(&'a SessionName, &'a TerminalInput),
     /// Keeps a pasted file, which goes on the input, and prints its path.
     Keep(&'a FileName, &'a [u8]),
+    /// Draws the browser's display at a scale, and prints what it draws
+    /// with, as JSON.
+    Display(DisplayScale),
 }
 
 /// Whether an open is the boot's opening of the workspace's columns, which
@@ -94,6 +98,11 @@ impl GuestCommand<'_> {
             ],
             Self::Input(session, _) => vec!["input".into(), session.to_string()],
             Self::Keep(name, _) => vec!["keep".into(), name.to_string()],
+            Self::Display(scale) => vec![
+                "browser-display".into(),
+                "--scale".into(),
+                scale.to_string(),
+            ],
         }
     }
 
@@ -121,7 +130,8 @@ impl GuestCommand<'_> {
             | Self::Listeners
             | Self::GitState
             | Self::Close(_)
-            | Self::Output(..) => None,
+            | Self::Output(..)
+            | Self::Display(_) => None,
         }
     }
 }

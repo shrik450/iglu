@@ -52,6 +52,27 @@ const KEPT_DEVICE: &str = "iglu-kept";
 /// The disk device that mounts the host's guest tools into an instance.
 const TOOLS_DEVICE: &str = "iglu-tools";
 
+/// The device that gives an instance the host's GPU to draw on.
+const GPU_DEVICE: &str = "iglu-gpu";
+
+/// The GPU device an instance should have: the host's render node, for the
+/// workspace account's group only, or none when the host gives workspaces
+/// no GPU. A render node draws and encodes; it can't drive a display. Not
+/// required, so a host whose GPU is gone still starts its workspaces,
+/// which then draw on the CPU.
+fn gpu_device(node: Option<&Path>, user: &GuestUser) -> Option<Value> {
+    node.map(|node| {
+        json!({
+            "type": "unix-char",
+            "source": node,
+            "path": node,
+            "gid": user.gid.get().to_string(),
+            "mode": "0660",
+            "required": "false",
+        })
+    })
+}
+
 /// The volume that holds a person's kept directory on this host. Its files
 /// belong to the workspace account's uid, so an environment whose account
 /// has another gets a volume of its own.
@@ -171,6 +192,50 @@ impl IncusRuntime {
             Err(_) if self.incus.get::<Value>(&path).await.is_ok() => Ok(()),
             Err(error) => Err(failed(error)),
         }
+    }
+
+    /// Gives the instance the host's GPU as the host is configured now, or
+    /// takes it away, before it starts: a workspace made before the host
+    /// had one gets it too.
+    async fn fit_gpu(&self, name: InstanceName) -> Result<(), RuntimeError> {
+        let path = format!("/1.0/instances/{name}");
+        let instance: Value = self.incus.get(&path).await.map_err(failed)?;
+        let Some(user) = instance["config"][keys::GUEST_USER]
+            .as_str()
+            .and_then(|v| serde_json::from_str::<GuestUser>(v).ok())
+        else {
+            return Ok(());
+        };
+        let wanted = gpu_device(self.settings.gpu.as_deref(), &user);
+        if instance["devices"].get(GPU_DEVICE) == wanted.as_ref() {
+            return Ok(());
+        }
+        let timeout = self.timeouts.operation();
+        let changed = if let Some(device) = wanted {
+            let merged = json!({ "devices": { GPU_DEVICE: device } });
+            self.incus.update_instance(name, &merged, timeout).await
+        } else {
+            // A merge can't take a device away: the whole instance goes back
+            // without it.
+            let mut devices = instance["devices"].clone();
+            if let Some(devices) = devices.as_object_mut() {
+                devices.remove(GPU_DEVICE);
+            }
+            let body = json!({
+                "architecture": instance["architecture"],
+                "config": instance["config"],
+                "devices": devices,
+                "ephemeral": instance["ephemeral"],
+                "profiles": instance["profiles"],
+                "stateful": instance["stateful"],
+                "description": instance["description"],
+            });
+            self.incus
+                .run(Method::PUT, &path, Some(&body), timeout)
+                .await
+                .map(|_| ())
+        };
+        changed.map_err(failed)
     }
 
     async fn change(&self, name: InstanceName, action: StateAction) -> Result<(), RuntimeError> {
@@ -294,6 +359,7 @@ impl Runtime for IncusRuntime {
     }
 
     async fn start(&self, name: InstanceName) -> Result<(), RuntimeError> {
+        self.fit_gpu(name).await?;
         self.change(name, StateAction::Start).await
     }
 
@@ -594,4 +660,25 @@ fn mem_available_kib(meminfo: &str) -> u64 {
                 .ok()
         })
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_workspace_gets_the_render_node_for_its_account_only() {
+        let user: GuestUser = serde_json::from_value(json!({
+            "name": "dev", "uid": 1000, "gid": 100, "home": "/home/dev"
+        }))
+        .expect("a user");
+        let device = gpu_device(Some(Path::new("/dev/dri/renderD128")), &user).expect("a device");
+        assert_eq!(device["type"], "unix-char");
+        assert_eq!(device["source"], "/dev/dri/renderD128");
+        assert_eq!(device["path"], "/dev/dri/renderD128");
+        assert_eq!(device["gid"], "100");
+        assert_eq!(device["mode"], "0660");
+        assert_eq!(device["required"], "false");
+        assert_eq!(gpu_device(None, &user), None);
+    }
 }

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
 use crate::column::{
-    BROWSER_DEBUG_PORT, BROWSER_PORT_PRIVATE, ColumnKind, ColumnSpec, ColumnTemplate, ColumnWidth,
+    BROWSER_PORT_PRIVATE, ColumnKind, ColumnSpec, ColumnTemplate, ColumnWidth, browsers_port,
     name_templates,
 };
 use crate::label::{ProjectName, WorkspaceName};
@@ -109,7 +109,7 @@ impl TryFrom<Vec<GuestPort>> for PreviewPorts {
                 "may have at most 16 ports",
             ));
         }
-        if ports.iter().any(|p| p.get() == BROWSER_DEBUG_PORT) {
+        if ports.iter().any(|p| browsers_port(p.get())) {
             return Err(ParseError::new("preview ports", BROWSER_PORT_PRIVATE));
         }
         Ok(Self(ports))
@@ -222,6 +222,7 @@ pub fn unique<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::column::{BROWSER_DEBUG_PORT, BROWSER_DISPLAY_PORT};
 
     fn repo(url: &str) -> RepoUrl {
         url.parse().expect("a valid repository")
@@ -240,6 +241,7 @@ mod tests {
         assert!(PreviewPorts::try_from((1..=17).map(port).collect::<Vec<_>>()).is_err());
         // Anyone with the link would drive the workspace's browser.
         assert!(PreviewPorts::try_from(vec![port(3000), port(BROWSER_DEBUG_PORT)]).is_err());
+        assert!(PreviewPorts::try_from(vec![port(BROWSER_DISPLAY_PORT)]).is_err());
     }
 
     #[test]

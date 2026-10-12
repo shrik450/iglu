@@ -54,6 +54,10 @@ pub struct Incus {
     /// The guest tools, a directory with their static build in its `bin`,
     /// mounted read-only into every instance.
     pub guest_tools: PathBuf,
+    /// The GPU render node workspaces draw their browser on, such as
+    /// `/dev/dri/renderD128`; without one, they draw on the CPU.
+    #[serde(default)]
+    pub gpu: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]

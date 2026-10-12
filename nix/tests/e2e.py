@@ -5,6 +5,7 @@
 import json
 import re
 import shlex
+import time
 import urllib.parse
 from typing import Any
 
@@ -32,6 +33,12 @@ def diagnose() -> None:
     # What iglud thinks of each workspace, and what happened to it.
     _, listing = client.execute(f"{IGLU} ls; for w in $({IGLU} --json ls | jq -r '.[].name'); do echo \"== $w\"; {IGLU} log $w; done")
     print(f"===== workspaces =====\n{listing}")
+    # Each workspace's browser display, as the guest started it.
+    _, displays = host.execute(
+        "for i in $(incus list -c n -f csv); do echo \"== $i\"; "
+        "incus exec $i -- sh -c 'tail -n 30 /run/user/*/iglu/display/*.log'; done"
+    )
+    print(f"===== browser displays =====\n{displays}")
     if client.execute("test -d /tmp/browser")[0] == 0:
         client.copy_from_machine("/tmp/browser", "")
 
@@ -312,10 +319,27 @@ try:
         assert second["columns"] == ["shell", "shell-2"], second
 
     with subtest("a browser column shows the workspace's browser, which its agents drive too"):
+        # The console shows the browser's display, not its pages, so what
+        # happens on them is read as agents read it, at $IGLU_BROWSER.
+        # A browser that's only just shown may not answer yet.
+        def pages() -> list[Any]:
+            listed = json.loads(guest("curl -sf $IGLU_BROWSER/json/list || echo []"))
+            return [t for t in listed if t["type"] == "page"]
+
+        def page_titled(pattern: str) -> str:
+            for _ in range(60):
+                found = [t["title"] for t in pages() if re.fullmatch(pattern, t["title"])]
+                if found:
+                    return found[0]
+                time.sleep(1)
+            raise AssertionError(f"no page titled {pattern}: {pages()}")
+
         browser("browses", "demo")
-        # Agents find the same browser, on the same tab, at $IGLU_BROWSER.
-        tabs = json.loads(guest("curl -sf $IGLU_BROWSER/json/list"))
-        assert any(t["type"] == "page" and t["title"] == "typed pasted" for t in tabs), tabs
+        page_titled("Blank")
+        browser("browser-answers", "demo")
+        page_titled("confirmed hello")
+        browser("browser-keeps", "demo")
+        page_titled("typed pasted")
         # Its port is iglu's own, and never published.
         refused = client.fail(f"{IGLU} port demo 9222 2>&1")
         assert "DevTools" in refused, refused
@@ -326,7 +350,13 @@ try:
         assert guest("echo $BROWSER").strip() == "/var/lib/iglu/tools/bin/xdg-open"
         browser("copies-from-programs", "demo")
         browser("opens-from-programs", "demo")
-        browser("opens-in-workspace", "demo")
+        opened = browser("opens-in-workspace", "demo")
+        for _ in range(60):
+            if any(t["url"] == opened["local"] for t in pages()):
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError(f"{opened['local']} isn't open: {pages()}")
         client.succeed(f"{IGLU} column close browser -w demo")
 
     token = json.loads(client.succeed("cat /root/.config/iglu/credentials.json"))["token"]

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use iglu_api::ColumnOutput;
+use iglu_domain::display::{DisplayReport, DisplayScale};
 use iglu_domain::download::DownloadName;
 use iglu_domain::env::{EnvSource, GuestPath};
 use iglu_domain::git::GitState;
@@ -310,6 +311,20 @@ impl HostClient {
             )
             .await?;
         Ok(kept.path)
+    }
+
+    /// Draws the workspace's browser at `scale`, and says what its display
+    /// draws with.
+    pub async fn display(
+        &self,
+        workspace: WorkspaceId,
+        scale: DisplayScale,
+    ) -> Result<DisplayReport, HostError> {
+        let mut url = self.url(&format!("/v1/workspaces/{workspace}/display"))?;
+        url.query_pairs_mut()
+            .append_pair("scale", &scale.to_string());
+        self.json(self.http.put(url).timeout(Duration::from_secs(30)))
+            .await
     }
 
     /// A file the workspace's browser downloaded, as the host streams it;

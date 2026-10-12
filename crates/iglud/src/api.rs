@@ -12,7 +12,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
 use futures_util::{Stream, StreamExt};
-use iglu_api::browser::BrowserSize;
+use iglu_api::browser::BrowserQuery;
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
     CreateWorkspace, EnvironmentView, Identity, KeptFile, LabelColumn, LabelWorkspace,
@@ -877,6 +877,21 @@ async fn add_column(
     Path(id): Path<WorkspaceId>,
     Body(request): Body<AddColumn>,
 ) -> Result<(StatusCode, Json<ColumnSpec>), ApiError> {
+    // Finished even when whoever asked goes, as a page left while a column
+    // opens does: its session opens before it's recorded, and a session
+    // never recorded would be left as a stranger's shell.
+    let spec = tokio::spawn(adding(actor, app, id, request))
+        .await
+        .map_err(|_| ApiError::Internal)??;
+    Ok((StatusCode::CREATED, Json(spec)))
+}
+
+async fn adding(
+    actor: Actor,
+    app: Arc<App>,
+    id: WorkspaceId,
+    request: AddColumn,
+) -> Result<ColumnSpec, ApiError> {
     let ws = workspace_for(&app, &actor, id, Action::ManageColumns).await?;
     let host = host_for(&app, &ws)?;
     let _editing = app.column_edits.lock(id).await;
@@ -930,7 +945,7 @@ async fn add_column(
         })
         .await?;
     app.changed();
-    Ok((StatusCode::CREATED, Json(spec)))
+    Ok(spec)
 }
 
 async fn put_layout(
@@ -1206,15 +1221,14 @@ async fn open_browser(
     caller: Caller,
     State(app): State<Arc<App>>,
     Path(id): Path<WorkspaceId>,
-    Query(size): Query<BrowserSize>,
+    Query(query): Query<BrowserQuery>,
     Upgrade(upgrade): Upgrade,
 ) -> Result<Response, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let host = host_for(&app, &ws)?;
-    Ok(
-        upgrade
-            .on_upgrade(move |socket| crate::browser::relay(app, caller, ws, host, size, socket)),
-    )
+    Ok(upgrade.on_upgrade(move |socket| {
+        crate::browser::relay(app, caller, ws, host, query.scale, socket)
+    }))
 }
 
 /// A file the workspace's browser downloaded, for its owner to save: only
@@ -1269,8 +1283,8 @@ async fn live(
     Ok(Json(LiveView {
         listeners: listeners
             .into_iter()
-            // iglu's own, for the browser column; it can't be published.
-            .filter(|listener| listener.port.get() != column::BROWSER_DEBUG_PORT)
+            // iglu's own, for the browser column; they can't be published.
+            .filter(|listener| !column::browsers_port(listener.port.get()))
             .map(|listener| ListenerView {
                 route: routes
                     .iter()
@@ -1309,7 +1323,7 @@ async fn publish_route(
     Path(id): Path<WorkspaceId>,
     Body(request): Body<PublishPort>,
 ) -> Result<(StatusCode, Json<RouteView>), ApiError> {
-    if request.port.get() == column::BROWSER_DEBUG_PORT {
+    if column::browsers_port(request.port.get()) {
         return Err(ApiError::BadRequest(Problem::at(
             "port",
             format!("The port {}", column::BROWSER_PORT_PRIVATE),

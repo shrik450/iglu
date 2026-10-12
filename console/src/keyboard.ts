@@ -235,3 +235,9 @@ export function onPageKey(event: KeyboardEvent): void {
 export function terminalKey(event: KeyboardEvent, send: (text: string) => void): boolean {
   return handle(event, "terminal", send);
 }
+
+/** For the browser: returns true when the console took the key. The rest
+ * reach the browser as keys, Option and all, not as a terminal's bytes. */
+export function browserKey(event: KeyboardEvent): boolean {
+  return handle(event, "terminal");
+}

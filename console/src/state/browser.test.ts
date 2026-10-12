@@ -1,110 +1,71 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { addressOf, buttonOf, clicksAfter, clipboardAction, keyOf, modifiersOf, openingOf, pagePoint, screenRect, stepOption, tabName, typedOption, wheelPixels } from "./browser.ts";
+import { ALT, clipboardShortcut, CONTROL, displaySize, keyFor, keysymOf, modifiersFor, preferred, scaleOf, SHIFT, SUPER, typing } from "./browser.ts";
 
-test("a point on the screen is the point on the page under it", () => {
-  // A 1600×1200 image of an 800×600 page, shown in a 400×400 box: 400×300 from the top left.
-  const box = { width: 400, height: 400 };
-  const image = { width: 1600, height: 1200 };
-  const page = { width: 800, height: 600 };
-  assert.deepEqual(pagePoint(box, image, page, 200, 150), { x: 400, y: 300 });
-  assert.deepEqual(pagePoint(box, image, page, 0, 0), { x: 0, y: 0 });
-  // Below the image is off the page.
-  assert.equal(pagePoint(box, image, page, 200, 350), null);
-  // Before any image, nothing is.
-  assert.equal(pagePoint(box, { width: 0, height: 0 }, page, 10, 10), null);
+const plain = { key: "", altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+
+test("a key is the keysym X names it by", () => {
+  assert.equal(keysymOf("a", 0), 0x61);
+  assert.equal(keysymOf("é", 0), 0xe9);
+  assert.equal(keysymOf("€", 0), 0x0100_20ac);
+  assert.equal(keysymOf("Enter", 0), 0xff0d);
+  assert.equal(keysymOf("Enter", 3), 0xff8d);
+  assert.equal(keysymOf("ArrowLeft", 0), 0xff51);
+  assert.equal(keysymOf("F1", 0), 0xffbe);
+  assert.equal(keysymOf("F12", 0), 0xffc9);
+  assert.equal(keysymOf("Shift", 1), 0xffe1);
+  assert.equal(keysymOf("Shift", 2), 0xffe2);
+  assert.equal(keysymOf("Unidentified", 0), null);
+  assert.equal(keysymOf("F25", 0), null);
 });
 
-test("a Mac's Command reaches the browser as Control", () => {
-  const command = { altKey: false, ctrlKey: false, metaKey: true, shiftKey: false };
-  assert.deepEqual(modifiersOf(command, true), { alt: false, ctrl: true, meta: false, shift: false });
-  assert.deepEqual(modifiersOf(command, false), { alt: false, ctrl: false, meta: true, shift: false });
+test("a Mac's Command is held as Control, and its Option only for keys it doesn't type with", () => {
+  assert.deepEqual(modifiersFor({ ...plain, key: "c", metaKey: true }, true), [CONTROL]);
+  assert.deepEqual(modifiersFor({ ...plain, key: "c", metaKey: true }, false), [SUPER]);
+  // Option+F types ƒ, which isn't Alt+F to the browser.
+  assert.deepEqual(modifiersFor({ ...plain, key: "ƒ", altKey: true }, true), []);
+  assert.deepEqual(modifiersFor({ ...plain, key: "ArrowLeft", altKey: true }, true), [ALT]);
+  assert.deepEqual(modifiersFor({ ...plain, key: "f", altKey: true }, false), [ALT]);
+  assert.deepEqual(modifiersFor({ ...plain, key: "T", shiftKey: true, ctrlKey: true }, false), [SHIFT, CONTROL]);
 });
 
-test("a Mac's Command key itself is a Control key to the browser", () => {
-  const command = { type: "keydown", key: "Meta", code: "MetaRight", repeat: false, location: 2, isComposing: false, altKey: false, ctrlKey: false, metaKey: true, shiftKey: false } as KeyboardEvent;
-  assert.deepEqual(keyOf(command, true), {
-    action: "press",
-    key: "Control",
-    code: "ControlRight",
-    repeat: false,
-    location: 2,
-    modifiers: { alt: false, ctrl: true, meta: false, shift: false },
-  });
-  assert.equal(keyOf(command, false)?.key, "Meta");
-  assert.equal(keyOf({ ...command, key: "Process" } as KeyboardEvent, true), null);
+test("a Mac's Command+Shift letter is the capital, as Shift makes it elsewhere", () => {
+  assert.equal(keyFor({ ...plain, key: "t", metaKey: true, shiftKey: true }, true), "T");
+  assert.equal(keyFor({ ...plain, key: "t", metaKey: true }, true), "t");
+  assert.equal(keyFor({ ...plain, key: "[", metaKey: true, shiftKey: true }, true), "[");
 });
 
-test("copying asks for the selection and pasting waits for the paste", () => {
-  const ctrl = { alt: false, ctrl: true, meta: false, shift: false };
-  assert.equal(clipboardAction(ctrl, "c"), "copy");
-  assert.equal(clipboardAction(ctrl, "X"), "copy");
-  assert.equal(clipboardAction(ctrl, "v"), "paste");
-  assert.equal(clipboardAction(ctrl, "a"), null);
-  assert.equal(clipboardAction({ ...ctrl, ctrl: false }, "c"), null);
+test("copying and pasting are the platform's shortcuts", () => {
+  assert.equal(clipboardShortcut({ ...plain, key: "v", metaKey: true }, true), "paste");
+  assert.equal(clipboardShortcut({ ...plain, key: "V", ctrlKey: true, shiftKey: true }, false), "paste");
+  assert.equal(clipboardShortcut({ ...plain, key: "c", ctrlKey: true }, false), "copy");
+  assert.equal(clipboardShortcut({ ...plain, key: "x", metaKey: true }, true), "copy");
+  assert.equal(clipboardShortcut({ ...plain, key: "v", metaKey: true }, false), null);
+  assert.equal(clipboardShortcut({ ...plain, key: "v", ctrlKey: true, altKey: true }, false), null);
+  assert.equal(clipboardShortcut({ ...plain, key: "v" }, false), null);
 });
 
-test("presses close together in time and place count up to a triple click", () => {
-  const first = { at: 0, x: 10, y: 10, button: 0 };
-  assert.equal(clicksAfter(null, first), 1);
-  const second = { at: 200, x: 12, y: 11, button: 0 };
-  assert.equal(clicksAfter({ ...first, clicks: 1 }, second), 2);
-  assert.equal(clicksAfter({ ...second, clicks: 3 }, { ...second, at: 300 }), 3);
-  assert.equal(clicksAfter({ ...first, clicks: 1 }, { ...second, at: 900 }), 1);
-  assert.equal(clicksAfter({ ...first, clicks: 1 }, { ...second, x: 40 }), 1);
-  assert.equal(clicksAfter({ ...first, clicks: 1 }, { ...second, button: 2 }), 1);
+test("text is typed a keysym a character, except what only a paste brings whole", () => {
+  assert.deepEqual(typing("hé!"), [0x68, 0xe9, 0x21]);
+  assert.deepEqual(typing("a\r\nb\tc"), [0x61, 0xff0d, 0x62, 0xff09, 0x63]);
+  assert.deepEqual(typing("€"), [0x0100_20ac]);
+  assert.equal(typing("hi 😀"), null);
 });
 
-test("buttons and wheels in the browser's terms", () => {
-  assert.equal(buttonOf(0), "left");
-  assert.equal(buttonOf(2), "right");
-  assert.equal(buttonOf(7), "none");
-  assert.equal(wheelPixels(3, 1, 600), 48);
-  assert.equal(wheelPixels(1, 2, 600), 600);
-  assert.equal(wheelPixels(-12.5, 0, 600), -12.5);
+test("the display is drawn in the screen's device pixels, at a scale it takes", () => {
+  assert.equal(scaleOf(2), 2);
+  assert.equal(scaleOf(1.333_333), 1.33);
+  // Zoomed out, or past what the display draws.
+  assert.equal(scaleOf(0.9), 1);
+  assert.equal(scaleOf(5), 4);
+  assert.deepEqual(displaySize({ w: 640.5, h: 400 }, 2), { w: 1281, h: 800 });
 });
 
-test("tabs are named by title, then by where they are", () => {
-  assert.equal(tabName({ id: "1", title: "Docs", url: "https://example.com/docs" }), "Docs");
-  assert.equal(tabName({ id: "1", title: "localhost:3000/a", url: "localhost:3000/a" }), "localhost:3000/a");
-  assert.equal(tabName({ id: "1", title: "", url: "http://localhost:3000/a" }), "localhost:3000");
-  assert.equal(tabName({ id: "1", title: "about:blank", url: "about:blank" }), "New tab");
-  assert.equal(addressOf({ id: "1", title: "", url: "about:blank" }), "");
-  assert.equal(addressOf(undefined), "");
-});
-
-test("a rectangle on the page is shown where pagePoint would find it", () => {
-  const box = { width: 400, height: 400 };
-  const image = { width: 1600, height: 1200 };
-  const page = { width: 800, height: 600 };
-  assert.deepEqual(screenRect(box, image, page, { left: 400, top: 300, width: 80, height: 20 }), { left: 200, top: 150, width: 40, height: 10 });
-  assert.deepEqual(pagePoint(box, image, page, 200, 150), { x: 400, y: 300 });
-  assert.equal(screenRect(box, { width: 0, height: 0 }, page, { left: 0, top: 0, width: 1, height: 1 }), null);
-});
-
-test("arrows and typing go to options that can be chosen", () => {
-  const options = [
-    { label: "Apple", group: null, disabled: false },
-    { label: "Banana", group: null, disabled: true },
-    { label: "blueberry", group: null, disabled: false },
-    { label: "Cherry", group: null, disabled: false },
-  ];
-  assert.equal(stepOption(options, 0, 1), 2);
-  assert.equal(stepOption(options, 2, -1), 0);
-  assert.equal(stepOption(options, 3, 1), 3);
-  assert.equal(stepOption(options, -1, 1), 0);
-  assert.equal(typedOption(options, 0, "b"), 2);
-  assert.equal(typedOption(options, 3, "a"), 0);
-  assert.equal(typedOption(options, 0, "z"), null);
-});
-
-test("an address opens in a fresh browser's blank tab, and otherwise in a tab of its own", () => {
-  const blank = { id: "t1", title: "", url: "about:blank" };
-  const page = { id: "t2", title: "App", url: "http://localhost:3000/" };
-  const address = "http://localhost:8085/callback";
-  assert.deepEqual(openingOf([blank], address), { type: "navigate", address });
-  assert.deepEqual(openingOf([page], address), { type: "open", address });
-  assert.deepEqual(openingOf([blank, page], address), { type: "open", address });
-  assert.deepEqual(openingOf([], address), { type: "open", address });
+test("the display is asked for H.264 when it encodes on a GPU, and ZRLE otherwise", () => {
+  const offered = [1, 50, 7, 16, 0, -256];
+  assert.deepEqual(preferred(offered, false), [16, 1, 50, 7, 0, -256]);
+  assert.deepEqual(preferred(offered, true), [50, 16, 1, 7, 0, -256]);
+  // A browser that can't decode H.264 doesn't offer it.
+  assert.deepEqual(preferred([1, 7, 16, 0], true), [16, 1, 7, 0]);
 });
