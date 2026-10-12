@@ -8,7 +8,7 @@ import type { WorkspaceView } from "./generated/WorkspaceView.ts";
 import { called } from "./state/naming.ts";
 import { situation } from "./state/situation.ts";
 import { unreachable } from "./state/unsaved.ts";
-import { current, toast, waiting, workspaces } from "./state/store.ts";
+import { current, navigate, toast, waiting, workspaces } from "./state/store.ts";
 
 let primed = false;
 
@@ -57,7 +57,7 @@ export function noticeChanges(before: readonly WorkspaceView[], after: readonly 
         window.focus();
         // Under the name it has by then.
         const now = workspaces.value.find((w) => w.id === ws.id) ?? ws;
-        location.assign(`/w/${now.name}`);
+        navigate({ view: "workspace", name: now.name });
       };
     }
   }

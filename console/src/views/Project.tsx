@@ -55,7 +55,7 @@ function Project({ project, settings }: { project: ProjectView; settings: boolea
         <span class="muted" translate={false}>
           {project.repo ? repoLabel(project.repo) : "no repository"} · {project.environment}
         </span>
-        <a class="btn" href={`/p/${project.name}/settings`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name, settings: true }))}>
+        <a class="btn" href={`/p/${project.name}/settings`}>
           Settings
         </a>
         <button

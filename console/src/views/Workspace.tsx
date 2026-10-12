@@ -133,11 +133,6 @@ function Tree({ current }: { current: WorkspaceView | null }) {
                     ref={(el) => {
                       if (ws.id === current?.id) el?.scrollIntoView({ inline: "nearest", block: "nearest" });
                     }}
-                    onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                      e.preventDefault();
-                      navigate({ view: "workspace", name: ws.name });
-                    }}
                   >
                     <Glyph kind={workspaceGlyph(ws)} />
                     <span class="n" translate={false}>
@@ -911,7 +906,7 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
               </button>
             ) : null}
             {cloning && project ? (
-              <a class="btn" href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
+              <a class="btn" href={`/p/${project.name}`}>
                 Open {project.name}
               </a>
             ) : null}
@@ -982,7 +977,7 @@ function Details({ ws }: { ws: WorkspaceView }) {
           <dt>Project</dt>
           <dd translate={false}>
             {project ? (
-              <a href={`/p/${project.name}`} onClick={(e) => (e.preventDefault(), navigate({ view: "project", name: project.name }))}>
+              <a href={`/p/${project.name}`}>
                 {project.name}
               </a>
             ) : (

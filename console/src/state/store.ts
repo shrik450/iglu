@@ -27,15 +27,20 @@ export const loaded = signal(false);
  * longer match what iglu sends, so it asks to be reloaded. */
 export const outdated = signal(false);
 
-export const route = signal<Route>(parseRoute(location.pathname));
-addEventListener("popstate", () => {
-  route.value = parseRoute(location.pathname);
+export const route = signal<Route>(parseRoute(location.pathname) ?? { view: "overview" });
+// Every move to one of the console's places, by a link, Back and Forward, or
+// navigate(), stays in the page; anything else iglud serves loads as a page.
+// Modified clicks open a tab without coming here.
+window.navigation.addEventListener("navigate", (event) => {
+  if (!event.canIntercept || event.hashChange || event.downloadRequest !== null || event.formData) return;
+  const next = parseRoute(new URL(event.destination.url).pathname);
+  if (!next) return;
+  route.value = next;
+  event.intercept();
 });
 
 export function navigate(next: Route, mode: "push" | "replace" = "push"): void {
-  const path = formatRoute(next);
-  if (path !== location.pathname) history[mode === "push" ? "pushState" : "replaceState"](null, "", path);
-  route.value = next;
+  window.navigation.navigate(formatRoute(next), { history: mode });
 }
 
 export const groups = computed(() => groupByProject(projects.value, workspaces.value));

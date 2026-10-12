@@ -2,11 +2,11 @@
 
 import type { ComponentChildren } from "preact";
 
-import { open } from "../actions.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
 import type { Condition } from "../generated/Condition.ts";
 import type { Phase } from "../generated/Phase.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
+import { cursor } from "../state/store.ts";
 import { unreachable } from "../state/unsaved.ts";
 
 type GlyphKind = "waiting" | "done" | "working" | "idle" | "frozen" | "asleep" | "build" | "trouble";
@@ -74,18 +74,14 @@ export function Icon({ name, size = 14 }: { name: keyof typeof ICON; size?: numb
   );
 }
 
-/** A link to a workspace that opens it in place; modified clicks open a tab. */
+/** A link to a workspace, which becomes the overview's cursor once opened here. */
 export function WorkspaceLink({ ws, class: className, label, children }: { ws: WorkspaceView; class?: string; label?: string; children: ComponentChildren }) {
   return (
     <a
       href={`/w/${ws.name}`}
       class={className}
       aria-label={label}
-      onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-        e.preventDefault();
-        open(ws);
-      }}
+      onClick={() => (cursor.value = ws.id)}
     >
       {children}
     </a>

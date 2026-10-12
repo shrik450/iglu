@@ -17,7 +17,7 @@ import { repoLabel } from "../state/groups.ts";
 import { type Chord, chordLabel, usablePrefix } from "../state/keys.ts";
 import type { OptionAsMeta } from "../generated/OptionAsMeta.ts";
 import type { TerminalStyle } from "../generated/TerminalStyle.ts";
-import { environments, me, navigate, projects, say, workspaces } from "../state/store.ts";
+import { environments, me, projects, say, workspaces } from "../state/store.ts";
 import { type CellSize, THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, isLight, parseTheme } from "../state/themes.ts";
 import { oneOf, unreachable } from "../state/unsaved.ts";
 import { pageColors } from "../terminal.ts";
@@ -102,11 +102,6 @@ function ProjectRow({ project }: { project: ProjectView }) {
         <a
           href={`/p/${project.name}`}
           translate={false}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "project", name: project.name });
-          }}
         >
           <b>{project.name}</b>
         </a>

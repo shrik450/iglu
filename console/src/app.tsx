@@ -13,7 +13,7 @@ import { PreviewsView } from "./views/Previews.tsx";
 import { ProjectPage } from "./views/Project.tsx";
 import { Settings } from "./views/Settings.tsx";
 import { Workspace } from "./views/Workspace.tsx";
-import { current, flash, live, loaded, me, navigate, outdated, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
+import { current, flash, live, loaded, me, outdated, overlay, route, toasts, waiting, workspaces } from "./state/store.ts";
 
 function Topbar() {
   const view = route.value.view;
@@ -28,11 +28,6 @@ function Topbar() {
           translate={false}
           aria-label="iglu, overview"
           aria-current={view === "overview" ? "page" : undefined}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "overview" });
-          }}
         >
           iglu
         </a>
@@ -63,11 +58,6 @@ function Topbar() {
           href="/previews"
           aria-current={view === "previews" ? "page" : undefined}
           title={`Previews (${keysFor("previews")})`}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "previews" });
-          }}
         >
           Previews
         </a>
@@ -87,11 +77,6 @@ function Topbar() {
           aria-label={`Settings, signed in as ${who}`}
           title={who}
           aria-current={view === "settings" ? "page" : undefined}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            navigate({ view: "settings" });
-          }}
         >
           {who.slice(0, 1).toUpperCase()}
         </a>
@@ -113,12 +98,7 @@ function Toasts() {
             key={t.id}
             class="toast"
             href={`/w/${ws.name}`}
-            onClick={(e) => {
-              toasts.value = toasts.value.filter((x) => x.id !== t.id);
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-              e.preventDefault();
-              navigate({ view: "workspace", name: ws.name });
-            }}
+            onClick={() => (toasts.value = toasts.value.filter((x) => x.id !== t.id))}
           >
             <Igloo />
             <b>{t.title}</b>

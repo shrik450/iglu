@@ -6,7 +6,7 @@ import { attentionGlyph, Glyph, Icon, Igloo, needYou, WorkspaceLink } from "../c
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { situation } from "../state/situation.ts";
 import { repoLabel } from "../state/groups.ts";
-import { collapsed, groups, navigate, newIn, overlay, projects, waiting, workspaces } from "../state/store.ts";
+import { collapsed, groups, newIn, overlay, projects, waiting, workspaces } from "../state/store.ts";
 import { called } from "../state/naming.ts";
 
 function toggle(key: string): void {
@@ -91,11 +91,6 @@ export function Overview() {
                 <h2 translate={false}>
                   <a
                     href={`/p/${group.label}`}
-                    onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                      e.preventDefault();
-                      navigate({ view: "project", name: group.label });
-                    }}
                   >
                     {group.label}
                   </a>
