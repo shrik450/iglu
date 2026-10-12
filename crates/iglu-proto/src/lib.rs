@@ -28,7 +28,6 @@ pub const PROTOCOL_VERSION: u32 = 6;
 pub mod path {
     use super::{FileName, GuestPort, OutputLines, SessionName, WorkspaceId};
 
-    pub const HOST: &str = "/v1/host";
     pub const INVENTORY: &str = "/v1/inventory";
     pub const BUILDS: &str = "/v1/builds";
     pub const IMAGE_PRUNE: &str = "/v1/images/prune";

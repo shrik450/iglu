@@ -107,7 +107,6 @@ impl TryFrom<String> for Loopback {
 
 fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
     Router::new()
-        .route(path::HOST, get(host::<R>))
         .route(path::INVENTORY, get(inventory::<R>))
         .route(path::BUILDS, post(build::<R>))
         .route(path::IMAGE_PRUNE, post(prune_images::<R>))
@@ -197,10 +196,6 @@ async fn host_report<R: Runtime>(app: &App<R>) -> HostReport {
         arch: app.arch,
         memory_available: app.host.memory_available().await,
     }
-}
-
-async fn host<R: Runtime>(State(app): State<Arc<App<R>>>) -> Json<HostReport> {
-    Json(host_report(&app).await)
 }
 
 async fn inventory<R: Runtime>(State(app): State<Arc<App<R>>>) -> Result<Json<Inventory>, Failure> {
