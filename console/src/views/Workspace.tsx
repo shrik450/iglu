@@ -61,7 +61,7 @@ import { chordLabel } from "../state/keys.ts";
 import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
 import { unreachable, unsavedText } from "../state/unsaved.ts";
-import { situation } from "../state/situation.ts";
+import { gibibytes, situation } from "../state/situation.ts";
 import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
 import { ctrlHeld, newCore, panes, rang, TerminalPane, titles } from "../terminal.ts";
@@ -996,8 +996,8 @@ function Details({ ws }: { ws: WorkspaceView }) {
           ) : null}
           <dt>Environment</dt>
           <dd translate={false}>{ws.environment}</dd>
-          <dt>Memory</dt>
-          <dd>{ws.memory === null ? "—" : `${(ws.memory / 1024 ** 3).toFixed(1)} GB${ws.phase === "frozen" ? " in swap" : ""}`}</dd>
+          <dt>Memory in use</dt>
+          <dd>{ws.memory === null ? "—" : gibibytes(ws.memory)}</dd>
           <dt>Created</dt>
           <dd>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(ws.created_at)}</dd>
         </dl>

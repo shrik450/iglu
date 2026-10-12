@@ -19,9 +19,9 @@ export type Situation =
   | { kind: "leaving"; label: string }
   | { kind: "running" };
 
-/** Bytes as people read memory sizes: "1.5 GB". */
-export function gigabytes(bytes: number): string {
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+/** Bytes in binary gigabytes, as the core says memory: "1.5 GiB". */
+export function gibibytes(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 }
 
 /** The first letter up, for a message that starts mid-sentence. */
@@ -65,7 +65,7 @@ export function situation(ws: Pick<WorkspaceView, "phase" | "condition">): Situa
         return {
           kind: "held",
           title: "Waiting for room",
-          detail: `It needs ${gigabytes(condition.needed)} and the host has ${gigabytes(condition.available)} free. It starts when another workspace frees some.`,
+          detail: `It needs ${gibibytes(condition.needed)} and the host has ${gibibytes(condition.available)} free. It starts when another workspace frees some.`,
         };
       default:
         return unreachable(condition);

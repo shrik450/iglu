@@ -18,7 +18,7 @@ test("a step that keeps failing says which and why, not that it's still going", 
 test("being held up by the host isn't the workspace's fault", () => {
   assert.equal(situation({ phase: "starting", condition: { kind: "host_offline", last_seen: null } }).kind, "held");
   const room = situation({ phase: "starting", condition: { kind: "capacity", available: 2 * 1024 ** 3, needed: 4 * 1024 ** 3 } });
-  assert.equal(room.kind === "held" && room.detail, "It needs 4.0 GB and the host has 2.0 GB free. It starts when another workspace frees some.");
+  assert.equal(room.kind === "held" && room.detail, "It needs 4.0 GiB and the host has 2.0 GiB free. It starts when another workspace frees some.");
 });
 
 test("without a condition, the phase says it", () => {
