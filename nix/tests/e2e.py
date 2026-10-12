@@ -167,6 +167,12 @@ try:
         host.fail(f"nix-store --query --requisites $(readlink {IMAGE}/system) | grep -e iglu-guest -e '-zmx-'")
         host.succeed("test -x /var/lib/iglu-hostd/guest-tools/bin/iglu-guest")
 
+    with subtest("hostd answers only iglud's client certificate"):
+        # The control box trusts the host's certificate, but has no client
+        # certificate of its own outside iglud's credentials.
+        refused = control.fail("curl -sS https://host:7443/v1/inventory 2>&1")
+        assert "alert" in refused or "certificate" in refused, refused
+
     with subtest("Incus passes the runtime conformance suite and its isolation checks"):
         # Its own workspaces, beside iglud's; iglud leaves instances it never made alone.
         print(host.succeed(f"iglu-hostd-conformance --config {HOSTD_CONFIG} --source 'path:{SELF}#example' --next 'path:{SELF}#example-next' 2>&1"))

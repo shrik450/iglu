@@ -7,7 +7,6 @@ use std::sync::Arc;
 use anyhow::Context;
 use iglu_devhost::config::Config;
 use iglu_devhost::local::LocalRuntime;
-use iglu_hostd::auth::Verifier;
 use iglu_hostd::host::Host;
 use iglu_hostd::server::{self, App};
 use tracing_subscriber::EnvFilter;
@@ -33,7 +32,6 @@ async fn main() -> anyhow::Result<()> {
         host_id: config.host_id,
         arch: iglu_hostd::host_arch().context("unsupported host architecture")?,
         host: Host::new(runtime, config.timeouts),
-        verifier: Verifier::from_config(config.auth)?,
     });
     server::serve_loopback(app, config.listen).await?;
     Ok(())

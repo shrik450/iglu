@@ -17,10 +17,10 @@ your own OpenID Connect identity provider.
         ▼
 ┌─────────────── control box ────────────────┐
 │ Caddy (TLS) ─► iglud                       │     identity provider (OIDC)
-│   console · API · reconciler · previews    │ ◄── sign-in, service tokens
+│   console · API · reconciler · previews    │ ◄── sign-in
 │   SQLite: users, workspaces, secrets        │
 └──────────────┬─────────────────────────────┘
-               │  HTTPS + service token (client credentials)
+               │  HTTPS, iglud's client certificate
                ▼
 ┌────────── execution host ("dumb host") ────┐
 │ hostd ─► Incus (Btrfs) ─► workspace containers
@@ -35,8 +35,8 @@ your own OpenID Connect identity provider.
   console, the JSON API, terminal relays, and the preview gateway.
 - **hostd** is the execution host's only privileged service. It exposes a fixed
   set of typed commands and keeps no state of its own; Incus is the record of
-  what exists. Users never sign in to the host, and hostd accepts only iglud's
-  service tokens from the identity provider.
+  what exists. Users never sign in to the host, and hostd accepts only iglud,
+  by its client certificate.
 - **Workspaces** are Incus system containers running NixOS, one per task, each
   with a private Nix store. hostd runs everything in them as the workspace
   user, never as root, but for upgrading their system: the system's own Nix
@@ -74,30 +74,39 @@ Requests from other sites are refused unless they're top-level navigations.
 
 You need:
 
-- an OIDC identity provider that supports authorization code with PKCE for
-  people, and client credentials with JWT access tokens for iglud's service
-  identity (Authelia, Keycloak, Zitadel, and others do);
+- an OIDC identity provider that supports authorization code with PKCE
+  (Authelia, Keycloak, Zitadel, Pocket ID and others do);
 - a control box with DNS for the console host and a wildcard for the preview
   domain, plus a certificate covering both (a DNS-01 ACME challenge works);
 - an execution host running NixOS, with a disk or Btrfs filesystem for
   workspaces and swap for freezing.
 
-Register three clients with the identity provider:
+Register two clients with the identity provider:
 
-| client  | grant                    | redirect URI                              |
-| ------- | ------------------------ | ----------------------------------------- |
-| console | authorization code       | `https://<console host>/auth/callback`    |
-| preview | authorization code       | `https://auth.<preview domain>/callback`  |
-| worker  | client credentials (JWT) | none                                      |
+| client  | grant              | redirect URI                             |
+| ------- | ------------------ | ---------------------------------------- |
+| console | authorization code | `https://<console host>/auth/callback`   |
+| preview | authorization code | `https://auth.<preview domain>/callback` |
 
-The console and preview clients need the `email` and `email_verified` claims in
-the ID token if you admit people by email.
+They need the `email` and `email_verified` claims in the ID token if you
+admit people by email.
 
-Hosts accept the worker's tokens by their `aud` and `sub` claims. Providers
-choose these differently: some set the audience from the client's own
-settings, others from an RFC 8707 `resource` that iglud sends when
-`oidc.worker.resource` is set. Request one token for the worker client and
-decode it to see the values to give the host.
+Hosts know iglud by a client certificate from a CA kept for that alone, apart
+from the one behind hosts' own certificates, or any certificate that CA signs
+could drive a host:
+
+```sh
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+  -subj /CN=iglu-clients -keyout clients.key -out clients.crt \
+  -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=iglud \
+  -keyout iglud.key -out iglud.csr
+openssl x509 -req -in iglud.csr -CA clients.crt -CAkey clients.key -days 3650 \
+  -extfile <(printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE\n') -out iglud.crt
+```
+
+Give the control box `iglud.crt` and `iglud.key`, give hosts `clients.crt`, and
+keep `clients.key` offline.
 
 ### Control box
 
@@ -113,11 +122,8 @@ decode it to see the values to give the host.
       issuer = "https://id.example.org";
       console = { clientId = "iglu-console"; clientSecretFile = "/run/secrets/iglu-console"; };
       preview = { clientId = "iglu-preview"; clientSecretFile = "/run/secrets/iglu-preview"; };
-      worker = {
-        clientId = "iglu-worker";
-        clientSecretFile = "/run/secrets/iglu-worker";
-      };
     };
+    hostClient = { certificate = "/var/lib/iglu/iglud.crt"; key = "/run/secrets/iglud.key"; };
     signIn.emails = [ "you@example.org" ];
     hosts.host-1 = "https://host-1.lan:7443";
   };
@@ -132,11 +138,10 @@ decode it to see the values to give the host.
   services.iglu.host = {
     enable = true;
     hostId = "host-1";
-    tls = { certificate = "/var/lib/iglu/host.crt"; key = "/var/lib/iglu/host.key"; };
-    auth = {
-      issuer = "https://id.example.org";
-      audience = "iglu-hosts"; # the worker token's `aud`
-      subjects = [ "iglu-worker" ]; # the worker token's `sub`
+    tls = {
+      certificate = "/var/lib/iglu/host.crt";
+      key = "/var/lib/iglu/host.key";
+      clients = "/var/lib/iglu/clients.crt"; # the CA of iglud's certificate
     };
     storage.source = "/dev/disk/by-id/nvme-example-part3";
   };

@@ -23,10 +23,8 @@ use iglu_proto::{
 use serde::de::DeserializeOwned;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream, tungstenite};
+use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 use url::Url;
-
-use crate::oidc::WorkerTokens;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
@@ -36,15 +34,13 @@ pub enum HostError {
     Protocol(u32),
     #[error("{0}")]
     Command(CommandError),
-    #[error("couldn't get a service token: {0}")]
-    Token(String),
 }
 
 impl HostError {
     pub fn into_command_error(self) -> CommandError {
         match self {
             Self::Command(error) => error,
-            Self::Unreachable(_) | Self::Protocol(_) | Self::Token(_) => {
+            Self::Unreachable(_) | Self::Protocol(_) => {
                 CommandError::new(ErrorCode::Runtime, self.to_string())
             }
         }
@@ -56,7 +52,6 @@ pub struct HostClient {
     base: Url,
     http: reqwest::Client,
     tls: Arc<rustls::ClientConfig>,
-    tokens: Arc<WorkerTokens>,
 }
 
 pub type Terminal = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -67,14 +62,12 @@ impl HostClient {
         base: Url,
         http: reqwest::Client,
         tls: Arc<rustls::ClientConfig>,
-        tokens: Arc<WorkerTokens>,
     ) -> Self {
         Self {
             id,
             base,
             http,
             tls,
-            tokens,
         }
     }
 
@@ -84,26 +77,11 @@ impl HostClient {
             .map_err(|e| HostError::Unreachable(e.to_string()))
     }
 
-    async fn token(&self) -> Result<String, HostError> {
-        self.tokens
-            .token()
-            .await
-            .map_err(|e| HostError::Token(e.to_string()))
-    }
-
-    /// Sends a request with iglud's token. One the host refuses isn't used
-    /// again, whatever made it stale.
     async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, HostError> {
-        let token = self.token().await?;
-        let response = request
-            .bearer_auth(&token)
+        request
             .send()
             .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            self.tokens.forget(&token).await;
-        }
-        Ok(response)
+            .map_err(|e| HostError::Unreachable(e.to_string()))
     }
 
     async fn json<T: DeserializeOwned>(
@@ -269,36 +247,18 @@ impl HostClient {
         let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
         url.set_scheme(scheme)
             .map_err(|()| HostError::Unreachable("bad host URL".into()))?;
-        let mut request = url
+        let request = url
             .as_str()
             .into_client_request()
             .map_err(|e| HostError::Unreachable(e.to_string()))?;
-        let token = self.token().await?;
-        request.headers_mut().insert(
-            http::header::AUTHORIZATION,
-            format!("Bearer {token}")
-                .parse()
-                .map_err(|_| HostError::Token("unusable token".into()))?,
-        );
-        let (socket, _) = match tokio_tungstenite::connect_async_tls_with_config(
+        let (socket, _) = tokio_tungstenite::connect_async_tls_with_config(
             request,
             None,
             true,
             Some(Connector::Rustls(self.tls.clone())),
         )
         .await
-        {
-            Ok(connected) => connected,
-            Err(tungstenite::Error::Http(response))
-                if response.status() == http::StatusCode::UNAUTHORIZED =>
-            {
-                self.tokens.forget(&token).await;
-                return Err(HostError::Unreachable(
-                    "host answered 401 Unauthorized".into(),
-                ));
-            }
-            Err(error) => return Err(HostError::Unreachable(error.to_string())),
-        };
+        .map_err(|e| HostError::Unreachable(e.to_string()))?;
         Ok(socket)
     }
 

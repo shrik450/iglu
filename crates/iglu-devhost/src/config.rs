@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use iglu_domain::capacity::Bytes;
 use iglu_domain::label::HostId;
-use iglu_hostd::config::{Auth, Timeouts};
+use iglu_hostd::config::Timeouts;
 use iglu_hostd::server::Loopback;
 use serde::Deserialize;
 
@@ -15,7 +15,6 @@ pub struct Config {
     pub host_id: HostId,
     /// Plain HTTP, so only on loopback.
     pub listen: Loopback,
-    pub auth: Auth,
     pub runtime: Settings,
     #[serde(default)]
     pub timeouts: Timeouts,

@@ -46,6 +46,17 @@ let
         leaf host 'DNS:host'
         leaf idp 'DNS:auth.idp.test'
         leaf git 'IP:${gitAddress}'
+
+        # iglud's client certificate, from a CA of its own that hosts trust
+        # for that alone.
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+          -subj /CN=iglu-e2e-clients -keyout clients.key -out clients.crt \
+          -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign
+        openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=iglud \
+          -keyout iglud.key -out iglud.csr
+        printf 'extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE\n' > iglud.ext
+        openssl x509 -req -in iglud.csr -CA clients.crt -CAkey clients.key -CAcreateserial \
+          -days 3650 -extfile iglud.ext -out iglud.crt
         chmod 644 *.key
 
         openssl genrsa -out oidc.pem 2048
@@ -258,23 +269,7 @@ in
                       id = "preview";
                       redirect = "https://auth.dev.example.test/callback";
                     }
-                  ]
-                ++ [
-                  {
-                    client_id = "worker";
-                    client_name = "iglu worker";
-                    client_secret = "$plaintext$worker-secret-for-tests";
-                    authorization_policy = "one_factor";
-                    grant_types = [ "client_credentials" ];
-                    response_types = [ ];
-                    scopes = [ ];
-                    audience = [ "iglu-hosts" ];
-                    # iglud requests no audience, so grant the client's own.
-                    requested_audience_mode = "implicit";
-                    token_endpoint_auth_method = "client_secret_basic";
-                    access_token_signed_response_alg = "RS256";
-                  }
-                ];
+                  ];
             };
           };
         };
@@ -304,10 +299,10 @@ in
               clientId = "preview";
               clientSecretFile = "${secret "preview"}";
             };
-            worker = {
-              clientId = "worker";
-              clientSecretFile = "${secret "worker"}";
-            };
+          };
+          hostClient = {
+            certificate = "${pki}/iglud.crt";
+            key = "${pki}/iglud.key";
           };
           signIn.emails = [ "alice@example.org" ];
           backups.keep = 2;
@@ -385,11 +380,7 @@ in
           tls = {
             certificate = "${pki}/host.crt";
             key = "${pki}/host.key";
-          };
-          auth = {
-            inherit issuer;
-            audience = "iglu-hosts";
-            subjects = [ "worker" ];
+            clients = "${pki}/clients.crt";
           };
           storage.source = "/dev/vdb";
         };

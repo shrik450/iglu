@@ -135,23 +135,27 @@ dev:
       "oidc": {
         "issuer": "https://auth.localhost",
         "console": { "client_id": "console", "client_secret_file": "$clients/console.secret" },
-        "preview": { "client_id": "preview", "client_secret_file": "$clients/preview.secret" },
-        "worker": { "client_id": "worker", "client_secret_file": "$clients/worker.secret" }
+        "preview": { "client_id": "preview", "client_secret_file": "$clients/preview.secret" }
       },
       "sign_in": [
         { "verified_email": "alice@example.org" },
         { "verified_email": "bob@example.org" },
         { "verified_email": "carol@example.org" }
       ],
-      "hosts": [ { "id": "local", "url": "http://127.0.0.1:7200" } ]
+      "hosts": [ { "id": "local", "url": "http://127.0.0.1:7200" } ],
+      "host_client": { "certificate": "$state/host-client.crt", "key": "$state/host-client.key" }
     }
     JSON
+    # The local host is on loopback, without TLS, so nothing checks this one.
+    if [ ! -f "$state/host-client.crt" ]; then
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+            -subj /CN=iglud-dev -keyout "$state/host-client.key" -out "$state/host-client.crt" 2>/dev/null
+    fi
     # The local runtime doesn't meter memory; it reports this much as free.
     cat > "$state/devhost.json" <<JSON
     {
       "host_id": "local",
       "listen": "127.0.0.1:7200",
-      "auth": { "issuer": "https://auth.localhost", "audience": "iglu-hosts", "subjects": ["worker"] },
       "runtime": {
         "state_dir": "$state/devhost",
         "runtime_dir": "{{ dev_runtime }}",

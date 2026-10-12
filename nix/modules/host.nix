@@ -1,7 +1,8 @@
 # An iglu execution host: Incus with a Btrfs pool, a workspace bridge and
 # profile, the Nix daemon for environment builds, and hostd.
 #
-# Users never sign in here. hostd accepts only iglud's service tokens.
+# Users never sign in here. hostd accepts only iglud, by its client
+# certificate.
 { self }:
 {
   config,
@@ -23,10 +24,7 @@ let
     host_id = cfg.hostId;
     listen = cfg.listen;
     tls = {
-      inherit (cfg.tls) certificate key;
-    };
-    auth = {
-      inherit (cfg.auth) issuer audience subjects;
+      inherit (cfg.tls) certificate key clients;
     };
     incus = {
       socket = "/var/lib/incus/unix.socket";
@@ -94,21 +92,15 @@ in
         type = lib.types.str;
         description = "PEM private key, readable by root only.";
       };
-    };
-
-    auth = {
-      issuer = lib.mkOption {
+      clients = lib.mkOption {
         type = lib.types.str;
-        example = "https://id.example.org";
-        description = "The OIDC issuer that signs iglud's service tokens.";
-      };
-      audience = lib.mkOption {
-        type = lib.types.str;
-        description = "The `aud` of iglud's service tokens, as the identity provider issues them. Decode one token from the worker client to see it.";
-      };
-      subjects = lib.mkOption {
-        type = lib.types.nonEmptyListOf lib.types.str;
-        description = "The `sub` values allowed to drive this host: the subject the identity provider gives the worker client's tokens.";
+        description = ''
+          The PEM CA certificate whose certificates may drive this host: the
+          one that signs iglud's client certificate
+          (`services.iglu.control.hostClient`). Keep it for that alone, apart
+          from the CA of hosts' own certificates, or any certificate it signs
+          could drive the host.
+        '';
       };
     };
 
