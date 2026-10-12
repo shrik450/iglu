@@ -26,7 +26,8 @@ use crate::config::Timeouts;
 use crate::guest::{self, GuestCommand, Opening};
 use crate::rules::{self, BootFacts, Step};
 use crate::runtime::{
-    BootId, Guest, GuestFile, Observed, Output, Ownership, Runtime, RuntimeError, Terminal, tail,
+    BootId, Guest, GuestFile, Observed, Output, Ownership, Runtime, RuntimeError, State, Terminal,
+    tail,
 };
 
 impl From<RuntimeError> for CommandError {
@@ -311,13 +312,15 @@ impl<R: Runtime> Host<R> {
 
     async fn report(&self, observed: &Observed) -> InstanceReport {
         let instance = rules::instance(observed, self.facts(observed).await);
-        // A running guest without the file has reported nothing this boot.
+        // A running guest without the file has reported nothing this boot;
+        // a stopped one runs nothing. A frozen one can't be read.
         let sessions = match rules::running(observed) {
             Some(guest) => match self.runtime.read(&guest, GuestFile::Status).await {
                 Ok(Some(bytes)) => Some(guest::parse_statuses(&bytes)),
                 Ok(None) => Some(Vec::new()),
                 Err(_) => None,
             },
+            None if observed.state == State::Stopped => Some(Vec::new()),
             None => None,
         };
         InstanceReport {
