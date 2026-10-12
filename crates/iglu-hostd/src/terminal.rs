@@ -56,9 +56,8 @@ pub async fn relay(client: WebSocket, terminal: Result<Terminal, CommandError>) 
 }
 
 fn close_frame(reason: &str) -> CloseFrame {
-    let reason: String = reason.chars().take(100).collect();
     CloseFrame {
         code: 1011,
-        reason: reason.into(),
+        reason: iglu_domain::terminal::close_reason(reason).into(),
     }
 }
