@@ -30,7 +30,7 @@ pub fn random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
     Ok(bytes)
 }
 
-/// An unguessable token for cookies, codes and CSRF values.
+/// An unguessable token for cookies and codes.
 pub fn token() -> Result<String, CryptoError> {
     Ok(URL_SAFE_NO_PAD.encode(random_bytes::<32>()?))
 }

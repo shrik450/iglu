@@ -59,14 +59,12 @@ export class ApiError extends Error {
   }
 }
 
-let csrf = "";
-
 async function request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}, keepalive = false): Promise<T> {
   const init: RequestInit = {
     method,
     credentials: "same-origin",
     keepalive,
-    headers: { ...headers, ...(method === "GET" ? {} : { "x-csrf-token": csrf }), ...(body === undefined ? {} : { "content-type": contentType(body) }) },
+    headers: { ...headers, ...(body === undefined ? {} : { "content-type": contentType(body) }) },
   };
   // A file goes as it is; anything else as JSON.
   if (body instanceof Blob) init.body = body;
@@ -106,11 +104,7 @@ async function errorBody(response: Response): Promise<ErrorBody | null> {
 }
 
 export const api = {
-  async me(): Promise<Me> {
-    const me = await request<Me>("GET", "/v1/me");
-    csrf = me.csrf_token;
-    return me;
-  },
+  me: () => request<Me>("GET", "/v1/me"),
   create: (body: CreateWorkspace) =>
     request<WorkspaceView>("POST", "/v1/workspaces", body, { "idempotency-key": crypto.randomUUID() }),
   setState: (ws: WorkspaceView, state: DesiredState) =>

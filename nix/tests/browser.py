@@ -135,8 +135,7 @@ def keep_preferences(page: Page, chosen: Any) -> None:
     on_console(page)
     status = page.evaluate(
         """async (chosen) => {
-          const me = await (await fetch('/v1/me')).json();
-          const headers = { 'content-type': 'application/json', 'x-csrf-token': me.csrf_token };
+          const headers = { 'content-type': 'application/json' };
           return (await fetch('/v1/me/preferences', { method: 'PUT', headers, body: JSON.stringify(chosen) })).status;
         }""",
         chosen,
@@ -1505,7 +1504,7 @@ def adds_at_once(page: Page, name: str) -> Any:
         """async (name) => {
           const me = await (await fetch('/v1/me')).json();
           const ws = (await (await fetch('/v1/workspaces')).json()).find((w) => w.name === name);
-          const headers = { 'content-type': 'application/json', 'x-csrf-token': me.csrf_token };
+          const headers = { 'content-type': 'application/json' };
           const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'shell' } }) });
           const answers = await Promise.all([add(), add()]);
           const made = await Promise.all(answers.map(async (a) => (a.ok ? (await a.json()).name : `${a.status} ${await a.text()}`)));

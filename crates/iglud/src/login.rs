@@ -239,20 +239,11 @@ async fn new_session(
     lifetime: Millis,
 ) -> Result<String, ApiError> {
     let token = crypto::token()?;
-    let csrf = crypto::token()?;
     let hash = crypto::hash(&token);
     let issued = now();
     app.db
         .call(move |tx| {
-            db::create_session(
-                tx,
-                &hash,
-                kind,
-                principal,
-                &csrf,
-                issued,
-                issued.plus(lifetime),
-            )
+            db::create_session(tx, &hash, kind, principal, issued, issued.plus(lifetime))
         })
         .await?;
     Ok(token)
@@ -353,7 +344,7 @@ async fn cli_confirm(
         Some(token) => session_principal(&app, token, SessionKind::Console).await?,
         None => None,
     };
-    let Some((principal, row)) = session else {
+    let Some(principal) = session else {
         let here = format!(
             "/auth/cli?port={}&challenge={}&state={}",
             request.port, request.challenge, request.state
@@ -376,13 +367,12 @@ async fn cli_confirm(
 <p>A program on this computer asked to act as <strong>{who}</strong>. Only continue if you just ran <code>iglu login</code>.</p>
 <form method="post" action="/auth/cli">
 <input type="hidden" name="port" value="{port}"><input type="hidden" name="challenge" value="{challenge}">
-<input type="hidden" name="state" value="{state}"><input type="hidden" name="csrf" value="{csrf}">
+<input type="hidden" name="state" value="{state}">
 <button type="submit">Sign in the CLI</button></form></main>"#,
         who = escape(&who),
         port = request.port,
         challenge = escape(&request.challenge),
         state = escape(&request.state),
-        csrf = escape(&row.csrf),
         stylesheet = escape(&stylesheet),
     );
     Ok(Html(page).into_response())
@@ -413,7 +403,6 @@ struct CliApproval {
     port: u16,
     challenge: String,
     state: String,
-    csrf: String,
 }
 
 async fn cli_approve(
@@ -432,12 +421,9 @@ async fn cli_approve(
         return Err(ApiError::Forbidden("cross-origin request".into()).into());
     }
     let token = cookie(&headers, CONSOLE_COOKIE).ok_or(ApiError::Unauthorized)?;
-    let (principal, row) = session_principal(&app, token, SessionKind::Console)
+    let principal = session_principal(&app, token, SessionKind::Console)
         .await?
         .ok_or(ApiError::Unauthorized)?;
-    if !crypto::constant_time_eq(form.csrf.as_bytes(), row.csrf.as_bytes()) {
-        return Err(ApiError::Forbidden("missing or wrong CSRF token".into()).into());
-    }
     let code = crypto::token().map_err(ApiError::from)?;
     let hash = crypto::hash(&code);
     let challenge = request.challenge.clone();

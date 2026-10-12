@@ -69,7 +69,6 @@ class Api:
         self.headers = {
             "origin": CONSOLE,
             "sec-fetch-site": "same-origin",
-            "x-csrf-token": me["csrf_token"],
         }
 
     def _check(self, method: str, path: str, response: Any) -> Any:

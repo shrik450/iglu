@@ -60,6 +60,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0010_workspace_labels.sql")),
     Migration::Sql(include_str!("migrations/0011_shells_and_browsers.sql")),
     Migration::Sql(include_str!("migrations/0012_activity_kinds.sql")),
+    Migration::Sql(include_str!("migrations/0013_no_csrf.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -300,7 +301,6 @@ impl FromStr for SessionKind {
 #[derive(Clone, Debug)]
 pub struct SessionRow {
     pub principal: PrincipalId,
-    pub csrf: String,
     pub last_seen_at: Timestamp,
     pub expires_at: Timestamp,
 }
@@ -310,14 +310,13 @@ pub fn create_session(
     token_hash: &str,
     kind: SessionKind,
     principal: PrincipalId,
-    csrf: &str,
     now: Timestamp,
     expires_at: Timestamp,
 ) -> Result<(), DbError> {
     tx.execute(
-        "INSERT INTO web_session (token_hash, principal_id, kind, csrf, created_at, last_seen_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
-        params![token_hash, principal.to_string(), kind.as_str(), csrf, now.unix_millis(), expires_at.unix_millis()],
+        "INSERT INTO web_session (token_hash, principal_id, kind, created_at, last_seen_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+        params![token_hash, principal.to_string(), kind.as_str(), now.unix_millis(), expires_at.unix_millis()],
     )?;
     Ok(())
 }
@@ -329,15 +328,14 @@ pub fn session(
 ) -> Result<Option<SessionRow>, DbError> {
     Ok(tx
         .query_row(
-            "SELECT principal_id, csrf, last_seen_at, expires_at FROM web_session
+            "SELECT principal_id, last_seen_at, expires_at FROM web_session
              WHERE token_hash = ?1 AND kind = ?2",
             params![token_hash, kind.as_str()],
             |row| {
                 Ok(SessionRow {
                     principal: text(row, 0)?,
-                    csrf: row.get(1)?,
-                    last_seen_at: timestamp(row, 2)?,
-                    expires_at: timestamp(row, 3)?,
+                    last_seen_at: timestamp(row, 1)?,
+                    expires_at: timestamp(row, 2)?,
                 })
             },
         )

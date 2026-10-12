@@ -199,7 +199,6 @@ async fn me(caller: Caller, State(app): State<Arc<App>>) -> Result<Json<Me>, Api
         id: caller.principal.id,
         name: caller.principal.name,
         email: caller.principal.email,
-        csrf_token: caller.csrf_token,
         preview_domain: app.config.preview_domain.clone(),
         boot: app.boot,
     }))

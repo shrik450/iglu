@@ -39,8 +39,6 @@ pub struct Me {
     pub id: PrincipalId,
     pub name: Option<DisplayName>,
     pub email: Option<Email>,
-    /// Sent back in `x-csrf-token` on every mutating console request.
-    pub csrf_token: String,
     pub preview_domain: String,
     pub boot: BootId,
 }
