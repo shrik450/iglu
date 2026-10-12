@@ -345,4 +345,13 @@ impl WorkerTokens {
         *cached = Some((reply.access_token.clone(), valid_until));
         Ok(reply.access_token)
     }
+
+    /// Stops using `token`, which a host refused, if it's still the one
+    /// cached.
+    pub async fn forget(&self, token: &str) {
+        let mut cached = self.cached.lock().await;
+        if cached.as_ref().is_some_and(|(cached, _)| cached == token) {
+            *cached = None;
+        }
+    }
 }

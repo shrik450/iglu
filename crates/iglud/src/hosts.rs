@@ -23,7 +23,7 @@ use iglu_proto::{
 use serde::de::DeserializeOwned;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream, tungstenite};
 use url::Url;
 
 use crate::oidc::WorkerTokens;
@@ -84,23 +84,33 @@ impl HostClient {
             .map_err(|e| HostError::Unreachable(e.to_string()))
     }
 
-    async fn bearer(&self) -> Result<String, HostError> {
+    async fn token(&self) -> Result<String, HostError> {
         self.tokens
             .token()
             .await
-            .map(|t| format!("Bearer {t}"))
             .map_err(|e| HostError::Token(e.to_string()))
+    }
+
+    /// Sends a request with iglud's token. One the host refuses isn't used
+    /// again, whatever made it stale.
+    async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, HostError> {
+        let token = self.token().await?;
+        let response = request
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.tokens.forget(&token).await;
+        }
+        Ok(response)
     }
 
     async fn json<T: DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<T, HostError> {
-        let response = request
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        let response = self.send(request).await?;
         let status = response.status();
         if status.is_success() {
             return response
@@ -209,12 +219,7 @@ impl HostClient {
 
     /// Sends a request that answers with nothing but whether it worked.
     async fn empty(&self, request: reqwest::RequestBuilder) -> Result<(), HostError> {
-        let response = request
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .timeout(Duration::from_secs(60))
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        let response = self.send(request.timeout(Duration::from_secs(60))).await?;
         if response.status().is_success() {
             Ok(())
         } else {
@@ -268,21 +273,32 @@ impl HostClient {
             .as_str()
             .into_client_request()
             .map_err(|e| HostError::Unreachable(e.to_string()))?;
-        let bearer = self.bearer().await?;
+        let token = self.token().await?;
         request.headers_mut().insert(
             http::header::AUTHORIZATION,
-            bearer
+            format!("Bearer {token}")
                 .parse()
                 .map_err(|_| HostError::Token("unusable token".into()))?,
         );
-        let (socket, _) = tokio_tungstenite::connect_async_tls_with_config(
+        let (socket, _) = match tokio_tungstenite::connect_async_tls_with_config(
             request,
             None,
             true,
             Some(Connector::Rustls(self.tls.clone())),
         )
         .await
-        .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        {
+            Ok(connected) => connected,
+            Err(tungstenite::Error::Http(response))
+                if response.status() == http::StatusCode::UNAUTHORIZED =>
+            {
+                self.tokens.forget(&token).await;
+                return Err(HostError::Unreachable(
+                    "host answered 401 Unauthorized".into(),
+                ));
+            }
+            Err(error) => return Err(HostError::Unreachable(error.to_string())),
+        };
         Ok(socket)
     }
 
@@ -348,13 +364,7 @@ impl HostClient {
             .map_err(|()| HostError::Unreachable("the host's address can't have a path".into()))?
             .pop_if_empty()
             .push(name.as_str());
-        let response = self
-            .http
-            .get(url)
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+        let response = self.send(self.http.get(url)).await?;
         let status = response.status();
         if status.is_success() {
             return Ok(Some(response));
@@ -374,14 +384,13 @@ impl HostClient {
         &self,
     ) -> Result<Option<(WorkspaceId, reqwest::Upgraded)>, HostError> {
         let response = self
-            .http
-            .get(self.url(path::GUEST_CONNECTIONS)?)
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .header(reqwest::header::CONNECTION, "upgrade")
-            .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+            .send(
+                self.http
+                    .get(self.url(path::GUEST_CONNECTIONS)?)
+                    .header(reqwest::header::CONNECTION, "upgrade")
+                    .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE),
+            )
+            .await?;
         match response.status() {
             reqwest::StatusCode::NO_CONTENT => return Ok(None),
             reqwest::StatusCode::SWITCHING_PROTOCOLS => {}
@@ -409,14 +418,13 @@ impl HostClient {
         port: GuestPort,
     ) -> Result<reqwest::Upgraded, HostError> {
         let response = self
-            .http
-            .get(self.url(&path::tunnel(workspace, port))?)
-            .header(reqwest::header::AUTHORIZATION, self.bearer().await?)
-            .header(reqwest::header::CONNECTION, "upgrade")
-            .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE)
-            .send()
-            .await
-            .map_err(|e| HostError::Unreachable(e.to_string()))?;
+            .send(
+                self.http
+                    .get(self.url(&path::tunnel(workspace, port))?)
+                    .header(reqwest::header::CONNECTION, "upgrade")
+                    .header(reqwest::header::UPGRADE, TUNNEL_UPGRADE),
+            )
+            .await?;
         if response.status() != reqwest::StatusCode::SWITCHING_PROTOCOLS {
             return Err(match response.json::<CommandError>().await {
                 Ok(error) => HostError::Command(error),
