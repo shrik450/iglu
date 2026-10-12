@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
 use crate::label::DnsLabel;
-use crate::parse::{serde_text, text_type};
+use crate::parse::{display_inner, serde_text, text_type};
 
 /// A flake reference as Nix accepts it, such as `github:alice/dotfiles`.
 /// Nix parses it properly; this only keeps it from being anything else.
@@ -221,17 +221,6 @@ impl FromStr for GuestPath {
             Err(ParseError::new("guest path", "expected an absolute path"))
         }
     }
-}
-
-macro_rules! display_inner {
-    ($($name:ident),*) => {$(
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-        text_type!($name);
-    )*};
 }
 
 display_inner!(FlakeRef, FlakeAttr, ImageFingerprint, UnixUser, GuestPath);

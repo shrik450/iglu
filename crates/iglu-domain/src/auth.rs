@@ -1,13 +1,12 @@
 //! Who may sign in and what they may do.
 
-use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
 use crate::id::{PrincipalId, WorkspaceId};
-use crate::parse::{is_printable, serde_text, text_type};
+use crate::parse::{display_inner, is_printable, serde_text};
 
 /// An OIDC issuer URL, exactly as the provider states it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -113,17 +112,6 @@ impl FromStr for DisplayName {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         bounded_text(s.trim(), "display name", 128).map(Self)
     }
-}
-
-macro_rules! display_inner {
-    ($($name:ident),*) => {$(
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-        text_type!($name);
-    )*};
 }
 
 display_inner!(Issuer, Subject, Email, DisplayName);

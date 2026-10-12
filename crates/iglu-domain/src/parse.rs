@@ -11,16 +11,6 @@ impl ParseError {
     pub(crate) const fn new(what: &'static str, reason: &'static str) -> Self {
         Self { what, reason }
     }
-
-    #[must_use]
-    pub const fn what(&self) -> &'static str {
-        self.what
-    }
-
-    #[must_use]
-    pub const fn reason(&self) -> &'static str {
-        self.reason
-    }
 }
 
 impl fmt::Display for ParseError {
@@ -53,6 +43,21 @@ macro_rules! text_type {
 }
 
 pub(crate) use text_type;
+
+/// Displays a newtype over a `String` as its text, and makes it a
+/// [`text_type!`].
+macro_rules! display_inner {
+    ($($name:ident),*) => {$(
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+        $crate::parse::text_type!($name);
+    )*};
+}
+
+pub(crate) use display_inner;
 
 /// Implements `FromStr` and `Display` through a unit enum's serde names, so
 /// its text, stored or sent, is spelled in one place.
