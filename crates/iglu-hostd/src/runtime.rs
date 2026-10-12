@@ -190,7 +190,7 @@ pub struct Observed {
     pub user: GuestUser,
     pub provisioning: Provisioning,
     pub state: State,
-    /// The image its root is from, when the runtime records it.
+    /// The image whose system it runs, when the runtime records it.
     pub image: Option<ImageFingerprint>,
     /// Resident memory, when the runtime measures it.
     pub memory: Option<capacity::Bytes>,

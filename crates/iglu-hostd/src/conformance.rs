@@ -621,9 +621,6 @@ impl<'a, R: Runtime> Suite<'a, R> {
         .await
     }
 
-    /// What one of a person's workspaces keeps, their others see, live;
-    /// another person's don't. The words the checks wait for are split in
-    /// what's typed, so only the output has them whole.
     async fn image_of(&self, workspace: WorkspaceId) -> Result<Option<ImageFingerprint>, String> {
         let reports = self.host.inventory().await.map_err(|e| e.to_string())?;
         Ok(reports
@@ -691,6 +688,9 @@ impl<'a, R: Runtime> Suite<'a, R> {
             .await
     }
 
+    /// What one of a person's workspaces keeps, their others see, live;
+    /// another person's don't. The words the checks wait for are split in
+    /// what's typed, so only the output has them whole.
     async fn keeps_per_person(&self, workspace: WorkspaceId) -> Checked {
         let same = WorkspaceId::from_uuid(Uuid::new_v4());
         let other = WorkspaceId::from_uuid(Uuid::new_v4());

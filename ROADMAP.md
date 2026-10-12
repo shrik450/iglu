@@ -9,8 +9,6 @@ and a release can need the control box and every host upgraded together.
 
 Known gaps:
 
-- The console can't add or rebuild environments or manage secrets; the CLI
-  does.
 - Environments are only flake references. A small one could live in iglu,
   with its lock, and be edited from the console.
 

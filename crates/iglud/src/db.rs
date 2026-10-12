@@ -607,7 +607,7 @@ pub fn revision_image(tx: &Connection, id: EnvRevisionId) -> Result<Option<Built
 }
 
 /// The image each live workspace is on, for the reconciler to compare with
-/// the image the host says its root is from.
+/// the image the host says it runs.
 pub fn workspace_images(
     tx: &Connection,
 ) -> Result<HashMap<WorkspaceId, ImageFingerprint>, DbError> {

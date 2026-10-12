@@ -117,7 +117,8 @@ pub struct InstanceReport {
     /// The owner recorded on the instance when it was created.
     pub owner: PrincipalId,
     pub instance: Instance,
-    /// The image its root disk is from, when the runtime says.
+    /// The image whose system it runs: the one it was made from, or last
+    /// upgraded to.
     pub image: Option<ImageFingerprint>,
     /// Resident memory, when the instance is running or frozen.
     pub memory: Option<Bytes>,

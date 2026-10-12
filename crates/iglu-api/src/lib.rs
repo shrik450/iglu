@@ -57,8 +57,7 @@ pub struct WorkspaceView {
     pub environment: EnvName,
     pub phase: Phase,
     pub desired: DesiredState,
-    /// Sent back as `expected_revision` so a change applies only to what
-    /// the caller saw.
+    /// Increases whenever its desired state changes.
     pub revision: Revision,
     pub condition: Option<Condition>,
     /// Waiting on the person: a thread needs an answer or review, or the
@@ -320,7 +319,7 @@ pub struct ColumnStatus {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct AddColumn {
     pub kind: ColumnKind,
-    /// Picked from the kind when absent: `shell`, `claude-2`.
+    /// Picked from the kind when absent: `shell`, `browser-2`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub name: Option<SessionName>,

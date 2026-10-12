@@ -8,7 +8,7 @@ import type { SessionName } from "./SessionName";
  */
 export type AddColumn = { kind: ColumnKind, 
 /**
- * Picked from the kind when absent: `shell`, `claude-2`.
+ * Picked from the kind when absent: `shell`, `browser-2`.
  */
 name?: SessionName, width?: ColumnWidth, 
 /**

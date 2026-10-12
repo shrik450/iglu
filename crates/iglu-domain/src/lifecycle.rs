@@ -59,8 +59,9 @@ impl DesiredState {
     }
 }
 
-/// Increases every time the desired state changes. A change applies only from
-/// the revision its author saw, so concurrent changes can't undo each other.
+/// Increases every time the desired state changes. iglu's own changes, such
+/// as idle freezing, apply only from the revision they saw, so they can't
+/// undo a person's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
 #[serde(transparent)]

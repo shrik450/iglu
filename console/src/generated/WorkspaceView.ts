@@ -30,8 +30,7 @@ label: WorkspaceLabel | null, project: ProjectId,
  */
 checkout: Checkout | null, environment: DnsLabel, phase: Phase, desired: DesiredState, 
 /**
- * Sent back as `expected_revision` so a change applies only to what
- * the caller saw.
+ * Increases whenever its desired state changes.
  */
 revision: Revision, condition: Condition | null, 
 /**

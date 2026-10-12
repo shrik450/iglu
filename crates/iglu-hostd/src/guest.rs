@@ -34,7 +34,7 @@ pub enum GuestCommand<'a> {
     /// Where the checkout stands, as JSON.
     GitState,
     Close(&'a SessionName),
-    /// Prints a session's last lines as plain text.
+    /// Prints a session's last lines, and whether there were more, as JSON.
     Output(&'a SessionName, OutputLines),
     /// Types into a session; the text goes on the input.
     Input(&'a SessionName, &'a TerminalInput),

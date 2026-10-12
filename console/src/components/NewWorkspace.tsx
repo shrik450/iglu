@@ -1,5 +1,5 @@
 // Creating a workspace, in a project: a branch to work on, and what to call
-// it. Agents start from the workspace, or from the project's opening.
+// it. It opens with the project's columns.
 
 import { useState } from "preact/hooks";
 
