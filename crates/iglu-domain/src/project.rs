@@ -14,6 +14,7 @@ use crate::column::{
     name_templates,
 };
 use crate::label::{ProjectName, WorkspaceName};
+use crate::parse::serde_text;
 use crate::port::GuestPort;
 use crate::repo::{BranchName, Checkout, RepoUrl};
 
@@ -27,27 +28,7 @@ pub enum Origin {
     Added,
 }
 
-impl Origin {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Builtin => "builtin",
-            Self::Added => "added",
-        }
-    }
-}
-
-impl std::str::FromStr for Origin {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "builtin" => Ok(Self::Builtin),
-            "added" => Ok(Self::Added),
-            _ => Err(ParseError::new("project origin", "unknown")),
-        }
-    }
-}
+serde_text!(Origin, "project origin", "unknown");
 
 /// The columns a project's workspaces open with.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

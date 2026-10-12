@@ -1,12 +1,9 @@
 //! What happened to a workspace, as its history tells it: each entry is one
 //! of these kinds, with a detail whose meaning the kind gives.
 
-use std::str::FromStr;
-
-use serde::de::IntoDeserializer;
 use serde::{Deserialize, Serialize};
 
-use crate::ParseError;
+use crate::parse::serde_text;
 
 /// The kinds of thing a workspace's history records. Stored and sent by
 /// name; the console says each in words.
@@ -57,99 +54,4 @@ pub enum ActivityKind {
     Updated,
 }
 
-impl ActivityKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Requested => "requested",
-            Self::StateSet => "state-set",
-            Self::Created => "created",
-            Self::Started => "started",
-            Self::SecretsDelivered => "secrets-delivered",
-            Self::Provisioned => "provisioned",
-            Self::ColumnsOpened => "columns-opened",
-            Self::Frozen => "frozen",
-            Self::Thawed => "thawed",
-            Self::Stopped => "stopped",
-            Self::Removed => "removed",
-            Self::Deleted => "deleted",
-            Self::Error => "error",
-            Self::Renamed => "renamed",
-            Self::Typed => "typed",
-            Self::ThawedOnOpen => "thawed-on-open",
-            Self::IdleFroze => "idle-froze",
-            Self::IdleStopped => "idle-stopped",
-            Self::SecretUpdated => "secret-updated",
-            Self::Published => "published",
-            Self::Unpublished => "unpublished",
-            Self::FileKept => "file-kept",
-            Self::Adopted => "adopted",
-            Self::AccessChanged => "access-changed",
-            Self::ColumnAdded => "column-added",
-            Self::ColumnRestarted => "column-restarted",
-            Self::ColumnClosed => "column-closed",
-            Self::UpdateAsked => "update-asked",
-            Self::Updated => "updated",
-        }
-    }
-}
-
-impl FromStr for ActivityKind {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // By the names it's sent by, so every kind reads back.
-        Self::deserialize(s.into_deserializer()).map_err(|_: serde::de::value::Error| {
-            ParseError::new("activity kind", "not a kind iglu records")
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use ActivityKind::*;
-
-    #[test]
-    fn every_kind_is_stored_by_the_name_it_is_sent_as() {
-        for kind in [
-            Requested,
-            StateSet,
-            Created,
-            Started,
-            SecretsDelivered,
-            Provisioned,
-            ColumnsOpened,
-            Frozen,
-            Thawed,
-            Stopped,
-            Removed,
-            Deleted,
-            Error,
-            Renamed,
-            Typed,
-            ThawedOnOpen,
-            IdleFroze,
-            IdleStopped,
-            SecretUpdated,
-            Published,
-            Unpublished,
-            FileKept,
-            Adopted,
-            AccessChanged,
-            ColumnAdded,
-            ColumnRestarted,
-            ColumnClosed,
-            UpdateAsked,
-            Updated,
-        ] {
-            assert_eq!(kind.as_str().parse::<ActivityKind>(), Ok(kind));
-            assert_eq!(
-                serde_json::to_value(kind).expect("serializes"),
-                kind.as_str()
-            );
-        }
-        assert!("exited".parse::<ActivityKind>().is_err());
-    }
-}
+serde_text!(ActivityKind, "activity kind", "not a kind iglu records");

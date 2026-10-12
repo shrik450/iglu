@@ -507,7 +507,7 @@ async fn perform(
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(workspace = %id, effect = effect_kind(effect).as_str(), error = %error.message, "a step failed");
+                    tracing::warn!(workspace = %id, effect = %effect_kind(effect), error = %error.message, "a step failed");
                     let condition = Condition::Error {
                         code: error.code,
                         message: error.message.clone(),

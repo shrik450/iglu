@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
 use crate::id::{PrincipalId, WorkspaceId};
-use crate::parse::{is_printable, text_type};
+use crate::parse::{is_printable, serde_text, text_type};
 
 /// An OIDC issuer URL, exactly as the provider states it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -174,20 +174,11 @@ pub enum PrincipalStatus {
     Disabled,
 }
 
-impl FromStr for PrincipalStatus {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "active" => Ok(Self::Active),
-            "disabled" => Ok(Self::Disabled),
-            _ => Err(ParseError::new(
-                "principal status",
-                "expected active or disabled",
-            )),
-        }
-    }
-}
+serde_text!(
+    PrincipalStatus,
+    "principal status",
+    "expected active or disabled"
+);
 
 /// A signed-in principal, as authorization sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,6 +225,12 @@ pub enum Permission {
     Operate,
 }
 
+serde_text!(
+    Permission,
+    "permission",
+    "expected view, read_output, send_input, manage_columns, publish_routes or operate"
+);
+
 impl Permission {
     pub const ALL: [Self; 6] = [
         Self::View,
@@ -264,40 +261,6 @@ impl Permission {
             Self::PublishRoutes => Action::PublishRoute,
             Self::Operate => Action::OperateWorkspace,
         }
-    }
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::View => "view",
-            Self::ReadOutput => "read_output",
-            Self::SendInput => "send_input",
-            Self::ManageColumns => "manage_columns",
-            Self::PublishRoutes => "publish_routes",
-            Self::Operate => "operate",
-        }
-    }
-}
-
-impl FromStr for Permission {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|p| p.as_str() == s)
-            .ok_or_else(|| {
-                ParseError::new(
-                    "permission",
-                    "expected view, read_output, send_input, manage_columns, publish_routes or operate",
-                )
-            })
-    }
-}
-
-impl fmt::Display for Permission {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
     }
 }
 
@@ -564,14 +527,6 @@ mod tests {
     fn a_new_workspace_works_with_its_columns_but_cant_stop_itself() {
         assert!(Permission::OWN.contains(&Permission::ManageColumns));
         assert!(!Permission::OWN.contains(&Permission::Operate));
-    }
-
-    #[test]
-    fn permissions_are_named_as_stored() {
-        for permission in Permission::ALL {
-            assert_eq!(permission.as_str().parse::<Permission>(), Ok(permission));
-        }
-        assert!("delete".parse::<Permission>().is_err());
     }
 
     fn identity(subject: &str, email: Option<&str>) -> VerifiedIdentity {

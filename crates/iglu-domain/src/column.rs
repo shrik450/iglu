@@ -10,7 +10,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::parse::{is_printable, text_type};
+use crate::parse::{is_printable, serde_text, text_type};
 use crate::terminal::SessionName;
 
 /// One argument of a command. Passed to the program as it is: never joined
@@ -170,34 +170,11 @@ pub enum ColumnWidth {
     Full,
 }
 
-impl ColumnWidth {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Third => "third",
-            Self::Half => "half",
-            Self::TwoThirds => "two-thirds",
-            Self::Full => "full",
-        }
-    }
-}
-
-impl FromStr for ColumnWidth {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "third" => Ok(Self::Third),
-            "half" => Ok(Self::Half),
-            "two-thirds" => Ok(Self::TwoThirds),
-            "full" => Ok(Self::Full),
-            _ => Err(ParseError::new(
-                "column width",
-                "expected third, half, two-thirds or full",
-            )),
-        }
-    }
-}
+serde_text!(
+    ColumnWidth,
+    "column width",
+    "expected third, half, two-thirds or full"
+);
 
 /// What a column runs.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

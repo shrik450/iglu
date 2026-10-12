@@ -9,7 +9,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
-use crate::parse::{is_printable, text_type};
+use crate::parse::{is_printable, serde_text, text_type};
 use crate::terminal::SessionName;
 use crate::time::Timestamp;
 
@@ -26,40 +26,11 @@ pub enum AttentionState {
     Idle,
 }
 
-impl AttentionState {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Working => "working",
-            Self::Waiting => "waiting",
-            Self::Done => "done",
-            Self::Idle => "idle",
-        }
-    }
-}
-
-impl FromStr for AttentionState {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "working" => Ok(Self::Working),
-            "waiting" => Ok(Self::Waiting),
-            "done" => Ok(Self::Done),
-            "idle" => Ok(Self::Idle),
-            _ => Err(ParseError::new(
-                "attention state",
-                "expected working, waiting, done or idle",
-            )),
-        }
-    }
-}
-
-impl fmt::Display for AttentionState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+serde_text!(
+    AttentionState,
+    "attention state",
+    "expected working, waiting, done or idle"
+);
 
 /// A one-line, guest-supplied description. Untrusted: bounded and free of
 /// control characters, so it can't smuggle terminal escapes into the UI.

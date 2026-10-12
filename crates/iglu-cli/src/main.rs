@@ -590,9 +590,7 @@ async fn workspace(
             let ws = client.resolve(&workspace).await?;
             let log = client.activity(ws.id).await?;
             print(json_mode, log.as_slice(), |log| {
-                lines(log, |entry| {
-                    format!("{:<18} {}", entry.kind.as_str(), entry.detail)
-                })
+                lines(log, |entry| format!("{:<18} {}", entry.kind, entry.detail))
             });
         }
     }
@@ -749,7 +747,8 @@ async fn access(client: &Client, json_mode: bool, command: AccessCommand) -> any
             return format!("{} may do nothing from inside", ws.name);
         }
         lines(&ws.access, |grant| {
-            let permissions: Vec<&str> = grant.permissions.iter().map(|p| p.as_str()).collect();
+            let permissions: Vec<String> =
+                grant.permissions.iter().map(ToString::to_string).collect();
             format!(
                 "{:<24} {}",
                 name_of(grant.workspace),

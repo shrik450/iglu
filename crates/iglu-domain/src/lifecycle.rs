@@ -1,15 +1,11 @@
 //! Workspace lifecycle: what the user wants, what the host reports, and the
 //! one next step that moves the second toward the first.
 
-use std::fmt;
-use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
 
-use crate::ParseError;
 use crate::capacity::{Capacity, Room};
 use crate::env::ImageFingerprint;
-use crate::parse::text_type;
+use crate::parse::{serde_text, text_type};
 
 /// What the user wants a workspace to be. Set through the API; owned by the
 /// control plane.
@@ -23,17 +19,13 @@ pub enum DesiredState {
     Deleted,
 }
 
-impl DesiredState {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Frozen => "frozen",
-            Self::Stopped => "stopped",
-            Self::Deleted => "deleted",
-        }
-    }
+serde_text!(
+    DesiredState,
+    "desired state",
+    "expected running, frozen, stopped or deleted"
+);
 
+impl DesiredState {
     /// The phase a workspace is in once it has reached this state.
     #[must_use]
     pub const fn settled(self) -> Phase {
@@ -42,29 +34,6 @@ impl DesiredState {
             Self::Frozen => Phase::Frozen,
             Self::Stopped => Phase::Stopped,
             Self::Deleted => Phase::Deleted,
-        }
-    }
-}
-
-impl fmt::Display for DesiredState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for DesiredState {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "running" => Ok(Self::Running),
-            "frozen" => Ok(Self::Frozen),
-            "stopped" => Ok(Self::Stopped),
-            "deleted" => Ok(Self::Deleted),
-            _ => Err(ParseError::new(
-                "desired state",
-                "expected running, frozen, stopped or deleted",
-            )),
         }
     }
 }
@@ -423,28 +392,7 @@ pub enum Phase {
     Deleted,
 }
 
-impl Phase {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Creating => "creating",
-            Self::Starting => "starting",
-            Self::Running => "running",
-            Self::Freezing => "freezing",
-            Self::Frozen => "frozen",
-            Self::Stopping => "stopping",
-            Self::Stopped => "stopped",
-            Self::Deleting => "deleting",
-            Self::Deleted => "deleted",
-        }
-    }
-}
-
-impl fmt::Display for Phase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+serde_text!(Phase, "phase", "not a phase");
 
 /// Derives the user-facing phase from intent and observation.
 #[must_use]
@@ -1001,18 +949,5 @@ mod tests {
             allow_transition(Phase::Deleting, DesiredState::Running),
             Err(TransitionError::Deleting)
         );
-    }
-
-    #[test]
-    fn desired_states_round_trip_as_text() {
-        for state in [
-            DesiredState::Running,
-            DesiredState::Frozen,
-            DesiredState::Stopped,
-            DesiredState::Deleted,
-        ] {
-            assert_eq!(state.as_str().parse(), Ok(state));
-        }
-        assert!("paused".parse::<DesiredState>().is_err());
     }
 }

@@ -801,7 +801,7 @@ pub fn insert_workspace(
             ws.env_revision.to_string(),
             ws.name.as_str(),
             ws.project.to_string(),
-            ws.desired.as_str(),
+            ws.desired.to_string(),
             i64_of(ws.revision.get()),
             create_key,
             create_hash,
@@ -1035,7 +1035,7 @@ pub fn add_project(tx: &Connection, new: &NewProject) -> Result<AddOutcome, DbEr
             new.id.to_string(),
             new.owner.to_string(),
             name.as_str(),
-            new.origin.as_str(),
+            new.origin.to_string(),
             new.repo.as_ref().map(RepoUrl::as_str),
             uuid_text(new.environment_id),
             to_json(&Opening::shell())?,
@@ -1294,7 +1294,7 @@ pub fn ask_desired(
     let Some((was, revision)) = current else {
         return Ok(Asked::Gone);
     };
-    if was == desired.as_str() {
+    if was == desired.to_string() {
         return Ok(Asked::Already);
     }
     let revision = Revision::from_u64(u64::try_from(revision).map_err(|e| conversion(1, e))?);
@@ -1344,7 +1344,7 @@ fn write_desired(
         "UPDATE workspace SET desired = ?2, revision = ?3,
              condition = CASE WHEN json_extract(condition, '$.kind') = 'host_offline' THEN condition END
          WHERE id = ?1",
-        params![id.to_string(), desired.as_str(), i64_of(next.get())],
+        params![id.to_string(), desired.to_string(), i64_of(next.get())],
     )?;
     Ok(())
 }
@@ -1487,7 +1487,7 @@ pub fn sync_attention(
                 status.session.as_str(),
                 status.thread.as_str(),
                 status.title.as_str(),
-                status.state.as_str(),
+                status.state.to_string(),
                 status.summary.as_str(),
                 status.updated_at.unix_millis()
             ],
@@ -1576,7 +1576,7 @@ pub fn replace_columns(
             i64::try_from(position).unwrap_or(i64::MAX),
             column.name.as_str(),
             to_json(&column.kind)?,
-            column.width.as_str(),
+            column.width.to_string(),
             column.label.as_ref().map(ColumnLabel::as_str),
         ])?;
     }
@@ -1831,7 +1831,7 @@ pub fn replace_grants(
         insert.execute(params![
             holder.to_string(),
             grant.workspace.to_string(),
-            grant.permission.as_str()
+            grant.permission.to_string()
         ])?;
     }
     Ok(())
@@ -1867,7 +1867,7 @@ pub fn add_activity(
             workspace.map(|w| w.to_string()),
             by.map(|b| b.person.to_string()),
             by.and_then(|b| b.via).map(|w| w.to_string()),
-            kind.as_str(),
+            kind.to_string(),
             detail,
             now.unix_millis()
         ],
