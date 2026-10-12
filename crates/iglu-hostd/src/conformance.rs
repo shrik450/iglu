@@ -27,7 +27,7 @@ use iglu_domain::terminal::{OutputLines, SessionName, TerminalSize};
 use iglu_domain::time::Millis;
 use iglu_proto::{
     BuildOutcome, Command, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Limits,
-    ProvisionSpec, PruneImages, RebuildSpec, SessionSpec,
+    ProvisionSpec, PruneImages, SessionSpec, UpgradeSpec,
 };
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -177,7 +177,7 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check(
-                "updating rebuilds the root from the next image and keeps the home, which goes with the workspace",
+                "updating upgrades it in place to the next image from any settled state, keeping its files",
                 |suite, workspace| suite.updates(workspace, &fixture.next),
             )
             .await,
@@ -670,47 +670,38 @@ impl<'a, R: Runtime> Suite<'a, R> {
                 .is_none_or(|first| *first == self.image.fingerprint),
             || format!("created from {first:?}, not {}", self.image.fingerprint),
         )?;
-        // Another account would leave the home's files someone else's.
+        // Another account would leave its files someone else's.
         let mut stranger = next.user.clone();
         stranger.uid = Uid::try_from(stranger.uid.get() + 1).map_err(|e| e.to_string())?;
         self.refused(
             workspace,
-            Command::Rebuild(RebuildSpec {
+            Command::Upgrade(UpgradeSpec {
                 image: next.fingerprint.clone(),
                 user: stranger,
             }),
             ErrorCode::InvalidState,
         )
         .await?;
-        // Running, it's stopped first; asked again, it's done already.
-        let rebuild = Command::Rebuild(RebuildSpec {
+        // Stopped, it's started to be upgraded and restarted into the new
+        // system; asked again, it's done already, and still running.
+        self.perform(workspace, Command::Stop).await?;
+        let upgrade = Command::Upgrade(UpgradeSpec {
             image: next.fingerprint.clone(),
             user: next.user.clone(),
         });
         for _ in 0..2 {
-            let instance = self.perform(workspace, rebuild.clone()).await?;
-            ensure(status(instance) == Some(Status::Stopped), || {
-                format!("not stopped after rebuilding: {instance:?}")
+            let instance = self.perform(workspace, upgrade.clone()).await?;
+            ensure(matches!(status(instance), Some(Status::Running(_))), || {
+                format!("not running after upgrading: {instance:?}")
             })?;
         }
         let now = self.image_of(workspace).await?;
         ensure(now.as_ref() == Some(&next.fingerprint), || {
-            format!("its root is from {now:?}, not {}", next.fingerprint)
+            format!("it runs {now:?}, not {}", next.fingerprint)
         })?;
-        self.perform(workspace, Command::Start).await?;
         self.boot(workspace).await?;
         self.shell(workspace, "home", "cat ~/update-mark", "here")
-            .await?;
-        // Its home goes with it: a workspace made again under its name starts empty.
-        self.perform(workspace, Command::Delete).await?;
-        self.running_workspace(workspace).await?;
-        self.shell(
-            workspace,
-            "home",
-            "test -e ~/update-mark || echo go''ne",
-            "gone",
-        )
-        .await
+            .await
     }
 
     async fn keeps_per_person(&self, workspace: WorkspaceId) -> Checked {

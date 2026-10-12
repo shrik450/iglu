@@ -35,7 +35,7 @@ use iglu_hostd::runtime::{
     BuildFailure, Claim, Guest, GuestFile, MAX_GUEST_FILE, Observed, Output, Ownership, Runtime,
     RuntimeError, StoredImage, Terminal, TerminalInput,
 };
-use iglu_proto::{CreateSpec, RebuildSpec};
+use iglu_proto::{CreateSpec, UpgradeSpec};
 use rustix::process::Signal;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -739,7 +739,7 @@ impl Runtime for LocalRuntime {
 
     /// A local workspace's home is a directory of its own and its tools are
     /// the machine's, so moving it to another image is only a new record.
-    async fn rebuild(&self, name: InstanceName, spec: &RebuildSpec) -> Result<(), RuntimeError> {
+    async fn upgrade(&self, name: InstanceName, spec: &UpgradeSpec) -> Result<(), RuntimeError> {
         self.ensure_exists(name).await?;
         let image: Image = match store::read_json(&self.layout.image(&spec.image)).await {
             Ok(image) => image,
@@ -758,11 +758,17 @@ impl Runtime for LocalRuntime {
                 "the environment's newest build has another account than this workspace; recreate it to use the build".into(),
             ));
         }
+        if record.image == spec.image {
+            return Ok(());
+        }
         record.image = spec.image.clone();
         record.guest_interface = image.guest_interface;
         store::write_json(&self.layout.record(name), &record)
             .await
-            .map_err(RuntimeError::failed)
+            .map_err(RuntimeError::failed)?;
+        // Its tools are the new image's from its next boot, which starting
+        // it from whatever it was in is.
+        self.start(name).await
     }
 
     async fn run(

@@ -11,13 +11,13 @@ use iglu_domain::column;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::idle;
 use iglu_domain::lifecycle::{
-    AdoptReason, Blocker, Desired, DesiredState, Effect, Instance, Plan, Root, Wait, plan_within,
+    AdoptReason, Blocker, Build, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
 use iglu_domain::secret::bundle;
 use iglu_domain::time::{Millis, Timestamp};
 use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
-    Limits, ProvisionSpec, PruneImages, RebuildSpec, SessionSpec,
+    Limits, ProvisionSpec, PruneImages, SessionSpec, UpgradeSpec,
 };
 
 use crate::app::{App, now, open_secrets};
@@ -243,7 +243,7 @@ async fn reconcile_host(
         let desired = Desired {
             state: ws.desired,
             secrets: principal.secrets_generation,
-            root: Root::of(report.and_then(|r| r.image.as_ref()), images.get(&ws.id)),
+            build: Build::of(report.and_then(|r| r.image.as_ref()), images.get(&ws.id)),
         };
         let next = plan_within(desired, instance, &mut room);
         changed |= act(app, reconciler, host, ws, principal, next).await?;
@@ -456,7 +456,7 @@ const fn effect_doing(effect: Effect) -> &'static str {
         Effect::Thaw => "thawing it",
         Effect::Stop => "stopping it",
         Effect::Delete => "removing it from its host",
-        Effect::Rebuild => "rebuilding it from the newest build",
+        Effect::Upgrade => "upgrading its system to the newest build",
     }
 }
 
@@ -471,7 +471,7 @@ const fn effect_kind(effect: Effect) -> ActivityKind {
         Effect::Thaw => ActivityKind::Thawed,
         Effect::Stop => ActivityKind::Stopped,
         Effect::Delete => ActivityKind::Removed,
-        Effect::Rebuild => ActivityKind::Rebuilt,
+        Effect::Upgrade => ActivityKind::Updated,
     }
 }
 
@@ -605,9 +605,9 @@ async fn command_for(
         Effect::Thaw => Command::Thaw,
         Effect::Stop => Command::Stop,
         Effect::Delete => Command::Delete,
-        Effect::Rebuild => {
+        Effect::Upgrade => {
             let image = image().await?;
-            Command::Rebuild(RebuildSpec {
+            Command::Upgrade(UpgradeSpec {
                 image: image.fingerprint,
                 user: image.user,
             })

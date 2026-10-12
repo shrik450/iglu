@@ -39,7 +39,8 @@ your own OpenID Connect identity provider.
   service tokens from the identity provider.
 - **Workspaces** are Incus system containers running NixOS, one per task, each
   with a private Nix store. hostd runs everything in them as the workspace
-  user, never as root. Their network reaches the Internet but not the host, the
+  user, never as root, but for upgrading their system: the system's own Nix
+  tools and the new system's activation, on store paths hostd chose. Their network reaches the Internet but not the host, the
   LAN, or other private address space.
 - **Environments** are ordinary NixOS configurations in a flake that import
   `iglu.nixosModules.workspace`. hostd builds them into images with the host's
@@ -165,14 +166,14 @@ iglu env add default github:you/iglu-env#default
 `iglu env build default` rebuilds it after you change the flake. New
 workspaces use the newest image; existing ones keep theirs until you update
 them, with `iglu update <workspace>` or from the console, which offers it
-once a newer image is ready. Updating stops the workspace, rebuilds its
-system from the new image, and starts it again. Its home directory is a
-volume of its own, `iglu-home-<workspace id>` in the `iglu` pool, and stays,
-with your kept directory; what was running ends, and files outside the home,
-such as `/tmp`, `/var` and anything installed by hand, start over. An image
-whose account (its name, uid, gid or home) differs can't be updated to: the
-home's files would be someone else's. Deleting a workspace deletes its home.
-Hosts remove
+once a newer image is ready. Updating upgrades the workspace's NixOS in
+place, as `nixos-rebuild boot` would: the host copies the store paths of the
+new image's system that the workspace lacks into its store, makes it the
+system it boots, and restarts it. What was running ends; everything on its
+disk stays, and the old system is removed from its store. An image whose
+account (its name, uid, gid or home) differs can't be updated to: the
+workspace's files would be someone else's. Hosts keep each image's system in
+their Nix store for as long as they keep the image, and remove
 an image once no environment's newest build and no workspace uses it, and
 it's more than an hour old. A build also
 unpacks the image onto the host's storage, so the first workspace made from

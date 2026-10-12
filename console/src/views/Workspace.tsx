@@ -1013,7 +1013,7 @@ function Details({ ws }: { ws: WorkspaceView }) {
       {ws.newer_build ? (
         <div class="update">
           <h2>A newer build of {ws.environment}</h2>
-          <p class="muted">Updating runs this workspace from it. Its home and kept files stay; what's running ends, and files outside its home start over.</p>
+          <p class="muted">Updating upgrades this workspace to it and restarts it. Its files stay; what's running ends.</p>
           <button type="button" class="btn primary" onClick={() => void update(ws)}>
             Update
           </button>
@@ -1159,7 +1159,7 @@ const HAPPENED: Record<ActivityKind, string> = {
   "column-restarted": "Restarted a column",
   "column-closed": "Closed a column",
   "update-asked": "Asked to update",
-  rebuilt: "Updated, its home kept",
+  updated: "Updated to the newest build",
 };
 
 /** What happened to the workspace, newest first. Loaded when shown, and again when it changes. */

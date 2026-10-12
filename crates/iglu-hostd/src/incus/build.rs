@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use hyper::Method;
@@ -69,7 +70,26 @@ pub async fn build(
     tokens: &FetchTokens,
     timeout: Duration,
 ) -> Result<BuiltImage, BuildError> {
-    let store_path = nix_build(build, source, tokens).await?;
+    // The build's output link keeps it from the host's store's collection
+    // until its image keeps it, or it fails.
+    static BUILDS: AtomicU64 = AtomicU64::new(0);
+    let link = build.home.join(format!(
+        "iglu-build-{}",
+        BUILDS.fetch_add(1, Ordering::Relaxed)
+    ));
+    let store_path = nix_build(build, source, tokens, &link).await?;
+    let imported = import_output(incus, settings, build, &store_path, timeout).await;
+    let _ = tokio::fs::remove_file(&link).await;
+    imported
+}
+
+async fn import_output(
+    incus: &Incus,
+    settings: &config::Incus,
+    build: &config::Build,
+    store_path: &Path,
+    timeout: Duration,
+) -> Result<BuiltImage, BuildError> {
     let manifest_bytes = tokio::fs::read(store_path.join("iglu.json"))
         .await
         .map_err(|e| BuildError::BadOutput(format!("iglu.json: {e}")))?;
@@ -81,8 +101,12 @@ pub async fn build(
     let metadata = store_path.join("metadata.tar.xz");
     let rootfs = store_path.join("rootfs.squashfs");
     let fingerprint = fingerprint(&metadata, &rootfs).await?;
+    let system = tokio::fs::read_link(store_path.join("system"))
+        .await
+        .map_err(|e| BuildError::BadOutput(format!("system: {e}")))?;
     import(incus, settings, &fingerprint, &metadata, &rootfs).await?;
-    record_interface(incus, &fingerprint, timeout).await?;
+    keep(&fingerprint, store_path).await?;
+    record(incus, &fingerprint, &system, timeout).await?;
     warm(
         incus,
         settings,
@@ -103,6 +127,7 @@ async fn nix_build(
     build: &config::Build,
     source: &EnvSource,
     tokens: &FetchTokens,
+    link: &Path,
 ) -> Result<PathBuf, BuildError> {
     let mut command = Command::new(&build.nix);
     command
@@ -110,9 +135,10 @@ async fn nix_build(
             "--extra-experimental-features",
             "nix-command flakes",
             "build",
-            "--no-link",
             "--print-out-paths",
+            "--out-link",
         ])
+        .arg(link)
         .arg(source.image_installable())
         .env_clear()
         .env("HOME", &build.home)
@@ -270,6 +296,32 @@ async fn warm(
 /// built has it.
 pub const INTERFACE_PROPERTY: &str = "iglu.guest-interface";
 
+/// The image property recording the NixOS system the image is of, which a
+/// workspace from an older build upgrades to in place.
+pub const SYSTEM_PROPERTY: &str = "iglu.system";
+
+/// Where hostd keeps each image's build alive in the host's store, so its
+/// system is there to copy into workspaces while the image is: Nix's own
+/// record, not hostd's.
+const ROOTS: &str = "/nix/var/nix/gcroots/iglu";
+
+fn root_of(fingerprint: &ImageFingerprint) -> PathBuf {
+    Path::new(ROOTS).join(fingerprint.as_str())
+}
+
+/// Lets the host's store collect an image's build, once the image is gone.
+pub async fn release(fingerprint: &ImageFingerprint) {
+    let _ = tokio::fs::remove_file(root_of(fingerprint)).await;
+}
+
+/// The system an imported image records, if it records one.
+pub fn recorded_system(image: &serde_json::Value) -> Option<String> {
+    image["properties"][SYSTEM_PROPERTY]
+        .as_str()
+        .filter(|path| path.starts_with("/nix/store/"))
+        .map(str::to_owned)
+}
+
 /// The image property recording when hostd built the image, in milliseconds
 /// since the Unix epoch.
 pub const BUILT_PROPERTY: &str = "iglu.built-at";
@@ -292,11 +344,24 @@ pub fn recorded_interface(image: &serde_json::Value) -> Option<Interface> {
         .map(Interface::new)
 }
 
+/// Keeps the build in the host's store while its image is on the host.
+async fn keep(fingerprint: &ImageFingerprint, store_path: &Path) -> Result<(), BuildError> {
+    let root = root_of(fingerprint);
+    tokio::fs::create_dir_all(ROOTS)
+        .await
+        .map_err(|e| BuildError::Import(format!("keeping the build: {e}")))?;
+    let _ = tokio::fs::remove_file(&root).await;
+    tokio::fs::symlink(store_path, &root)
+        .await
+        .map_err(|e| BuildError::Import(format!("keeping the build: {e}")))
+}
+
 /// Records on the image that its tools speak this host's interface, which
-/// the build just checked.
-async fn record_interface(
+/// the build just checked, and the system it is of.
+async fn record(
     incus: &Incus,
     fingerprint: &ImageFingerprint,
+    system: &Path,
     timeout: Duration,
 ) -> Result<(), BuildError> {
     let path = format!("/1.0/images/{fingerprint}");
@@ -309,6 +374,7 @@ async fn record_interface(
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis());
     image["properties"][BUILT_PROPERTY] = serde_json::json!(built.to_string());
+    image["properties"][SYSTEM_PROPERTY] = serde_json::json!(system.display().to_string());
     let put = serde_json::json!({
         "auto_update": image["auto_update"],
         "expires_at": image["expires_at"],

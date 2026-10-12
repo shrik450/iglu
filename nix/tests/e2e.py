@@ -468,7 +468,7 @@ try:
         client.fail(f"{IGLU} project rm general")
         iglu(f"rm {scratch['name']} --wait")
 
-    with subtest("a workspace updates to its environment's newest build, keeping its home and nothing else"):
+    with subtest("a workspace upgrades in place to its environment's newest build, keeping its files"):
         host.succeed(f"cp -r {CHANGING_ENV} /var/lib/changing-env && chmod -R a+rX,u+w /var/lib/changing-env")
         iglu("env add changing 'path:/var/lib/changing-env#changing'")
         ready = "jq -e '.[] | select(.name == \"changing\") | .latest.status == \"ready\"'"
@@ -478,9 +478,9 @@ try:
         assert not updating["newer_build"], updating
         updating_instance = "iglu-" + updating["id"].replace("-", "")
         inside = guest_of(updating_instance)
-        inside("echo kept > ~/mark && echo gone > /var/tmp/mark")
+        inside("echo kept > ~/mark && echo also > /var/tmp/mark")
         assert inside("cat /etc/iglu-example 2>&1 || true").strip() != "next"
-        before = json.loads(host.succeed(f"incus query /1.0/instances/{updating_instance}"))["config"]["volatile.base_image"]
+        before = json.loads(host.succeed(f"incus query /1.0/instances/{updating_instance}"))["config"]
         # Its environment is built again, with a change.
         host.succeed("touch /var/lib/changing-env/next")
         iglu("env build changing")
@@ -489,18 +489,19 @@ try:
         iglu("update updating --wait")
         updated = iglu("show updating")
         assert updated["phase"] == "running" and not updated["newer_build"], updated
-        after = json.loads(host.succeed(f"incus query /1.0/instances/{updating_instance}"))["config"]["volatile.base_image"]
-        assert after != before, (before, after)
+        after = json.loads(host.succeed(f"incus query /1.0/instances/{updating_instance}"))["config"]
+        assert after["user.iglu.image"] != before["user.iglu.image"], (before, after)
+        assert after["user.iglu.system"] != before["user.iglu.system"], (before, after)
         inside = guest_of(updating_instance)
         assert inside("cat /etc/iglu-example").strip() == "next"
         assert inside("cat ~/mark").strip() == "kept"
-        inside("test ! -e /var/tmp/mark")
+        assert inside("cat /var/tmp/mark").strip() == "also"
+        assert inside("readlink /run/current-system").strip() == after["user.iglu.system"]
+        # The old system is gone from its store.
+        inside(f"test ! -e {before['user.iglu.system']}")
         history = [entry["kind"] for entry in iglu("log updating")]
-        assert "update-asked" in history and "rebuilt" in history, history
-        # Its home goes with it.
+        assert "update-asked" in history and "updated" in history, history
         iglu("rm updating --wait --force")
-        home = "iglu-home-" + updating["id"].replace("-", "")
-        host.fail(f"incus storage volume show iglu custom/{home}")
         iglu("project rm changing")
 
     with subtest("workspaces can't reach each other"):

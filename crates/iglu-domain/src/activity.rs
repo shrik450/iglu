@@ -3,6 +3,7 @@
 
 use std::str::FromStr;
 
+use serde::de::IntoDeserializer;
 use serde::{Deserialize, Serialize};
 
 use crate::ParseError;
@@ -52,43 +53,11 @@ pub enum ActivityKind {
     ColumnClosed,
     /// Asked to move to its environment's newest build; the detail names it.
     UpdateAsked,
-    /// Its root disk was rebuilt from its new image, its home kept.
-    Rebuilt,
+    /// It was upgraded in place to its new build's system.
+    Updated,
 }
 
 impl ActivityKind {
-    pub const ALL: [Self; 29] = [
-        Self::Requested,
-        Self::StateSet,
-        Self::Created,
-        Self::Started,
-        Self::SecretsDelivered,
-        Self::Provisioned,
-        Self::ColumnsOpened,
-        Self::Frozen,
-        Self::Thawed,
-        Self::Stopped,
-        Self::Removed,
-        Self::Deleted,
-        Self::Error,
-        Self::Renamed,
-        Self::Typed,
-        Self::ThawedOnOpen,
-        Self::IdleFroze,
-        Self::IdleStopped,
-        Self::SecretUpdated,
-        Self::Published,
-        Self::Unpublished,
-        Self::FileKept,
-        Self::Adopted,
-        Self::AccessChanged,
-        Self::ColumnAdded,
-        Self::ColumnRestarted,
-        Self::ColumnClosed,
-        Self::UpdateAsked,
-        Self::Rebuilt,
-    ];
-
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -120,7 +89,7 @@ impl ActivityKind {
             Self::ColumnRestarted => "column-restarted",
             Self::ColumnClosed => "column-closed",
             Self::UpdateAsked => "update-asked",
-            Self::Rebuilt => "rebuilt",
+            Self::Updated => "updated",
         }
     }
 }
@@ -129,10 +98,10 @@ impl FromStr for ActivityKind {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|kind| kind.as_str() == s)
-            .ok_or(ParseError::new("activity kind", "not a kind iglu records"))
+        // By the names it's sent by, so every kind reads back.
+        Self::deserialize(s.into_deserializer()).map_err(|_: serde::de::value::Error| {
+            ParseError::new("activity kind", "not a kind iglu records")
+        })
     }
 }
 
@@ -140,9 +109,41 @@ impl FromStr for ActivityKind {
 mod tests {
     use super::*;
 
+    use ActivityKind::*;
+
     #[test]
-    fn every_kind_reads_back_as_itself_by_the_name_it_is_sent_as() {
-        for kind in ActivityKind::ALL {
+    fn every_kind_is_stored_by_the_name_it_is_sent_as() {
+        for kind in [
+            Requested,
+            StateSet,
+            Created,
+            Started,
+            SecretsDelivered,
+            Provisioned,
+            ColumnsOpened,
+            Frozen,
+            Thawed,
+            Stopped,
+            Removed,
+            Deleted,
+            Error,
+            Renamed,
+            Typed,
+            ThawedOnOpen,
+            IdleFroze,
+            IdleStopped,
+            SecretUpdated,
+            Published,
+            Unpublished,
+            FileKept,
+            Adopted,
+            AccessChanged,
+            ColumnAdded,
+            ColumnRestarted,
+            ColumnClosed,
+            UpdateAsked,
+            Updated,
+        ] {
             assert_eq!(kind.as_str().parse::<ActivityKind>(), Ok(kind));
             assert_eq!(
                 serde_json::to_value(kind).expect("serializes"),

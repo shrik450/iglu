@@ -644,8 +644,8 @@ async fn set_desired_state(
 }
 
 /// Moves a workspace to its environment's newest build: the reconciler
-/// stops it, rebuilds its root from the build, keeping its home, and brings
-/// it back as it was asked to be.
+/// upgrades it in place to the build's system, restarting it, and brings it
+/// back as it was asked to be.
 async fn update_workspace(
     actor: Actor,
     State(app): State<Arc<App>>,

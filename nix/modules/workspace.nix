@@ -76,9 +76,11 @@ in
       type = lib.types.str;
       example = "dev";
       description = ''
-        The account terminals and provisioning run as. iglu never
-        runs anything in a workspace as root. The account is created if the
-        configuration doesn't define it, and needs a fixed uid.
+        The account terminals and provisioning run as. iglu never runs
+        anything of a workspace's as root; only upgrading its system to a
+        newer build, with the host's own copy of it, runs as root. The account
+        is created if the configuration doesn't define it, and needs a fixed
+        uid.
       '';
     };
 
@@ -179,10 +181,13 @@ in
       # A workspace isn't an installer; users bring their own flakes.
       system.installer.channel.enable = lib.mkDefault false;
 
+      # The system itself too, which workspaces from an older build upgrade
+      # to in place: kept with the image, the host has it to copy into them.
       system.build.igluImage = pkgs.runCommand "iglu-image" { } ''
         mkdir $out
         ln -s ${config.system.build.metadata}/tarball/*.tar.xz $out/metadata.tar.xz
         ln -s ${config.system.build.squashfs}/*.squashfs $out/rootfs.squashfs
+        ln -s ${config.system.build.toplevel} $out/system
         cp ${manifest} $out/iglu.json
       '';
     }

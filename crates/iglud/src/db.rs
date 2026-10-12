@@ -651,21 +651,21 @@ pub fn newest_image_like(
 /// What asking a workspace to move to its environment's newest build did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Updated {
-    /// It's on the newest build now; the reconciler rebuilds its root.
+    /// It's on the newest build now; the reconciler upgrades it.
     Moved(EnvRevisionId),
     /// It was on it already.
     Already,
     /// Its environment has no build ready.
     NoBuild,
-    /// The newest build's account isn't the workspace's: its home's files
-    /// would be someone else's.
+    /// The newest build's account isn't the workspace's: its files would be
+    /// someone else's.
     OtherAccount,
     Gone,
 }
 
 /// Moves a workspace to its environment's newest ready build. A frozen one
-/// is asked to run: its memory goes with the old root, and it would
-/// otherwise read as having lost it. A failure of the old build is over;
+/// is asked to run: the upgrade restarts it, and it would otherwise read as
+/// having lost its memory. A failure of the old build is over;
 /// an offline host still is.
 pub fn update_to_newest(tx: &Connection, id: WorkspaceId) -> Result<Updated, DbError> {
     let current: Option<(EnvRevisionId, String, i64)> = tx

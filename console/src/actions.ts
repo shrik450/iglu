@@ -91,10 +91,10 @@ export async function remove(ws: WorkspaceView): Promise<void> {
   if (deleted && current.value?.id === ws.id) navigate({ view: "overview" });
 }
 
-/** Moves a workspace to its environment's newest build, keeping its home. */
+/** Upgrades a workspace in place to its environment's newest build. */
 export async function update(ws: WorkspaceView): Promise<void> {
   const updated = await attempt(() => api.update(ws.id));
-  if (updated) say(`Updating ${called(ws)} to the newest build of ${ws.environment}. Its home stays.`);
+  if (updated) say(`Updating ${called(ws)} to the newest build of ${ws.environment}. It restarts once it's ready.`);
 }
 
 export async function toggleFreeze(ws: WorkspaceView): Promise<void> {

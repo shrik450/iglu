@@ -234,6 +234,9 @@ in
       "nix-command"
       "flakes"
     ];
+    # hostd keeps each image's build, its system included, while the image
+    # is on the host; once it removes the image, collection frees the rest.
+    nix.gc.automatic = lib.mkDefault true;
 
     systemd.services.iglu-hostd = {
       description = "iglu host agent";

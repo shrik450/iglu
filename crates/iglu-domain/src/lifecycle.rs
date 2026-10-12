@@ -140,21 +140,21 @@ impl SecretsGeneration {
 pub struct Desired {
     pub state: DesiredState,
     pub secrets: SecretsGeneration,
-    pub root: Root,
+    pub build: Build,
 }
 
-/// Whether the instance's root disk is from the image the workspace is on:
-/// one updated to a newer build is rebuilt from it, keeping its home.
+/// Whether the instance runs the system of the build the workspace is on:
+/// one updated to a newer build is upgraded to its system in place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Root {
+pub enum Build {
     Current,
     Outdated,
 }
 
-impl Root {
-    /// Outdated only when the host says what the root is from and it isn't
-    /// the image the workspace is on: a root nothing is known about is left
-    /// alone, never rebuilt on a guess.
+impl Build {
+    /// Outdated only when the host says which image's system the instance
+    /// runs and it isn't the one the workspace is on: an instance nothing is
+    /// known about is left alone, never upgraded on a guess.
     #[must_use]
     pub fn of(observed: Option<&ImageFingerprint>, wanted: Option<&ImageFingerprint>) -> Self {
         match (observed, wanted) {
@@ -247,24 +247,24 @@ pub enum Effect {
     Thaw,
     Stop,
     Delete,
-    /// Replace the stopped instance's root disk with its new image. Its home
-    /// is a volume of its own, and stays.
-    Rebuild,
+    /// Upgrade the instance in place to its new image's system, starting it
+    /// if it isn't running, and restart it into that system. Everything on
+    /// its disk stays.
+    Upgrade,
 }
 
 impl Effect {
     /// Whether the effect puts a workspace's memory back in use.
     const fn uses_memory(self) -> bool {
         match self {
-            Self::Start | Self::Thaw => true,
+            Self::Start | Self::Thaw | Self::Upgrade => true,
             Self::Create
             | Self::DeliverSecrets
             | Self::Provision
             | Self::OpenColumns
             | Self::Freeze
             | Self::Stop
-            | Self::Delete
-            | Self::Rebuild => false,
+            | Self::Delete => false,
         }
     }
 }
@@ -315,15 +315,19 @@ pub fn plan(desired: Desired, instance: Instance, capacity: Capacity) -> Plan {
         (None, Instance::Absent) => Plan::Stable,
         (None, Instance::Present(_)) => Plan::Perform(Effect::Delete),
         (Some(_), Instance::Absent) => Plan::Perform(Effect::Create),
-        (Some(live), Instance::Present(present)) => match (desired.root, present.runtime) {
-            (Root::Current, _) | (Root::Outdated, Runtime::Transitioning) => {
+        (Some(live), Instance::Present(present)) => match (desired.build, present.runtime) {
+            (Build::Current, _) | (Build::Outdated, Runtime::Transitioning) => {
                 plan_live(live, desired.secrets, present, capacity)
             }
-            // Rebuilt once stopped, whatever it's meant to be after.
-            (Root::Outdated, Runtime::Stopped) => Plan::Perform(Effect::Rebuild),
-            (Root::Outdated, Runtime::Running(_) | Runtime::Frozen | Runtime::Failed) => {
-                Plan::Perform(Effect::Stop)
+            // Upgraded from wherever it is, then brought to what it's meant
+            // to be; a broken one is stopped first.
+            (Build::Outdated, Runtime::Stopped | Runtime::Running(_) | Runtime::Frozen) => {
+                match capacity {
+                    Capacity::Fits => Plan::Perform(Effect::Upgrade),
+                    Capacity::Short { .. } => Plan::Wait(Wait::Capacity(capacity)),
+                }
             }
+            (Build::Outdated, Runtime::Failed) => Plan::Perform(Effect::Stop),
         },
     }
 }
@@ -531,7 +535,7 @@ mod tests {
         Desired {
             state,
             secrets: GEN,
-            root: Root::Current,
+            build: Build::Current,
         }
     }
 
@@ -844,41 +848,43 @@ mod tests {
     fn a_root_is_outdated_only_when_known_to_be_from_another_image() {
         let a: ImageFingerprint = "a".repeat(64).parse().expect("a fingerprint");
         let b: ImageFingerprint = "b".repeat(64).parse().expect("a fingerprint");
-        assert_eq!(Root::of(Some(&a), Some(&b)), Root::Outdated);
-        assert_eq!(Root::of(Some(&a), Some(&a)), Root::Current);
-        assert_eq!(Root::of(None, Some(&b)), Root::Current);
-        assert_eq!(Root::of(Some(&a), None), Root::Current);
+        assert_eq!(Build::of(Some(&a), Some(&b)), Build::Outdated);
+        assert_eq!(Build::of(Some(&a), Some(&a)), Build::Current);
+        assert_eq!(Build::of(None, Some(&b)), Build::Current);
+        assert_eq!(Build::of(Some(&a), None), Build::Current);
     }
 
     #[test]
-    fn an_outdated_root_is_stopped_then_rebuilt_whatever_comes_after() {
+    fn an_outdated_system_is_upgraded_from_wherever_it_is_given_room() {
         for state in [
             DesiredState::Running,
             DesiredState::Frozen,
             DesiredState::Stopped,
         ] {
             let want = Desired {
-                root: Root::Outdated,
+                build: Build::Outdated,
                 ..desired(state)
             };
-            for runtime in [ready(), Runtime::Frozen, Runtime::Failed] {
+            for runtime in [ready(), Runtime::Frozen, Runtime::Stopped] {
+                let instance = present(runtime, Provisioning::Complete);
                 assert_eq!(
-                    plan(
-                        want,
-                        present(runtime, Provisioning::Complete),
-                        Capacity::Fits
-                    ),
-                    Plan::Perform(Effect::Stop),
+                    plan(want, instance, Capacity::Fits),
+                    Plan::Perform(Effect::Upgrade),
+                    "{state:?} {runtime:?}"
+                );
+                assert_eq!(
+                    plan(want, instance, SHORT),
+                    Plan::Wait(Wait::Capacity(SHORT)),
                     "{state:?} {runtime:?}"
                 );
             }
             assert_eq!(
                 plan(
                     want,
-                    present(Runtime::Stopped, Provisioning::Complete),
-                    SHORT
+                    present(Runtime::Failed, Provisioning::Complete),
+                    Capacity::Fits
                 ),
-                Plan::Perform(Effect::Rebuild),
+                Plan::Perform(Effect::Stop),
                 "{state:?}"
             );
             assert_eq!(
@@ -889,14 +895,14 @@ mod tests {
                 ),
                 Plan::Wait(Wait::Transition)
             );
-            // Nothing to rebuild once it's gone or going.
+            // Nothing to upgrade once it's gone or going.
             assert_eq!(
                 plan(want, Instance::Absent, Capacity::Fits),
                 Plan::Perform(Effect::Create)
             );
         }
         let deleted = Desired {
-            root: Root::Outdated,
+            build: Build::Outdated,
             ..desired(DesiredState::Deleted)
         };
         assert_eq!(

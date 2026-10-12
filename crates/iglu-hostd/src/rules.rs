@@ -8,7 +8,7 @@ use iglu_domain::guest as guest_tools;
 use iglu_domain::lifecycle::{
     Columns, Instance, Present, Readiness, Running, Runtime, SecretsGeneration,
 };
-use iglu_proto::{CommandError, CreateSpec, ErrorCode, RebuildSpec};
+use iglu_proto::{CommandError, CreateSpec, ErrorCode, UpgradeSpec};
 
 use crate::runtime::{Claim, Guest, Observed, Ownership, State, StoredImage};
 use iglu_domain::env::ImageFingerprint;
@@ -25,7 +25,7 @@ pub enum Step<'a> {
     /// Ends every process, whether the instance is running or frozen.
     Stop,
     Delete,
-    Rebuild(&'a RebuildSpec),
+    Upgrade(&'a UpgradeSpec),
 }
 
 fn not_ours(ownership: &Ownership) -> CommandError {
@@ -57,7 +57,7 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
             return match command {
                 Step::Create(_) => Ok(vec![command]),
                 Step::Delete => Ok(vec![]),
-                Step::Start | Step::Freeze | Step::Thaw | Step::Stop | Step::Rebuild(_) => {
+                Step::Start | Step::Freeze | Step::Thaw | Step::Stop | Step::Upgrade(_) => {
                     Err(missing())
                 }
             };
@@ -101,11 +101,12 @@ pub fn decide<'a>(command: Step<'a>, found: Option<&Claim>) -> Result<Vec<Step<'
                 Ok(vec![Step::Stop, Step::Delete])
             }
         },
-        Step::Rebuild(spec) => match state {
-            State::Stopped => Ok(vec![Step::Rebuild(spec)]),
-            State::Running { .. } | State::Frozen | State::Transitioning | State::Failed => {
-                Ok(vec![Step::Stop, Step::Rebuild(spec)])
-            }
+        // The runtime brings it up to upgrade it: only system tools run, so
+        // an instance whose own tools speak another interface still can be.
+        Step::Upgrade(spec) => match state {
+            State::Stopped | State::Running { .. } | State::Frozen => Ok(vec![Step::Upgrade(spec)]),
+            State::Failed => Ok(vec![Step::Stop, Step::Upgrade(spec)]),
+            State::Transitioning => Err(invalid("the workspace is changing state")),
         },
     }
 }
@@ -149,7 +150,7 @@ fn speaks_this_hosts_interface(observed: &Observed) -> Result<(), CommandError> 
             ErrorCode::ImageIncompatible,
             format!(
                 "this workspace's image was built with a different iglu ({}) than this host's \
-                 (interface {}): rebuild its environment with this iglu, then update the workspace, which keeps its home",
+                 (interface {}): rebuild its environment with this iglu, then update the workspace",
                 incompatible.found,
                 guest_tools::INTERFACE
             ),
@@ -388,24 +389,24 @@ mod tests {
     }
 
     #[test]
-    fn a_rebuild_stops_first_and_needs_an_instance() {
-        let spec = RebuildSpec {
+    fn an_upgrade_starts_from_any_settled_state_and_needs_an_instance() {
+        let spec = UpgradeSpec {
             image: "a".repeat(64).parse().expect("a fingerprint"),
             user: observed(State::Stopped).user,
         };
-        assert_eq!(
-            steps(Step::Rebuild(&spec), State::Stopped),
-            Ok(vec![Step::Rebuild(&spec)])
-        );
-        for state in [RUNNING, State::Frozen, State::Transitioning, State::Failed] {
+        for state in [State::Stopped, RUNNING, State::Frozen] {
             assert_eq!(
-                steps(Step::Rebuild(&spec), state),
-                Ok(vec![Step::Stop, Step::Rebuild(&spec)]),
+                steps(Step::Upgrade(&spec), state),
+                Ok(vec![Step::Upgrade(&spec)]),
                 "{state:?}"
             );
         }
         assert_eq!(
-            decide(Step::Rebuild(&spec), None).map_err(|e| e.code),
+            steps(Step::Upgrade(&spec), State::Failed),
+            Ok(vec![Step::Stop, Step::Upgrade(&spec)])
+        );
+        assert_eq!(
+            decide(Step::Upgrade(&spec), None).map_err(|e| e.code),
             Err(ErrorCode::NotFound)
         );
     }
@@ -460,13 +461,13 @@ mod tests {
                 "{recorded:?}"
             );
             // Updating is how it gets tools this host speaks.
-            let spec = RebuildSpec {
+            let spec = UpgradeSpec {
                 image: "a".repeat(64).parse().expect("a fingerprint"),
                 user: observed(State::Stopped).user,
             };
             assert_eq!(
-                decide(Step::Rebuild(&spec), Some(&instance(State::Stopped))),
-                Ok(vec![Step::Rebuild(&spec)]),
+                decide(Step::Upgrade(&spec), Some(&instance(State::Stopped))),
+                Ok(vec![Step::Upgrade(&spec)]),
                 "{recorded:?}"
             );
             assert_eq!(

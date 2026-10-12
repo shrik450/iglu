@@ -179,14 +179,15 @@ pub enum Command {
     Thaw,
     Stop,
     Delete,
-    /// Replaces the stopped instance's root disk with `image`, keeping its
-    /// home. Refused when the image's account isn't the instance's, which
-    /// would leave its home's files someone else's.
-    Rebuild(RebuildSpec),
+    /// Upgrades the instance in place to `image`'s system and restarts it
+    /// into that system, from whatever state it's in but failed. Refused
+    /// when the image's account isn't the instance's, which would leave its
+    /// files someone else's.
+    Upgrade(UpgradeSpec),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RebuildSpec {
+pub struct UpgradeSpec {
     pub image: ImageFingerprint,
     pub user: GuestUser,
 }

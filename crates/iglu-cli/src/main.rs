@@ -144,8 +144,8 @@ enum WorkspaceCommand {
         #[arg(long)]
         wait: bool,
     },
-    /// Move a workspace to its environment's newest build. Its home and kept
-    /// files stay; what's running ends, and files outside its home start over.
+    /// Upgrade a workspace in place to its environment's newest build and
+    /// restart it. Its files stay; what's running ends.
     Update {
         workspace: String,
         #[arg(long)]
@@ -379,7 +379,7 @@ async fn wait_for(
 }
 
 /// Moves a workspace to its environment's newest build, and prints it, with
-/// `wait` once it's rebuilt and back as it was asked to be.
+/// `wait` once it's upgraded and back as it was asked to be.
 async fn update(
     client: &Client,
     json_mode: bool,
@@ -389,7 +389,7 @@ async fn update(
     let ws = client.resolve(reference).await?;
     let updated = client.update(ws.id).await?;
     let ws = if wait {
-        wait_for_rebuild(client, ws.id).await?;
+        wait_for_upgrade(client, ws.id).await?;
         wait_for(client, ws.id, updated.desired).await?
     } else {
         Some(updated)
@@ -400,9 +400,9 @@ async fn update(
     Ok(())
 }
 
-/// Waits for the workspace's root to be rebuilt since it was last asked to
-/// update, which its history records.
-async fn wait_for_rebuild(client: &Client, id: WorkspaceId) -> anyhow::Result<()> {
+/// Waits for the workspace to be upgraded since it was last asked to update,
+/// which its history records.
+async fn wait_for_upgrade(client: &Client, id: WorkspaceId) -> anyhow::Result<()> {
     let started = Instant::now();
     loop {
         let log = client.activity(id).await?;
@@ -412,7 +412,7 @@ async fn wait_for_rebuild(client: &Client, id: WorkspaceId) -> anyhow::Result<()
             .map(|e| e.at);
         if log
             .iter()
-            .any(|e| e.kind == ActivityKind::Rebuilt && asked.is_none_or(|asked| e.at >= asked))
+            .any(|e| e.kind == ActivityKind::Updated && asked.is_none_or(|asked| e.at >= asked))
         {
             return Ok(());
         }

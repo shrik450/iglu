@@ -16,6 +16,7 @@ mod observe;
 mod policy;
 mod reclaim;
 mod tunnel;
+mod upgrade;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -31,7 +32,7 @@ use iglu_domain::id::{InstanceName, PrincipalId};
 use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
-use iglu_proto::{CreateSpec, RebuildSpec};
+use iglu_proto::{CreateSpec, UpgradeSpec};
 use serde_json::{Value, json};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
@@ -47,15 +48,6 @@ const CHANNEL_DEVICE: &str = "iglu-channel";
 
 /// The disk device that is the owner's kept directory.
 const KEPT_DEVICE: &str = "iglu-kept";
-
-/// The disk device that is the workspace account's home: a volume of its
-/// own, so rebuilding the root from a newer image keeps it.
-const HOME_DEVICE: &str = "iglu-home";
-
-/// The volume that holds a workspace's home.
-fn home_volume(name: InstanceName) -> String {
-    format!("iglu-home-{}", name.workspace().as_uuid().simple())
-}
 
 /// The volume that holds a person's kept directory on this host. Its files
 /// belong to the workspace account's uid, so an environment whose account
@@ -140,10 +132,9 @@ impl IncusRuntime {
         format!("/1.0/storage-pools/{}/volumes/custom", self.settings.pool)
     }
 
-    /// Makes a volume for the workspace account's files unless it's there.
-    /// It's shifted, so every instance it's attached to, each with an idmap
-    /// of its own, sees its files as the account's. A person's kept volume
-    /// is never removed; a workspace's home goes with the workspace.
+    /// Makes the person's kept volume unless it's there. It's shifted, so
+    /// every one of their instances, each with an idmap of its own, sees its
+    /// files as the workspace account's. hostd never removes one.
     async fn keep(&self, volume: &str, user: &GuestUser) -> Result<(), RuntimeError> {
         let volumes = self.volumes();
         let path = format!("{volumes}/{volume}");
@@ -173,8 +164,7 @@ impl IncusRuntime {
             .await
         {
             Ok(_) => Ok(()),
-            // Another of the person's workspaces made it first, or an
-            // earlier try at this one did.
+            // Another of the person's workspaces made it first.
             Err(_) if self.incus.get::<Value>(&path).await.is_ok() => Ok(()),
             Err(error) => Err(failed(error)),
         }
@@ -228,20 +218,20 @@ impl Runtime for IncusRuntime {
     }
 
     async fn create(&self, name: InstanceName, spec: &CreateSpec) -> Result<(), RuntimeError> {
-        match self
+        let image = match self
             .incus
             .get::<Value>(&format!("/1.0/images/{}", spec.image))
             .await
         {
-            Ok(image) => guest_tools::compatible(build::recorded_interface(&image))?,
+            Ok(image) => image,
             Err(error) if error.is_not_found() => return Err(RuntimeError::ImageMissing),
             Err(error) => return Err(failed(error)),
-        }
+        };
+        guest_tools::compatible(build::recorded_interface(&image))?;
+        let system = build::recorded_system(&image).unwrap_or_default();
         let guest_user = serde_json::to_string(&spec.user).map_err(RuntimeError::failed)?;
         let kept = kept_volume(spec.owner, &spec.user);
         self.keep(&kept, &spec.user).await?;
-        let home = home_volume(name);
-        self.keep(&home, &spec.user).await?;
         // The instance's end of its channel, which only the workspace user
         // can open; the host's end is hostd's listener for this instance.
         let channel = json!({
@@ -272,6 +262,8 @@ impl Runtime for IncusRuntime {
                 keys::GUEST_USER: guest_user,
                 // The image was just checked to speak this host's interface.
                 keys::GUEST_INTERFACE: guest_tools::INTERFACE.to_string(),
+                keys::IMAGE: spec.image.to_string(),
+                keys::SYSTEM: system,
             },
             "devices": {
                 CHANNEL_DEVICE: channel,
@@ -280,12 +272,6 @@ impl Runtime for IncusRuntime {
                     "pool": self.settings.pool,
                     "source": kept,
                     "path": guest_tools::INSTANCE_KEPT,
-                },
-                HOME_DEVICE: {
-                    "type": "disk",
-                    "pool": self.settings.pool,
-                    "source": home,
-                    "path": spec.user.home.to_string(),
                 },
             },
         });
@@ -340,32 +326,7 @@ impl Runtime for IncusRuntime {
         Ok(())
     }
 
-    /// Detaches and removes the home first: a volume can't go while it's
-    /// attached, and the instance staying until last means a delete cut
-    /// short is tried again, never leaving a home with nothing to own it.
     async fn delete(&self, name: InstanceName) -> Result<(), RuntimeError> {
-        self.incus
-            .update_instance(
-                name,
-                |instance| {
-                    if let Some(devices) = instance["devices"].as_object_mut() {
-                        devices.remove(HOME_DEVICE);
-                    }
-                },
-                self.timeouts.operation(),
-            )
-            .await
-            .map_err(failed)?;
-        let home = format!("{}/{}", self.volumes(), home_volume(name));
-        match self
-            .incus
-            .run(Method::DELETE, &home, None, self.timeouts.operation())
-            .await
-        {
-            Ok(_) => {}
-            Err(error) if error.is_not_found() => {}
-            Err(error) => return Err(failed(error)),
-        }
         self.incus
             .run(
                 Method::DELETE,
@@ -379,17 +340,27 @@ impl Runtime for IncusRuntime {
         Ok(())
     }
 
-    async fn rebuild(&self, name: InstanceName, spec: &RebuildSpec) -> Result<(), RuntimeError> {
-        let interface = match self
+    async fn upgrade(&self, name: InstanceName, spec: &UpgradeSpec) -> Result<(), RuntimeError> {
+        let image = match self
             .incus
             .get::<Value>(&format!("/1.0/images/{}", spec.image))
             .await
         {
-            Ok(image) => build::recorded_interface(&image),
+            Ok(image) => image,
             Err(error) if error.is_not_found() => return Err(RuntimeError::ImageMissing),
             Err(error) => return Err(failed(error)),
         };
-        guest_tools::compatible(interface)?;
+        guest_tools::compatible(build::recorded_interface(&image))?;
+        let refuse = |why: &str| {
+            RuntimeError::Refused(format!(
+                "{why}; build the environment again to update to it"
+            ))
+        };
+        let system = build::recorded_system(&image)
+            .ok_or_else(|| refuse("the build has no system to upgrade to"))?;
+        if !Path::new(&system).exists() {
+            return Err(refuse("this host no longer has the build's system"));
+        }
         let instance: Value = self
             .incus
             .get(&format!("/1.0/instances/{name}"))
@@ -399,37 +370,45 @@ impl Runtime for IncusRuntime {
         let user: Option<GuestUser> = config[keys::GUEST_USER]
             .as_str()
             .and_then(|v| serde_json::from_str(v).ok());
-        // Its home's files are the account's, mounted where its home is.
+        // Its files are the account's.
         if user.as_ref() != Some(&spec.user) {
             return Err(RuntimeError::Refused(
                 "the environment's newest build has another account than this workspace; recreate it to use the build".into(),
             ));
         }
-        if instance["devices"][HOME_DEVICE].is_null() {
-            return Err(RuntimeError::Refused(
-                "this workspace keeps its files on the disk an update replaces; recreate it to use the newest build".into(),
-            ));
+        let old = config[keys::SYSTEM].as_str().unwrap_or_default().to_owned();
+        // Another image of the same system is only recorded.
+        if old != system {
+            let boot = Duration::from_secs(300);
+            match self.instance(name).await? {
+                Some(Ok(Observed {
+                    state: State::Frozen,
+                    ..
+                })) => self.change(name, StateAction::Unfreeze).await?,
+                Some(Ok(Observed {
+                    state: State::Stopped,
+                    ..
+                })) => self.change(name, StateAction::Start).await?,
+                _ => {}
+            }
+            upgrade::ready(&self.incus, name, boot).await?;
+            let install = Duration::from_secs(1800);
+            upgrade::install(&self.incus, name, &self.build, &system, install).await?;
+            self.stop(name).await?;
+            self.change(name, StateAction::Start).await?;
+            if let Err(error) = upgrade::tidy(&self.incus, name, &system, &old, boot).await {
+                tracing::info!(%name, %error, "removing the old system failed; it stays on disk");
+            }
         }
-        if config[keys::BASE_IMAGE].as_str() != Some(&spec.image.to_string()) {
-            let body =
-                json!({ "source": { "type": "image", "fingerprint": spec.image.to_string() } });
-            self.incus
-                .run(
-                    Method::POST,
-                    &format!("/1.0/instances/{name}/rebuild"),
-                    Some(&body),
-                    self.timeouts.operation(),
-                )
-                .await
-                .map_err(failed)?;
-        }
-        // The new root's tools were just checked to speak this host's interface.
+        // Its tools were just checked to speak this host's interface.
         self.incus
             .update_instance(
                 name,
                 |instance| {
-                    instance["config"][keys::GUEST_INTERFACE] =
-                        json!(guest_tools::INTERFACE.to_string());
+                    let config = &mut instance["config"];
+                    config[keys::GUEST_INTERFACE] = json!(guest_tools::INTERFACE.to_string());
+                    config[keys::IMAGE] = json!(spec.image.to_string());
+                    config[keys::SYSTEM] = json!(system);
                 },
                 self.timeouts.operation(),
             )
@@ -554,10 +533,12 @@ impl Runtime for IncusRuntime {
             )
             .await
         {
-            Ok(_) => Ok(()),
-            Err(error) if error.is_not_found() => Ok(()),
-            Err(error) => Err(failed(error)),
+            Ok(_) => {}
+            Err(error) if error.is_not_found() => {}
+            Err(error) => return Err(failed(error)),
         }
+        build::release(image).await;
+        Ok(())
     }
 }
 

@@ -84,7 +84,7 @@ impl<R: Runtime> Host<R> {
             Command::Thaw => self.lifecycle(name, Step::Thaw).await,
             Command::Stop => self.lifecycle(name, Step::Stop).await,
             Command::Delete => self.lifecycle(name, Step::Delete).await,
-            Command::Rebuild(spec) => self.lifecycle(name, Step::Rebuild(spec)).await,
+            Command::Upgrade(spec) => self.lifecycle(name, Step::Upgrade(spec)).await,
         };
         match result {
             Ok(()) => match self.observe(name).await {
@@ -114,7 +114,7 @@ impl<R: Runtime> Host<R> {
                     self.runtime.delete(name).await?;
                     self.boots.forget(name);
                 }
-                Step::Rebuild(spec) => self.runtime.rebuild(name, spec).await?,
+                Step::Upgrade(spec) => self.runtime.upgrade(name, spec).await?,
             }
         }
         Ok(())

@@ -134,7 +134,8 @@ impl HostClient {
         command: &Command,
     ) -> Result<CommandOutcome, HostError> {
         let timeout = match command {
-            Command::Provision(_) => Duration::from_secs(1900),
+            // Both can move a lot: a repository, or a new system.
+            Command::Provision(_) | Command::Upgrade(_) => Duration::from_secs(1900),
             Command::Create(_)
             | Command::Start
             | Command::DeliverSecrets(_)
@@ -142,8 +143,7 @@ impl HostClient {
             | Command::Freeze
             | Command::Thaw
             | Command::Stop
-            | Command::Delete
-            | Command::Rebuild(_) => Duration::from_secs(300),
+            | Command::Delete => Duration::from_secs(300),
         };
         self.json(
             self.http

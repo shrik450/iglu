@@ -23,7 +23,7 @@ use iglu_domain::port::GuestPort;
 use iglu_domain::secret::FetchTokens;
 use iglu_domain::terminal::{SessionName, TerminalSize};
 use iglu_domain::time::Timestamp;
-use iglu_proto::{CreateSpec, RebuildSpec};
+use iglu_proto::{CreateSpec, UpgradeSpec};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
@@ -83,17 +83,19 @@ pub trait Runtime: Send + Sync + 'static {
     fn stop(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
     /// Removes a stopped instance and everything the runtime keeps for it,
-    /// its home included, but for its owner's kept directory.
+    /// but for its owner's kept directory.
     fn delete(&self, name: InstanceName) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
-    /// Replaces a stopped instance's root with `spec.image`, keeping its
-    /// home, and records the image's interface on it. Done already when its
-    /// root is from that image. Refused when the image's account isn't the
-    /// instance's, or the instance has no home of its own to keep.
-    fn rebuild(
+    /// Upgrades an instance in place to `spec.image`'s system: brings it up
+    /// if it's stopped or frozen, puts the system in its store, makes it the
+    /// one it boots, restarts it into it, and records the image and its
+    /// interface on it. Done already when it runs that image's system.
+    /// Refused when the image's account isn't the instance's, or the image
+    /// has no system to upgrade to.
+    fn upgrade(
         &self,
         name: InstanceName,
-        spec: &RebuildSpec,
+        spec: &UpgradeSpec,
     ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 
     /// Records on the instance that its repository is in place, so the

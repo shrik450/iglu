@@ -61,7 +61,7 @@ columns: Array<ColumnSpec>,
 browser: boolean, 
 /**
  * Whether its environment's newest build is of another image than the
- * one it's on, which updating moves it to, keeping its home.
+ * one it's on, which updating upgrades it to in place.
  */
 newer_build: boolean, routes: Array<RouteView>, 
 /**
