@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt};
 use iglu_api::browser::BrowserSize;
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
@@ -53,66 +53,21 @@ use crate::views::{ordered, route_view, workspace_view};
 mod projects;
 
 pub fn router() -> Router<Arc<App>> {
-    Router::new()
+    workspace_routes()
         .route("/v1/me", get(me))
-        .route("/v1/identity", get(identity))
         .route(
             "/v1/me/preferences",
             get(get_preferences).put(put_preferences),
         )
-        .route(
-            "/v1/workspaces",
-            get(list_workspaces).post(create_workspace),
-        )
-        .route("/v1/workspaces/{id}", get(get_workspace))
-        .route("/v1/workspaces/{id}/desired-state", put(set_desired_state))
-        .route("/v1/workspaces/{id}/update", post(update_workspace))
-        .route("/v1/workspaces/{id}/name", put(rename_workspace))
-        .route("/v1/workspaces/{id}/label", put(label_workspace))
+        .route("/v1/workspaces", post(create_workspace))
         .route("/v1/workspaces/{id}/seen", post(mark_seen))
-        .route("/v1/workspaces/{id}/activity", get(activity))
-        .route(
-            "/v1/workspaces/{id}/columns",
-            get(list_columns).post(add_column),
-        )
-        .route("/v1/workspaces/{id}/layout", put(put_layout))
-        .route(
-            "/v1/workspaces/{id}/columns/{session}",
-            delete(close_column),
-        )
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/label",
-            put(label_column),
-        )
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/restart",
-            post(restart_column),
-        )
         .route(
             "/v1/workspaces/{id}/columns/{session}/attach",
             get(attach_column),
         )
         .route("/v1/workspaces/{id}/browser", get(open_browser))
         .route("/v1/workspaces/{id}/downloads/{name}", get(download))
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/output",
-            get(column_output),
-        )
-        .route(
-            "/v1/workspaces/{id}/columns/{session}/input",
-            post(send_input),
-        )
         .route("/v1/workspaces/{id}/access", put(put_access))
-        .route("/v1/workspaces/{id}/files", files_route())
-        .route("/v1/workspaces/{id}/live", get(live))
-        .route(
-            "/v1/workspaces/{id}/routes",
-            get(list_routes).post(publish_route),
-        )
-        .route(
-            "/v1/workspaces/{id}/routes/{route}",
-            delete(unpublish_route),
-        )
         .route(
             "/v1/environments",
             get(list_environments).post(create_environment),
@@ -127,11 +82,19 @@ pub fn router() -> Router<Arc<App>> {
         .method_not_allowed_fallback(no_such_method)
 }
 
-/// What a workspace may ask through its channel: each route it can reach is
-/// named here, so a route added to the API isn't reachable from inside a
-/// workspace until it's added here too. What it may do to which workspace
-/// is still decided per request by its grants.
+/// What a workspace may ask through its channel: the routes it shares with
+/// people, and nothing else.
 pub fn guest_router() -> Router<Arc<App>> {
+    workspace_routes()
+        .route("/v1/{*rest}", any(not_for_workspaces))
+        .method_not_allowed_fallback(no_such_method)
+}
+
+/// What people and workspaces may both ask: each route a workspace can
+/// reach through its channel is named here, so a route added to the API
+/// isn't reachable from inside a workspace until it's added here too. What
+/// it may do to which workspace is still decided per request by its grants.
+fn workspace_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/v1/identity", get(identity))
         .route("/v1/workspaces", get(list_workspaces))
@@ -176,8 +139,6 @@ pub fn guest_router() -> Router<Arc<App>> {
             "/v1/workspaces/{id}/routes/{route}",
             delete(unpublish_route),
         )
-        .route("/v1/{*rest}", any(not_for_workspaces))
-        .method_not_allowed_fallback(no_such_method)
 }
 
 async fn identity(actor: Actor) -> Json<Identity> {
@@ -1589,7 +1550,8 @@ async fn events(
     State(app): State<Arc<App>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut changes = app.changes.subscribe();
-    let stream = async_stream(move |sender| async move {
+    let (sender, receiver) = tokio::sync::mpsc::channel(4);
+    tokio::spawn(async move {
         // What this stream last sent: a snapshot that says the same again
         // isn't sent, so a page only hears of changes.
         let mut sent = String::new();
@@ -1620,18 +1582,6 @@ async fn events(
             while changes.try_recv().is_ok() {}
         }
     });
+    let stream = tokio_stream::wrappers::ReceiverStream::new(receiver).map(Ok);
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
-}
-
-/// A stream fed by a producer task over a small channel.
-fn async_stream<F, Fut>(producer: F) -> impl Stream<Item = Result<Event, Infallible>>
-where
-    F: FnOnce(tokio::sync::mpsc::Sender<Event>) -> Fut,
-    Fut: std::future::Future<Output = ()> + Send + 'static,
-{
-    let (sender, receiver) = tokio::sync::mpsc::channel(4);
-    tokio::spawn(producer(sender));
-    futures_util::stream::unfold(receiver, |mut receiver| async move {
-        receiver.recv().await.map(|event| (Ok(event), receiver))
-    })
 }

@@ -72,17 +72,6 @@ impl Argv {
     pub fn args(&self) -> &[Arg] {
         &self.0
     }
-
-    /// This command with one more argument at the end.
-    ///
-    /// # Errors
-    ///
-    /// When that would make it too long.
-    pub fn with(&self, arg: Arg) -> Result<Self, ParseError> {
-        let mut args = self.0.clone();
-        args.push(arg);
-        Self::try_from(args)
-    }
 }
 
 impl TryFrom<Vec<Arg>> for Argv {
