@@ -115,7 +115,14 @@ function unquote(value: string): string {
   return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1).trim() : value;
 }
 
-export type Parsed = { colors: Colors } | { error: string };
+/** Why a pasted theme can't be read; lines count from 1. */
+export type ThemeProblem =
+  | { kind: "not-key-value"; line: number }
+  | { kind: "palette-entry"; line: number }
+  | { kind: "colour"; line: number; value: string }
+  | { kind: "missing" };
+
+export type Parsed = { colors: Colors } | { error: ThemeProblem };
 
 /** A theme in Ghostty's format, as its theme files have it and `ghostty
  * +show-config` prints it. Keys that aren't colours are passed over, so a
@@ -129,29 +136,29 @@ export function parseTheme(text: string): Parsed {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const equals = line.indexOf("=");
-    if (equals < 0) return { error: `Line ${index + 1} isn't \`key = value\`.` };
+    if (equals < 0) return { error: { kind: "not-key-value", line: index + 1 } };
     const key = line.slice(0, equals).trim();
     let value = unquote(line.slice(equals + 1).trim());
     if (!value) continue;
     if (key === "palette") {
       const entry = /^(\d+)\s*=\s*(\S+)$/.exec(value);
-      if (!entry) return { error: `Line ${index + 1}: a palette entry is \`palette = 0=#1e1e2e\`.` };
+      if (!entry) return { error: { kind: "palette-entry", line: index + 1 } };
       const number = Number(entry[1]);
       if (number > 15) continue;
       value = entry[2]!;
       const colour = hex(value);
-      if (!colour) return { error: `Line ${index + 1}: ${value} isn't a colour iglu reads; use hex, like #1e1e2e.` };
+      if (!colour) return { error: { kind: "colour", line: index + 1, value } };
       palette[number] = colour;
       continue;
     }
     if (!["background", "foreground", "cursor-color", "selection-background", "selection-foreground"].includes(key)) continue;
     const colour = hex(value);
-    if (!colour) return { error: `Line ${index + 1}: ${value} isn't a colour iglu reads; use hex, like #1e1e2e.` };
+    if (!colour) return { error: { kind: "colour", line: index + 1, value } };
     found[key] = colour;
   }
   const background = found["background"];
   const foreground = found["foreground"];
-  if (!background || !foreground) return { error: "A theme needs at least a background and a foreground." };
+  if (!background || !foreground) return { error: { kind: "missing" } };
   return {
     colors: {
       background,

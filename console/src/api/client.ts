@@ -16,7 +16,6 @@ import type { DnsLabel } from "../generated/DnsLabel.ts";
 import type { CreateWorkspace } from "../generated/CreateWorkspace.ts";
 import type { DesiredState } from "../generated/DesiredState.ts";
 import type { ErrorBody } from "../generated/ErrorBody.ts";
-import type { ErrorKind } from "../generated/ErrorKind.ts";
 import type { Field } from "../generated/Field.ts";
 import type { GuestPort } from "../generated/GuestPort.ts";
 import type { LiveView } from "../generated/LiveView.ts";
@@ -41,20 +40,29 @@ import type { SetDesiredState } from "../generated/SetDesiredState.ts";
 import type { WorkspaceId } from "../generated/WorkspaceId.ts";
 import type { WorkspaceName } from "../generated/WorkspaceName.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
+import type { Reason } from "../generated/Reason.ts";
+import { m } from "../messages.tsx";
+
+/** Why something iglu was asked to do didn't happen: iglu refused it, or
+ * the request never got a reply that was iglu's. */
+export type Refusal =
+  | { from: "iglu"; reason: Reason }
+  /** iglu couldn't be reached. */
+  | { from: "nowhere" }
+  /** Something else answered, such as a proxy, with this status. */
+  | { from: "elsewhere"; status: string }
+  /** iglu answered with what this page can't read. */
+  | { from: "garbled" };
 
 /** A request iglu refused, or that never got an answer from iglu. */
 export class ApiError extends Error {
-  /** 0 when iglu couldn't be reached. */
-  readonly status: number;
-  /** null when the answer wasn't iglu's, such as a proxy's. */
-  readonly kind: ErrorKind | null;
+  readonly refusal: Refusal;
   /** The input the error is about, when it's about one. */
   readonly field: Field | null;
 
-  constructor(status: number, kind: ErrorKind | null, message: string, field: Field | null = null) {
-    super(message);
-    this.status = status;
-    this.kind = kind;
+  constructor(refusal: Refusal, field: Field | null = null) {
+    super(m.refusal(refusal));
+    this.refusal = refusal;
     this.field = field;
   }
 }
@@ -73,23 +81,22 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
   try {
     response = await fetch(path, init);
   } catch {
-    throw new ApiError(0, null, "Couldn't reach iglu. Check the connection and try again.");
+    throw new ApiError({ from: "nowhere" });
   }
   if (response.status === 401) {
     location.assign(`/auth/login?return=${encodeURIComponent(location.pathname)}`);
-    throw new ApiError(401, "unauthorized", "Signing in…");
+    throw new ApiError({ from: "iglu", reason: { kind: "unauthorized" } });
   }
   if (!response.ok) {
     const error = await errorBody(response);
-    if (error) throw new ApiError(response.status, error.error, error.message, error.field);
-    const status = `${response.status} ${response.statusText}`.trim();
-    throw new ApiError(response.status, null, `Something other than iglu answered ${status}.`);
+    if (error) throw new ApiError({ from: "iglu", reason: error.reason }, error.field);
+    throw new ApiError({ from: "elsewhere", status: `${response.status} ${response.statusText}`.trim() });
   }
   if (response.status === 204) return undefined as T;
   try {
     return (await response.json()) as T;
   } catch {
-    throw new ApiError(response.status, null, "iglu's reply wasn't what this page expected. Reload the page.");
+    throw new ApiError({ from: "garbled" });
   }
 }
 
@@ -143,5 +150,5 @@ export const api = {
 
 /** A message to show for anything a request threw. */
 export function failure(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return error instanceof ApiError ? m.refusal(error.refusal) : m.unexpected(error);
 }

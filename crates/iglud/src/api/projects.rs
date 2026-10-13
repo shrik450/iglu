@@ -6,14 +6,14 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use iglu_api::{ChangeProject, CreateProject, ProjectView};
+use iglu_api::{ChangeProject, CreateProject, ProjectView, Reason};
 use iglu_domain::auth::Action;
 use iglu_domain::env::EnvName;
 use iglu_domain::id::{PrincipalId, ProjectId};
 use iglu_domain::project::Origin;
 use uuid::Uuid;
 
-use crate::app::{ApiError, App, Caller, Problem, now};
+use crate::app::{ApiError, App, Caller, now};
 use crate::db::{self, AddOutcome, ChangeOutcome, NewProject, ProjectChange, RemoveOutcome};
 use crate::extract::{Body, Path};
 use crate::views::project_view;
@@ -49,7 +49,7 @@ async fn show(
         .db
         .call(move |tx| db::project(tx, owner, id))
         .await?
-        .ok_or(ApiError::NotFound)?;
+        .ok_or(Reason::NotFound)?;
     Ok(Json(project_view(project)))
 }
 
@@ -70,18 +70,18 @@ async fn create(
     let owner = caller.principal.id;
     caller.authorize(Action::ManageProject, owner)?;
     if request.name.is_none() && request.repo.is_none() {
-        return Err(ApiError::BadRequest(
-            "give the project a name or a repository".into(),
-        ));
+        return Err(Reason::ProjectUnnamed.into());
     }
     let id = ProjectId::from_uuid(Uuid::new_v4());
     let added = app
         .db
         .call(move |tx| {
             let Some(environment_id) = environment_id(tx, owner, &request.environment)? else {
-                return Ok(Err(Problem::at(
+                return Ok(Err(ApiError::at(
                     "environment",
-                    format!("no environment called {}", request.environment),
+                    Reason::NoEnvironment {
+                        name: request.environment,
+                    },
                 )));
             };
             let new = NewProject {
@@ -95,14 +95,11 @@ async fn create(
             };
             Ok(match db::add_project(tx, &new)? {
                 AddOutcome::Added => Ok(db::project(tx, owner, id)?),
-                AddOutcome::NameTaken => {
-                    Err(Problem::at("name", "a project with that name exists"))
-                }
+                AddOutcome::NameTaken => Err(ApiError::at("name", Reason::ProjectNameTaken)),
             })
         })
-        .await?
-        .map_err(ApiError::Conflict)?
-        .ok_or(ApiError::Internal)?;
+        .await??
+        .ok_or(Reason::Internal)?;
     app.changed();
     Ok((StatusCode::CREATED, Json(project_view(added))))
 }
@@ -119,10 +116,12 @@ async fn change(
         .db
         .call(move |tx| {
             let Some(environment_id) = environment_id(tx, owner, &request.environment)? else {
-                return Ok(Err(ApiError::Conflict(Problem::at(
+                return Ok(Err(ApiError::at(
                     "environment",
-                    format!("no environment called {}", request.environment),
-                ))));
+                    Reason::NoEnvironment {
+                        name: request.environment,
+                    },
+                )));
             };
             let change = ProjectChange {
                 name: request.name,
@@ -134,15 +133,12 @@ async fn change(
             };
             Ok(
                 match db::change_project(tx, owner, id, request.expected_revision, &change)? {
-                    ChangeOutcome::Done => db::project(tx, owner, id)?.ok_or(ApiError::NotFound),
-                    ChangeOutcome::Stale => Err(ApiError::Conflict(
-                        "the project changed since you loaded it".into(),
-                    )),
-                    ChangeOutcome::NameTaken => Err(ApiError::Conflict(Problem::at(
-                        "name",
-                        "a project with that name exists",
-                    ))),
-                    ChangeOutcome::Missing => Err(ApiError::NotFound),
+                    ChangeOutcome::Done => {
+                        db::project(tx, owner, id)?.ok_or(ApiError::from(Reason::NotFound))
+                    }
+                    ChangeOutcome::Stale => Err(Reason::ProjectChanged.into()),
+                    ChangeOutcome::NameTaken => Err(ApiError::at("name", Reason::ProjectNameTaken)),
+                    ChangeOutcome::Missing => Err(Reason::NotFound.into()),
                 },
             )
         })
@@ -167,12 +163,8 @@ async fn remove(
             app.changed();
             Ok(StatusCode::NO_CONTENT)
         }
-        RemoveOutcome::Builtin => Err(ApiError::Conflict(
-            "the built-in project can't be removed".into(),
-        )),
-        RemoveOutcome::InUse => Err(ApiError::Conflict(
-            "the project still has workspaces".into(),
-        )),
-        RemoveOutcome::Missing => Err(ApiError::NotFound),
+        RemoveOutcome::Builtin => Err(Reason::BuiltinProject.into()),
+        RemoveOutcome::InUse => Err(Reason::ProjectInUse.into()),
+        RemoveOutcome::Missing => Err(Reason::NotFound.into()),
     }
 }

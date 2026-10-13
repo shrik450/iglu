@@ -14,6 +14,8 @@ import type { BrowserInput } from "./generated/BrowserInput.ts";
 import { CONTROL, clipboardShortcut, displaySize, isModifier, keyFor, keysymOf, modifiersFor, preferred, scaleOf, typing } from "./state/browser.ts";
 import { api, failure } from "./api/client.ts";
 import { keyboardFree } from "./focus.ts";
+import { m } from "./messages.tsx";
+import { closedFor } from "./state/closed.ts";
 import { MAX_FILE_BYTES } from "./state/paste.ts";
 import { say } from "./state/store.ts";
 import { panes } from "./terminal.ts";
@@ -140,7 +142,7 @@ export class BrowserPane {
   /** The last download the browser finished, until it's put away. */
   readonly downloaded = signal<{ name: string | null; path: string; url: string | null } | null>(null);
   /** Why there's nothing to see yet, while there isn't. */
-  readonly waiting = signal<string | null>("Opening the browser…");
+  readonly waiting = signal<string | null>(m.browser.opening);
 
   private readonly key: string;
   private readonly workspace: string;
@@ -286,7 +288,7 @@ export class BrowserPane {
       this.outbox = null;
       const delay = Math.min(10_000, 500 * 2 ** this.retries);
       this.retries += 1;
-      this.waiting.value = event.reason ? `${capitalized(event.reason)}. Trying again…` : "Reconnecting…";
+      this.waiting.value = m.browser.retrying(closedFor(event.reason));
       this.retryTimer = window.setTimeout(() => {
         if (!this.closed) this.connect();
       }, delay);
@@ -356,7 +358,7 @@ export class BrowserPane {
     if (document.activeElement !== this.input) return;
     const asked = performance.now() - this.copied < 2000;
     void navigator.clipboard?.writeText(text).catch(() => {
-      if (asked) say("The browser's selection couldn't be copied here.");
+      if (asked) say(m.browser.copyRefused);
     });
   }
 
@@ -502,15 +504,15 @@ export class BrowserPane {
   private async keep(files: File[]): Promise<void> {
     const large = files.find((file) => file.size > MAX_FILE_BYTES);
     if (large) {
-      say(`${large.name || "That file"} is larger than 16 MB, so it can't be pasted.`);
+      say(m.terminal.tooLarge(large.name));
       return;
     }
     try {
       const paths: string[] = [];
       for (const file of files) paths.push((await api.keepFile(this.workspace, file)).path);
-      say(paths.length === 1 ? `Kept in the workspace at ${paths[0]}, for the browser to open.` : `Kept ${paths.length} files in the workspace, in ${dirOf(paths[0]!)}, for the browser to open.`);
+      say(m.browser.kept(paths, dirOf(paths[0] ?? "")));
     } catch (error) {
-      say(`That couldn't be pasted: ${failure(error)}`);
+      say(m.terminal.notPasted(failure(error)));
     }
   }
 }
@@ -519,6 +521,3 @@ function dirOf(path: string): string {
   return path.slice(0, path.lastIndexOf("/")) || "/";
 }
 
-function capitalized(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}

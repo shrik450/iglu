@@ -9,10 +9,10 @@ use axum::extract::{FromRequest, FromRequestParts, RawPathParams, Request};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, header};
 use bytes::Bytes;
-use iglu_api::Field;
+use iglu_api::{Field, Reason};
 use serde::de::DeserializeOwned;
 
-use crate::app::{ApiError, Problem};
+use crate::app::ApiError;
 
 /// A JSON request body.
 pub struct Body<T>(pub T);
@@ -27,12 +27,10 @@ where
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Also why a cross-site form can't post here: it can't send this type.
         if !has_content_type(request.headers(), is_json) {
-            return Err(ApiError::UnsupportedMediaType(
-                "send the body as JSON, with Content-Type: application/json".into(),
-            ));
+            return Err(Reason::JsonExpected.into());
         }
         let bytes = read(request, state).await?;
-        parse_json(&bytes).map(Self).map_err(ApiError::BadRequest)
+        parse_json(&bytes).map(Self)
     }
 }
 
@@ -50,12 +48,10 @@ where
         if !has_content_type(request.headers(), |essence| {
             essence == "application/x-www-form-urlencoded"
         }) {
-            return Err(ApiError::UnsupportedMediaType(
-                "send the body as a form".into(),
-            ));
+            return Err(Reason::FormExpected.into());
         }
         let bytes = read(request, state).await?;
-        parse_form(&bytes).map(Self).map_err(ApiError::BadRequest)
+        parse_form(&bytes).map(Self)
     }
 }
 
@@ -74,11 +70,7 @@ where
         _: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         let query = parts.uri.query().unwrap_or_default();
-        std::future::ready(
-            parse_form(query.as_bytes())
-                .map(Self)
-                .map_err(ApiError::BadRequest),
-        )
+        std::future::ready(parse_form(query.as_bytes()).map(Self))
     }
 }
 
@@ -102,7 +94,7 @@ where
             Err(PathRejection::FailedToDeserializePathParams(error)) => error.into_kind(),
             Err(rejection) => {
                 tracing::error!(%rejection, "a route without parameters extracts them");
-                return Err(ApiError::Internal);
+                return Err(Reason::Internal.into());
             }
         };
         let keys: Vec<String> = RawPathParams::from_request_parts(parts, state)
@@ -110,10 +102,10 @@ where
             .map(|raw| raw.iter().map(|(key, _)| key.to_owned()).collect())
             .unwrap_or_default();
         match path_problem(error, &keys) {
-            Ok(problem) => Err(ApiError::BadRequest(problem)),
+            Ok(refused) => Err(refused),
             Err(error) => {
                 tracing::error!(%error, "a route's parameters don't fit its handler");
-                Err(ApiError::Internal)
+                Err(Reason::Internal.into())
             }
         }
     }
@@ -141,9 +133,8 @@ where
             .await
             .map(Self)
             .map_err(|rejection| {
-                ApiError::BadRequest(
-                    format!("connect with a WebSocket: {}", rejection.body_text()).into(),
-                )
+                tracing::debug!(rejection = %rejection.body_text(), "not a WebSocket handshake");
+                ApiError::from(Reason::NotWebSocket)
             })
     }
 }
@@ -157,13 +148,8 @@ pub async fn read_within(
 ) -> Result<Bytes, ApiError> {
     match tokio::time::timeout(time, axum::body::to_bytes(body, limit)).await {
         Ok(Ok(bytes)) => Ok(bytes),
-        Ok(Err(error)) if is_too_long(&error) => Err(ApiError::TooLarge),
-        Ok(Err(_)) => Err(ApiError::BadRequest(
-            "the request body couldn't be read".into(),
-        )),
-        Err(_) => Err(ApiError::BadRequest(
-            "the request body took too long to arrive".into(),
-        )),
+        Ok(Err(error)) if is_too_long(&error) => Err(Reason::TooLarge.into()),
+        Ok(Err(_)) | Err(_) => Err(Reason::Unreadable.into()),
     }
 }
 
@@ -183,9 +169,9 @@ async fn read<S: Send + Sync>(request: Request, state: &S) -> Result<Bytes, ApiE
         .await
         .map_err(|rejection| {
             if rejection.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
-                ApiError::TooLarge
+                ApiError::from(Reason::TooLarge)
             } else {
-                ApiError::BadRequest("the request body couldn't be read".into())
+                ApiError::from(Reason::Unreadable)
             }
         })
 }
@@ -205,47 +191,40 @@ fn is_json(essence: &str) -> bool {
             .is_some_and(|subtype| subtype.ends_with("+json"))
 }
 
-/// Parses a JSON body, or says what's wrong with it and where.
-pub fn parse_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Problem> {
+/// Parses a JSON body, or says where it's wrong. serde's own words, which
+/// aren't iglu's to send, go to the log.
+pub fn parse_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ApiError> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
         let field = field_of(error.path());
         let error = error.into_inner();
+        tracing::debug!(%error, ?field, "a request body didn't parse");
         match error.classify() {
-            serde_json::error::Category::Data => Problem {
-                message: without_position(&error),
+            serde_json::error::Category::Data => ApiError {
+                reason: Reason::Invalid,
                 field,
             },
             serde_json::error::Category::Syntax
             | serde_json::error::Category::Eof
-            | serde_json::error::Category::Io => not_json(&error),
+            | serde_json::error::Category::Io => Reason::NotJson.into(),
         }
     })?;
-    deserializer.end().map_err(|error| not_json(&error))?;
+    deserializer
+        .end()
+        .map_err(|_| ApiError::from(Reason::NotJson))?;
     Ok(value)
 }
 
-fn not_json(error: &serde_json::Error) -> Problem {
-    format!("the body isn't JSON: {}", without_position(error)).into()
-}
-
-/// `serde_json`'s message without its position, which means nothing to the
-/// person reading it.
-fn without_position(error: &serde_json::Error) -> String {
-    let text = error.to_string();
-    let position = format!(" at line {} column {}", error.line(), error.column());
-    match text.strip_suffix(&position) {
-        Some(message) => message.to_owned(),
-        None => text,
-    }
-}
-
-/// Parses a query string or form, or says what's wrong with it and where.
-pub fn parse_form<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Problem> {
+/// Parses a query string or form, or says where it's wrong.
+pub fn parse_form<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ApiError> {
     let deserializer = serde_urlencoded::Deserializer::new(url::form_urlencoded::parse(bytes));
-    serde_path_to_error::deserialize(deserializer).map_err(|error| Problem {
-        field: field_of(error.path()),
-        message: error.into_inner().to_string(),
+    serde_path_to_error::deserialize(deserializer).map_err(|error| {
+        let field = field_of(error.path());
+        tracing::debug!(error = %error.inner(), ?field, "a query or form didn't parse");
+        ApiError {
+            reason: Reason::Invalid,
+            field,
+        }
     })
 }
 
@@ -257,41 +236,27 @@ fn field_of(path: &serde_path_to_error::Path) -> Option<Field> {
         .then(|| Field::new(path.to_string()))
 }
 
-/// What's wrong with a path parameter, and which one when that's known. A
-/// parameter's own parser doesn't know its name; when the route has only
-/// one, that's the one. `Err` means the route and handler disagree, which is
-/// iglud's bug, not the caller's.
-pub fn path_problem(error: PathErrorKind, keys: &[String]) -> Result<Problem, String> {
+/// Which path parameter is wrong, when that's known. A parameter's own
+/// parser doesn't know its name; when the route has only one, that's the
+/// one. `Err` means the route and handler disagree, which is iglud's bug, not
+/// the caller's.
+#[expect(
+    clippy::match_same_arms,
+    reason = "a kind newer than this code is answered as the parameter's own refusal is"
+)]
+pub fn path_problem(error: PathErrorKind, keys: &[String]) -> Result<ApiError, String> {
     let only = || match keys {
         [key] => Some(Field::new(key.as_str())),
         _ => None,
     };
-    let (field, message) = match error {
-        PathErrorKind::ParseErrorAtKey {
-            key,
-            value,
-            expected_type,
-        } => (
-            Some(Field::new(key)),
-            format!("{value:?} isn't a {expected_type}"),
-        ),
-        PathErrorKind::ParseErrorAtIndex {
-            index,
-            value,
-            expected_type,
-        } => (
-            keys.get(index).map(|key| Field::new(key.as_str())),
-            format!("{value:?} isn't a {expected_type}"),
-        ),
-        PathErrorKind::ParseError {
-            value,
-            expected_type,
-        } => (only(), format!("{value:?} isn't a {expected_type}")),
-        PathErrorKind::InvalidUtf8InPathParam { key } => {
-            (Some(Field::new(key)), "isn't valid UTF-8".to_owned())
+    tracing::debug!(%error, "a path parameter didn't parse");
+    let field = match error {
+        PathErrorKind::ParseErrorAtKey { key, .. }
+        | PathErrorKind::InvalidUtf8InPathParam { key }
+        | PathErrorKind::DeserializeError { key, .. } => Some(Field::new(key)),
+        PathErrorKind::ParseErrorAtIndex { index, .. } => {
+            keys.get(index).map(|key| Field::new(key.as_str()))
         }
-        PathErrorKind::DeserializeError { key, message, .. } => (Some(Field::new(key)), message),
-        PathErrorKind::Message(message) => (only(), message),
         PathErrorKind::WrongNumberOfParameters { got, expected } => {
             return Err(format!(
                 "the route has {got} parameters, the handler wants {expected}"
@@ -300,10 +265,14 @@ pub fn path_problem(error: PathErrorKind, keys: &[String]) -> Result<Problem, St
         PathErrorKind::UnsupportedType { name } => {
             return Err(format!("{name} can't be a path parameter"));
         }
+        PathErrorKind::ParseError { .. } | PathErrorKind::Message(_) => only(),
         // A kind newer than this code; still a caller's mistake.
-        other => (only(), other.to_string()),
+        _ => only(),
     };
-    Ok(Problem { message, field })
+    Ok(ApiError {
+        reason: Reason::Invalid,
+        field,
+    })
 }
 
 #[cfg(test)]
@@ -313,7 +282,7 @@ mod tests {
 
     use super::*;
 
-    fn json_problem<T: DeserializeOwned>(json: &str) -> Problem {
+    fn json_problem<T: DeserializeOwned>(json: &str) -> ApiError {
         match parse_json::<T>(json.as_bytes()) {
             Ok(_) => panic!("{json} parsed"),
             Err(problem) => problem,
@@ -321,16 +290,10 @@ mod tests {
     }
 
     #[test]
-    fn a_field_that_doesnt_parse_is_named_without_serdes_position() {
+    fn a_field_that_doesnt_parse_is_named() {
         let problem =
             json_problem::<CreateEnvironment>(r#"{"name":"default","source":"github:a/b"}"#);
-        assert_eq!(
-            problem,
-            Problem::at(
-                "source",
-                "invalid environment source: expected <flake>#<nixosConfigurations attribute>"
-            )
-        );
+        assert_eq!(problem, ApiError::at("source", Reason::Invalid));
     }
 
     #[test]
@@ -350,7 +313,7 @@ mod tests {
     #[test]
     fn missing_fields_are_about_the_whole_body() {
         let problem = json_problem::<CreateEnvironment>(r#"{"name":"default"}"#);
-        assert_eq!(problem, Problem::from("missing field `source`"));
+        assert_eq!(problem, ApiError::from(Reason::Invalid));
     }
 
     #[test]
@@ -362,13 +325,11 @@ mod tests {
     #[test]
     fn a_body_that_isnt_json_says_so_without_naming_a_field() {
         for body in [r#"{"port":"#, "", r#"{"port":1} trailing"#, "not json"] {
-            let problem = json_problem::<PublishPort>(body);
-            assert!(
-                problem.message.starts_with("the body isn't JSON: "),
-                "{problem:?}"
+            assert_eq!(
+                json_problem::<PublishPort>(body),
+                ApiError::from(Reason::NotJson),
+                "{body}"
             );
-            assert!(!problem.message.contains(" at line "), "{problem:?}");
-            assert_eq!(problem.field, None, "{body}");
         }
     }
 
@@ -390,24 +351,22 @@ mod tests {
             Ok(size) => panic!("parsed {size:?}"),
             Err(problem) => problem,
         };
-        assert_eq!(problem.field, Some(Field::new("cols")));
+        assert_eq!(problem, ApiError::at("cols", Reason::Invalid));
         assert!(parse_form::<Size>(b"cols=80").is_ok());
     }
 
     #[test]
-    fn a_parameters_own_message_is_put_on_the_routes_only_parameter() {
+    fn a_parameters_own_refusal_is_put_on_the_routes_only_parameter() {
         let error = PathErrorKind::Message("invalid secret name: expected 1-64 of a-z".into());
         assert_eq!(
             path_problem(error, &["name".to_owned()]).expect("a caller's mistake"),
-            Problem::at("name", "invalid secret name: expected 1-64 of a-z")
+            ApiError::at("name", Reason::Invalid)
         );
         let error = PathErrorKind::Message("invalid session name".into());
         let keys = ["id".to_owned(), "session".to_owned()];
         assert_eq!(
-            path_problem(error, &keys)
-                .expect("a caller's mistake")
-                .field,
-            None
+            path_problem(error, &keys).expect("a caller's mistake"),
+            ApiError::from(Reason::Invalid)
         );
     }
 
@@ -420,7 +379,7 @@ mod tests {
         };
         assert_eq!(
             path_problem(error, &[]).expect("a caller's mistake"),
-            Problem::at("id", "UUID parsing failed")
+            ApiError::at("id", Reason::Invalid)
         );
         let error = PathErrorKind::ParseErrorAtIndex {
             index: 1,
@@ -430,7 +389,7 @@ mod tests {
         let keys = ["id".to_owned(), "port".to_owned()];
         assert_eq!(
             path_problem(error, &keys).expect("a caller's mistake"),
-            Problem::at("port", r#""x" isn't a u16"#)
+            ApiError::at("port", Reason::Invalid)
         );
     }
 

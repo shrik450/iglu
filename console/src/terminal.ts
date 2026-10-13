@@ -11,6 +11,8 @@ import WASM from "@wterm/ghostty/ghostty-vt.wasm";
 
 import { api, failure } from "./api/client.ts";
 import { keyboardFree } from "./focus.ts";
+import { m } from "./messages.tsx";
+import { closedFor } from "./state/closed.ts";
 import { withCtrl } from "./state/keys.ts";
 import { type Offer, offer } from "./state/opening.ts";
 import { MAX_FILE_BYTES, pastedPath } from "./state/paste.ts";
@@ -211,7 +213,7 @@ export class TerminalPane implements Pane {
       onBinary: (data) => this.send(data),
       // A browser may refuse a copy the person didn't just ask for, as one
       // a program makes while the page is in the background.
-      onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => say("What a program copied couldn't reach your clipboard.")),
+      onClipboardWrite: (text) => void navigator.clipboard?.writeText(text).catch(() => say(m.terminal.copyRefused)),
       onPasteFiles: (files) => void this.pasteFiles(files),
       onTitle: (title) => setTitle(this.key, programTitle(title)),
       onBell: () => {
@@ -250,8 +252,8 @@ export class TerminalPane implements Pane {
   /** Names the terminal for assistive tech, with how to leave it: wterm
    * gives its input the element's name and description. */
   describe(title: string, prefix: string): void {
-    this.element.setAttribute("aria-label", `Terminal, ${title}`);
-    this.element.setAttribute("aria-description", `${prefix}, then Tab leaves the terminal; ${prefix}, then ? lists shortcuts.`);
+    this.element.setAttribute("aria-label", m.terminal.label(title));
+    this.element.setAttribute("aria-description", m.terminal.description(prefix));
   }
 
   restyle(): void {
@@ -265,11 +267,11 @@ export class TerminalPane implements Pane {
   private async pasteFiles(files: File[]): Promise<void> {
     const large = files.find((file) => file.size > MAX_FILE_BYTES);
     if (large) {
-      say(`${large.name || "That file"} is larger than 16 MB, so it can't be pasted.`);
+      say(m.terminal.tooLarge(large.name));
       return;
     }
     const total = files.reduce((sum, file) => sum + file.size, 0);
-    if (total > 1024 * 1024) say(files.length === 1 ? `Sending ${files[0]!.name}…` : `Sending ${files.length} files…`);
+    if (total > 1024 * 1024) say(m.terminal.sending(files.map((file) => file.name)));
     try {
       for (const [index, file] of files.entries()) {
         const { path } = await api.keepFile(this.workspace, file);
@@ -278,7 +280,7 @@ export class TerminalPane implements Pane {
         this.term.paste(pastedPath(path));
       }
     } catch (error) {
-      say(`That couldn't be pasted: ${failure(error)}`);
+      say(m.terminal.notPasted(failure(error)));
     }
   }
 
@@ -334,7 +336,7 @@ export class TerminalPane implements Pane {
       this.retries += 1;
       // iglud gives a reason when it ends a terminal on purpose. One it
       // refused before connecting reaches onDrop's reload of the columns.
-      this.onStatus(event.reason ? `Reconnecting… (${event.reason})` : "Reconnecting…");
+      this.onStatus(m.terminal.reconnecting(closedFor(event.reason)));
       this.retryTimer = window.setTimeout(() => {
         if (this.closed) return;
         // The session replays its screen on attach: start from a clean one.

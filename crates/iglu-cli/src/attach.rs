@@ -6,7 +6,7 @@ use std::os::fd::AsFd;
 
 use anyhow::{Context, bail};
 use futures_util::{SinkExt, StreamExt};
-use iglu_api::SetDesiredState;
+use iglu_api::{Closed, SetDesiredState};
 use iglu_domain::column::ColumnState;
 use iglu_domain::lifecycle::{DesiredState, Phase};
 use iglu_domain::terminal::{SessionName, TerminalControl, TerminalSize};
@@ -138,7 +138,7 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
     let mut stdout = std::io::stdout();
     let mut resized = signal(SignalKind::window_change())?;
     let mut buffer = [0u8; 4096];
-    // Why iglu closed the column, when it said.
+    // Why iglu closed the column, when it said so.
     let mut reason = None;
     let ended = loop {
         tokio::select! {
@@ -160,7 +160,7 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
                     stdout.flush()?;
                 }
                 Some(Ok(Message::Close(frame))) => {
-                    reason = frame.map(|frame| frame.reason.to_string()).filter(|r| !r.is_empty());
+                    reason = frame.and_then(|frame| frame.reason.parse::<Closed>().ok());
                     break true;
                 }
                 Some(Err(_)) | None => break true,
@@ -177,7 +177,7 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
     drop(raw);
     if ended {
         match reason {
-            Some(reason) => bail!("{reason}"),
+            Some(why) => bail!("{why}"),
             None => bail!("the column's session ended or the connection dropped"),
         }
     }

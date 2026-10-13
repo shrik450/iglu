@@ -9,14 +9,15 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use iglu_api::{ErrorBody, ErrorKind, Field, WorkspaceView};
+use iglu_api::{ErrorBody, ErrorKind, Field, Reason, WorkspaceView};
 use iglu_domain::auth::{
     self, Action, Decision, DenyReason, Grant, PrincipalStatus, Resource, authorize,
 };
 use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::label::HostId;
 use iglu_domain::preview::{
-    ConsoleOrigin, Credential, FetchMetadata, MethodClass, Transport, console_access,
+    ConsoleOrigin, ConsoleRejection, Credential, FetchMetadata, MethodClass, Transport,
+    console_access,
 };
 use iglu_domain::secret::{SecretTarget, SecretValue};
 use iglu_domain::time::{Millis, Timestamp};
@@ -137,86 +138,36 @@ pub fn now() -> Timestamp {
     Timestamp::from_unix_millis(millis)
 }
 
-/// Errors every API handler can return. Messages are safe to show.
-#[derive(Debug, thiserror::Error)]
-pub enum ApiError {
-    #[error("sign in first")]
-    Unauthorized,
-    #[error("{0}")]
-    Forbidden(String),
-    #[error("not found")]
-    NotFound,
-    #[error("this path doesn't take that method")]
-    MethodNotAllowed,
-    #[error("{0}")]
-    Conflict(Problem),
-    #[error("{0}")]
-    BadRequest(Problem),
-    #[error("the request body is too large")]
-    TooLarge,
-    #[error("{0}")]
-    UnsupportedMediaType(String),
-    #[error("{0}")]
-    Unavailable(String),
-    #[error("internal error")]
-    Internal,
-}
-
-/// What's wrong with a request, and the input it's about when there is one.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Problem {
-    pub message: String,
+/// A refused request: why, and the input it's about when it's about one.
+/// Its `Display` is English, for logs and iglud's own pages; the API sends
+/// the reason as data.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{reason}")]
+pub struct ApiError {
+    pub reason: Reason,
     pub field: Option<Field>,
 }
 
-impl Problem {
-    pub fn at(field: &str, message: impl Into<String>) -> Self {
+impl From<Reason> for ApiError {
+    fn from(reason: Reason) -> Self {
         Self {
-            message: message.into(),
-            field: Some(Field::new(field)),
-        }
-    }
-}
-
-impl From<String> for Problem {
-    fn from(message: String) -> Self {
-        Self {
-            message,
+            reason,
             field: None,
         }
     }
 }
 
-impl From<&str> for Problem {
-    fn from(message: &str) -> Self {
-        message.to_owned().into()
-    }
-}
-
-impl std::fmt::Display for Problem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
 impl ApiError {
-    pub const fn kind(&self) -> ErrorKind {
-        match self {
-            Self::Unauthorized => ErrorKind::Unauthorized,
-            Self::Forbidden(_) => ErrorKind::Forbidden,
-            Self::NotFound => ErrorKind::NotFound,
-            Self::MethodNotAllowed => ErrorKind::MethodNotAllowed,
-            Self::Conflict(_) => ErrorKind::Conflict,
-            Self::BadRequest(_) => ErrorKind::BadRequest,
-            Self::TooLarge => ErrorKind::TooLarge,
-            Self::UnsupportedMediaType(_) => ErrorKind::UnsupportedMediaType,
-            Self::Unavailable(_) => ErrorKind::Unavailable,
-            Self::Internal => ErrorKind::Internal,
+    /// A refusal about the input at `field`.
+    pub fn at(field: &str, reason: Reason) -> Self {
+        Self {
+            reason,
+            field: Some(Field::new(field)),
         }
     }
 
     pub const fn status(&self) -> StatusCode {
-        match self.kind() {
+        match self.reason.kind() {
             ErrorKind::BadRequest => StatusCode::BAD_REQUEST,
             ErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
             ErrorKind::Forbidden => StatusCode::FORBIDDEN,
@@ -231,23 +182,9 @@ impl ApiError {
     }
 
     pub fn body(self) -> ErrorBody {
-        let error = self.kind();
-        let message = self.to_string();
-        let field = match self {
-            Self::Conflict(problem) | Self::BadRequest(problem) => problem.field,
-            Self::Unauthorized
-            | Self::Forbidden(_)
-            | Self::NotFound
-            | Self::MethodNotAllowed
-            | Self::TooLarge
-            | Self::UnsupportedMediaType(_)
-            | Self::Unavailable(_)
-            | Self::Internal => None,
-        };
         ErrorBody {
-            error,
-            message,
-            field,
+            reason: self.reason,
+            field: self.field,
         }
     }
 }
@@ -255,27 +192,21 @@ impl ApiError {
 impl From<DbError> for ApiError {
     fn from(error: DbError) -> Self {
         tracing::error!(%error, "database error");
-        Self::Internal
+        Reason::Internal.into()
     }
 }
 
 impl From<crypto::CryptoError> for ApiError {
     fn from(error: crypto::CryptoError) -> Self {
         tracing::error!(%error, "crypto error");
-        Self::Internal
+        Reason::Internal.into()
     }
 }
 
 impl From<OpenSecretsError> for ApiError {
     fn from(error: OpenSecretsError) -> Self {
         tracing::error!(%error, "couldn't open stored secrets");
-        Self::Internal
-    }
-}
-
-impl From<iglu_domain::ParseError> for ApiError {
-    fn from(error: iglu_domain::ParseError) -> Self {
-        Self::BadRequest(error.to_string().into())
+        Reason::Internal.into()
     }
 }
 
@@ -288,21 +219,19 @@ impl IntoResponse for ApiError {
 /// Answers API paths that don't exist, so they get an API error rather than
 /// the console's page.
 pub async fn no_such_path() -> ApiError {
-    ApiError::NotFound
+    ApiError::from(Reason::NotFound)
 }
 
 /// Answers what a workspace can't ask for at all: its owner's account, and
 /// everything else that isn't a workspace's to do.
 pub async fn not_for_workspaces() -> ApiError {
-    ApiError::Forbidden(
-        "a workspace can't do this from inside; its owner can, in the console or with their own `iglu`".into(),
-    )
+    Reason::NotFromWorkspace.into()
 }
 
 /// Answers API paths that exist, but not with the request's method. axum
 /// adds the `Allow` header.
 pub async fn no_such_method() -> ApiError {
-    ApiError::MethodNotAllowed
+    ApiError::from(Reason::MethodNotAllowed)
 }
 
 /// Reads one cookie from the request.
@@ -372,9 +301,10 @@ impl Caller {
 fn decided(decision: Decision, visible: bool) -> Result<(), ApiError> {
     match decision {
         Decision::Allow => Ok(()),
-        Decision::Deny(DenyReason::NotOwner) => Err(ApiError::NotFound),
-        Decision::Deny(DenyReason::NotGranted) if !visible => Err(ApiError::NotFound),
-        Decision::Deny(reason) => Err(ApiError::Forbidden(reason.to_string())),
+        Decision::Deny(DenyReason::NotOwner) => Err(Reason::NotFound.into()),
+        Decision::Deny(DenyReason::NotGranted) if !visible => Err(Reason::NotFound.into()),
+        Decision::Deny(DenyReason::NotGranted) => Err(Reason::NotGranted.into()),
+        Decision::Deny(DenyReason::Disabled) => Err(Reason::AccountDisabled.into()),
     }
 }
 
@@ -494,7 +424,7 @@ impl FromRequestParts<Arc<App>> for Caller {
     ) -> Result<Self, Self::Rejection> {
         // What only a person may do, a workspace can't, whatever it sends.
         if parts.extensions.get::<FromWorkspace>().is_some() {
-            return Err(ApiError::Forbidden("only a person can do this".into()));
+            return Err(Reason::PersonOnly.into());
         }
         let bearer = parts
             .headers
@@ -504,11 +434,11 @@ impl FromRequestParts<Arc<App>> for Caller {
         let (token, kind, credential) = match (bearer, cookie(&parts.headers, CONSOLE_COOKIE)) {
             (Some(token), _) => (token.to_owned(), SessionKind::Api, Credential::Bearer),
             (None, Some(token)) => (token.to_owned(), SessionKind::Console, Credential::Cookie),
-            (None, None) => return Err(ApiError::Unauthorized),
+            (None, None) => return Err(Reason::Unauthorized.into()),
         };
         let principal = session_principal(app, &token, kind)
             .await?
-            .ok_or(ApiError::Unauthorized)?;
+            .ok_or(Reason::Unauthorized)?;
 
         let origin = match parts
             .headers
@@ -525,7 +455,11 @@ impl FromRequestParts<Arc<App>> for Caller {
             fetch_metadata(&parts.headers),
             origin,
         )
-        .map_err(|rejection| ApiError::Forbidden(rejection.to_string()))?;
+        .map_err(|rejection| match rejection {
+            ConsoleRejection::CrossOriginWebSocket | ConsoleRejection::CrossOriginMutation => {
+                ApiError::from(Reason::CrossOrigin)
+            }
+        })?;
         Ok(Self {
             principal,
             session_hash: crypto::hash(&token),
@@ -570,7 +504,7 @@ impl FromRequestParts<Arc<App>> for Actor {
             {
                 Ok(Self::Workspace(Box::new(caller)))
             }
-            _ => Err(ApiError::Unauthorized),
+            _ => Err(Reason::Unauthorized.into()),
         }
     }
 }

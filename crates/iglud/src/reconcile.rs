@@ -5,19 +5,19 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use iglu_domain::activity::ActivityKind;
+use iglu_api::{Activity, Failure};
 use iglu_domain::capacity::Room;
 use iglu_domain::column;
 use iglu_domain::id::WorkspaceId;
 use iglu_domain::idle;
 use iglu_domain::lifecycle::{
-    AdoptReason, Blocker, Build, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
+    Blocker, Build, Desired, DesiredState, Effect, Instance, Plan, Wait, plan_within,
 };
 use iglu_domain::secret::bundle;
 use iglu_domain::time::{Millis, Timestamp};
 use iglu_proto::{
-    Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
-    Limits, ProvisionSpec, PruneImages, SessionSpec, UpgradeSpec,
+    Command, CommandError, CommandOutcome, CreateSpec, InstanceReport, Inventory, Limits,
+    ProvisionSpec, PruneImages, SessionSpec, UpgradeSpec,
 };
 
 use crate::app::{App, now, open_secrets};
@@ -359,14 +359,7 @@ async fn act(
             app.db
                 .call(move |tx| {
                     db::mark_deleted(tx, id, now())?;
-                    db::add_activity(
-                        tx,
-                        Some(id),
-                        None,
-                        ActivityKind::Deleted,
-                        "the workspace was deleted",
-                        now(),
-                    )
+                    db::add_activity(tx, Some(id), None, &Activity::Deleted, now())
                 })
                 .await?;
             tracing::info!(workspace = %id, "workspace deleted");
@@ -392,11 +385,6 @@ async fn act(
             set_condition(app, &ws, Some(Condition::RuntimeFailed)).await
         }
         Plan::Adopt(state, reason) => {
-            let detail = match reason {
-                AdoptReason::FrozenStateLost => {
-                    "the host restarted, so the frozen workspace is now stopped"
-                }
-            };
             // Only if the owner hasn't changed their mind since this pass read it.
             let seen = ws.revision;
             let adopted = app
@@ -404,7 +392,7 @@ async fn act(
                 .call(move |tx| {
                     let changed = db::set_desired(tx, id, state, seen)?.is_some();
                     if changed {
-                        db::add_activity(tx, Some(id), None, ActivityKind::Adopted, detail, now())?;
+                        db::add_activity(tx, Some(id), None, &Activity::Adopted { reason }, now())?;
                     }
                     Ok(changed)
                 })
@@ -444,34 +432,19 @@ async fn set_condition(
     Ok(true)
 }
 
-/// What doing `effect` is called, in a failure's history entry.
-const fn effect_doing(effect: Effect) -> &'static str {
+/// What the history records when `effect` is done.
+const fn done(effect: Effect) -> Activity {
     match effect {
-        Effect::Create => "creating it",
-        Effect::Start => "starting it",
-        Effect::DeliverSecrets => "delivering its secrets",
-        Effect::Provision => "setting it up",
-        Effect::OpenColumns => "opening its columns",
-        Effect::Freeze => "freezing it",
-        Effect::Thaw => "thawing it",
-        Effect::Stop => "stopping it",
-        Effect::Delete => "removing it from its host",
-        Effect::Upgrade => "upgrading its system to the newest build",
-    }
-}
-
-const fn effect_kind(effect: Effect) -> ActivityKind {
-    match effect {
-        Effect::Create => ActivityKind::Created,
-        Effect::Start => ActivityKind::Started,
-        Effect::DeliverSecrets => ActivityKind::SecretsDelivered,
-        Effect::Provision => ActivityKind::Provisioned,
-        Effect::OpenColumns => ActivityKind::ColumnsOpened,
-        Effect::Freeze => ActivityKind::Frozen,
-        Effect::Thaw => ActivityKind::Thawed,
-        Effect::Stop => ActivityKind::Stopped,
-        Effect::Delete => ActivityKind::Removed,
-        Effect::Upgrade => ActivityKind::Updated,
+        Effect::Create => Activity::Created,
+        Effect::Start => Activity::Started,
+        Effect::DeliverSecrets => Activity::SecretsDelivered,
+        Effect::Provision => Activity::Provisioned,
+        Effect::OpenColumns => Activity::ColumnsOpened,
+        Effect::Freeze => Activity::Frozen,
+        Effect::Thaw => Activity::Thawed,
+        Effect::Stop => Activity::Stopped,
+        Effect::Delete => Activity::Removed,
+        Effect::Upgrade => Activity::Updated,
     }
 }
 
@@ -483,16 +456,13 @@ async fn perform(
     effect: Effect,
 ) -> bool {
     let id = ws.id;
-    let outcome = match command_for(app, &ws, principal, effect).await {
-        Ok(command) => host
-            .command(id, &command)
-            .await
-            .map_err(crate::hosts::HostError::into_command_error),
-        Err(error) => Err(error),
-    };
-    let result = match outcome {
-        Ok(CommandOutcome::Done { instance }) => Ok(instance),
-        Ok(CommandOutcome::Failed(error)) | Err(error) => Err(error),
+    let result = match command_for(app, &ws, principal, effect).await {
+        Ok(command) => match host.command(id, &command).await {
+            Ok(CommandOutcome::Done { instance }) => Ok(instance),
+            Ok(CommandOutcome::Failed(error)) => Err(host_failure(error)),
+            Err(error) => Err(host_failure(error.into_command_error())),
+        },
+        Err(failure) => Err(failure),
     };
     let succeeded = result.is_ok();
     let stored = app
@@ -503,14 +473,14 @@ async fn perform(
                     db::record_observation(tx, id, instance, None, now())?;
                     db::set_condition(tx, id, None)?;
                     if !matches!(effect, Effect::DeliverSecrets) {
-                        db::add_activity(tx, Some(id), None, effect_kind(effect), "", now())?;
+                        db::add_activity(tx, Some(id), None, &done(effect), now())?;
                     }
                 }
-                Err(error) => {
-                    tracing::warn!(workspace = %id, effect = %effect_kind(effect), error = %error.message, "a step failed");
+                Err(failure) => {
+                    tracing::warn!(workspace = %id, ?effect, %failure, "a step failed");
                     let condition = Condition::Error {
-                        code: error.code,
-                        message: error.message.clone(),
+                        step: effect,
+                        failure: failure.clone(),
                         at: now(),
                     };
                     db::set_condition(tx, id, Some(&condition))?;
@@ -518,8 +488,10 @@ async fn perform(
                         tx,
                         Some(id),
                         None,
-                        ActivityKind::Error,
-                        &format!("{}: {}", effect_doing(effect), error.message),
+                        &Activity::Error {
+                            step: effect,
+                            failure: failure.clone(),
+                        },
                         now(),
                     )?;
                 }
@@ -533,14 +505,27 @@ async fn perform(
     succeeded
 }
 
+fn host_failure(error: CommandError) -> Failure {
+    Failure::Host {
+        code: error.code,
+        detail: error.message,
+    }
+}
+
+/// A failure of iglud's own, which only its log explains.
+fn internal(error: &impl std::fmt::Display) -> Failure {
+    tracing::error!(%error, "couldn't prepare a step");
+    Failure::Internal
+}
+
 /// What each of a workspace's columns runs, for this boot's opening.
-async fn sessions_for(app: &App, ws: &WorkspaceRecord) -> Result<Vec<SessionSpec>, CommandError> {
+async fn sessions_for(app: &App, ws: &WorkspaceRecord) -> Result<Vec<SessionSpec>, Failure> {
     let id = ws.id;
     let columns = app
         .db
         .call(move |tx| db::columns(tx, id))
         .await
-        .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))?;
+        .map_err(|e| internal(&e))?;
     Ok(columns
         .into_iter()
         .map(|column| SessionSpec {
@@ -555,20 +540,14 @@ async fn command_for(
     ws: &WorkspaceRecord,
     principal: &PrincipalRecord,
     effect: Effect,
-) -> Result<Command, CommandError> {
-    let internal = |e: db::DbError| CommandError::new(ErrorCode::Runtime, e.to_string());
+) -> Result<Command, Failure> {
     let image = || async {
         let revision = ws.env_revision;
         app.db
             .call(move |tx| db::revision_image(tx, revision))
             .await
-            .map_err(internal)?
-            .ok_or_else(|| {
-                CommandError::new(
-                    ErrorCode::ImageMissing,
-                    "the environment revision has no image",
-                )
-            })
+            .map_err(|e| internal(&e))?
+            .ok_or_else(|| internal(&format!("the revision {revision} has no image")))
     };
     Ok(match effect {
         Effect::Create => {
@@ -590,9 +569,9 @@ async fn command_for(
         Effect::DeliverSecrets => {
             let opened = open_secrets(app, ws.owner)
                 .await
-                .map_err(|e| CommandError::new(ErrorCode::Runtime, e.to_string()))?;
+                .map_err(|e| internal(&e))?;
             let bundle = bundle(principal.secrets_generation, opened)
-                .map_err(|e| CommandError::new(ErrorCode::InvalidState, e.to_string()))?;
+                .map_err(|clash| Failure::SecretsClash { clash })?;
             Command::DeliverSecrets(bundle)
         }
         Effect::Provision => Command::Provision(ProvisionSpec {

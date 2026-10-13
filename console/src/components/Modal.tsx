@@ -8,6 +8,7 @@
 import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
 
+import { m } from "../messages.tsx";
 import { Icon } from "./bits.tsx";
 
 /** A dialog's title, with a button that closes it, as Escape does. */
@@ -15,7 +16,7 @@ export function DialogHead(props: { id: string; title: string; onClose: () => vo
   return (
     <div class="dhead">
       <h2 id={props.id}>{props.title}</h2>
-      <button type="button" class="btn icon" aria-label="Close" autofocus={props.autofocus} onClick={props.onClose}>
+      <button type="button" class="btn icon" aria-label={m.dialog.close} autofocus={props.autofocus} onClick={props.onClose}>
         <Icon name="close" />
       </button>
     </div>
