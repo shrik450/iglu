@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use iglu_api::{CliToken, CliTokenRequest};
+use iglu_api::{CliToken, CliTokenRequest, Reason};
 use iglu_domain::id::PrincipalId;
 use iglu_domain::preview::FetchSite;
 use iglu_domain::signin::{ReturnPath, same_browser};
@@ -32,7 +32,7 @@ pub fn console_router() -> Router<Arc<App>> {
         .route("/auth/callback", get(console_callback))
         .route("/auth/logout", post(logout))
         .route("/auth/cli", get(cli_confirm).post(cli_approve))
-        .method_not_allowed_fallback(async || PageError(ApiError::MethodNotAllowed))
+        .method_not_allowed_fallback(async || PageError(ApiError::from(Reason::MethodNotAllowed)))
 }
 
 /// A refusal on a page someone opened in their browser: a page saying why,
@@ -42,6 +42,12 @@ pub struct PageError(ApiError);
 impl From<ApiError> for PageError {
     fn from(error: ApiError) -> Self {
         Self(error)
+    }
+}
+
+impl From<Reason> for PageError {
+    fn from(reason: Reason) -> Self {
+        Self(reason.into())
     }
 }
 
@@ -89,13 +95,11 @@ struct ReturnTo {
 fn sign_in_error(error: OidcError) -> ApiError {
     tracing::warn!(%error, "sign-in failed");
     match error {
-        OidcError::Discovery(_) => {
-            ApiError::Unavailable("the identity provider isn't reachable; try again shortly".into())
-        }
+        OidcError::Discovery(_) => Reason::ProviderUnreachable.into(),
         OidcError::Config(_)
         | OidcError::Exchange(_)
         | OidcError::Token(_)
-        | OidcError::Claims(_) => ApiError::Forbidden("sign-in failed".into()),
+        | OidcError::Claims(_) => Reason::SignInFailed.into(),
     }
 }
 
@@ -195,34 +199,28 @@ async fn complete(
     signin_cookie: Option<&str>,
 ) -> Result<(PrincipalId, String), ApiError> {
     if let Some(error) = callback.error {
-        return Err(ApiError::Forbidden(format!(
-            "the identity provider refused: {error}"
-        )));
+        return Err(Reason::ProviderRefused { error }.into());
     }
     let (code, state) = callback
         .code
         .zip(callback.state)
-        .ok_or_else(|| ApiError::BadRequest("missing code".into()))?;
+        .ok_or(Reason::SignInIncomplete)?;
     if !same_browser(signin_cookie, &state) {
-        return Err(ApiError::BadRequest(
-            "finish signing in in the browser that started it".into(),
-        ));
+        return Err(Reason::OtherBrowser.into());
     }
     let login = app
         .db
         .call(move |tx| db::take_login(tx, &state))
         .await?
         .filter(|login| login.kind == kind)
-        .ok_or_else(|| ApiError::BadRequest("this sign-in expired; try again".into()))?;
+        .ok_or(Reason::SignInExpired)?;
     let identity = rp
         .finish(code, login.nonce, login.pkce_verifier)
         .await
         .map_err(sign_in_error)?;
     if !app.config.sign_in.admits(&identity) {
         tracing::info!(subject = %identity.subject, "sign-in refused by policy");
-        return Err(ApiError::Forbidden(
-            "this account isn't allowed to use iglu".into(),
-        ));
+        return Err(Reason::AccountNotAllowed.into());
     }
     let id = PrincipalId::from_uuid(Uuid::new_v4());
     let principal = app
@@ -292,7 +290,7 @@ async fn console_callback(
 
 async fn logout(State(app): State<Arc<App>>, headers: HeaderMap) -> Result<Response, ApiError> {
     if fetch_metadata(&headers).site != Some(FetchSite::SameOrigin) {
-        return Err(ApiError::Forbidden("cross-origin logout".into()));
+        return Err(Reason::CrossOrigin.into());
     }
     if let Some(token) = cookie(&headers, CONSOLE_COOKIE) {
         let hash = crypto::hash(token);
@@ -320,7 +318,7 @@ impl CliRequest {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         };
         if self.port < 1024 || !url_safe(&self.challenge) || !url_safe(&self.state) {
-            return Err(ApiError::BadRequest("malformed CLI sign-in request".into()));
+            return Err(Reason::CliSignInMalformed.into());
         }
         Ok(())
     }
@@ -394,7 +392,7 @@ async fn stylesheet(app: &App) -> Result<String, ApiError> {
     };
     read.await.map_err(|error| {
         tracing::error!(%error, path = %manifest.display(), "couldn't read the console's assets");
-        ApiError::Internal
+        ApiError::from(Reason::Internal)
     })
 }
 
@@ -418,12 +416,12 @@ async fn cli_approve(
     };
     request.check()?;
     if fetch_metadata(&headers).site != Some(FetchSite::SameOrigin) {
-        return Err(ApiError::Forbidden("cross-origin request".into()).into());
+        return Err(ApiError::from(Reason::CrossOrigin).into());
     }
-    let token = cookie(&headers, CONSOLE_COOKIE).ok_or(ApiError::Unauthorized)?;
+    let token = cookie(&headers, CONSOLE_COOKIE).ok_or(Reason::Unauthorized)?;
     let principal = session_principal(&app, token, SessionKind::Console)
         .await?
-        .ok_or(ApiError::Unauthorized)?;
+        .ok_or(Reason::Unauthorized)?;
     let code = crypto::token().map_err(ApiError::from)?;
     let hash = crypto::hash(&code);
     let challenge = request.challenge.clone();
@@ -456,9 +454,9 @@ pub async fn cli_token(
         .db
         .call(move |tx| db::take_cli_code(tx, &hash, now()))
         .await?
-        .ok_or(ApiError::Unauthorized)?;
+        .ok_or(Reason::Unauthorized)?;
     if !crypto::pkce_matches(&exchange.verifier, &challenge) {
-        return Err(ApiError::Unauthorized);
+        return Err(Reason::Unauthorized.into());
     }
     let lifetime = Millis::from_secs(app.config.sessions.cli_days.saturating_mul(86_400));
     let token = new_session(&app, principal, SessionKind::Api, lifetime).await?;
@@ -494,7 +492,7 @@ pub async fn preview_auth(
     let result = match path {
         "/login" => match preview_return(app, get("return")) {
             Some(return_to) => begin(app, &app.preview, SessionKind::Preview, return_to).await,
-            None => Err(ApiError::BadRequest("bad return address".into())),
+            None => Err(Reason::BadReturnAddress.into()),
         },
         "/callback" => {
             let callback = Callback {
@@ -523,7 +521,7 @@ pub async fn preview_auth(
                 Err(error) => Err(error),
             }
         }
-        _ => Err(ApiError::NotFound),
+        _ => Err(Reason::NotFound.into()),
     };
     result.unwrap_or_else(|error| error_page(&error, &app.config.console_origin_string()))
 }

@@ -8,6 +8,7 @@ import { watch } from "./api/events.ts";
 import { App } from "./app.tsx";
 import { paintFrost } from "./components/bits.tsx";
 import { onPageKey } from "./keyboard.ts";
+import { m } from "./messages.tsx";
 import "./notify.ts";
 import { look, termStyle } from "./preferences.ts";
 import { me, say } from "./state/store.ts";
@@ -41,5 +42,5 @@ try {
   watch();
   void loadTerminals();
 } catch (error) {
-  say(`The console couldn't start: ${failure(error)}`);
+  say(m.start.failed(failure(error)));
 }

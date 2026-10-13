@@ -12,6 +12,7 @@ import type { Keyboard } from "./generated/Keyboard.ts";
 import type { Look } from "./generated/Look.ts";
 import type { Preferences } from "./generated/Preferences.ts";
 import type { TerminalStyle } from "./generated/TerminalStyle.ts";
+import { m } from "./messages.tsx";
 import { DEFAULT_PREFIX, usablePrefix } from "./state/keys.ts";
 import { say } from "./state/store.ts";
 
@@ -86,7 +87,7 @@ function save(): void {
       kept = sent;
     })
     .catch((error: unknown) => {
-      say(`That setting couldn't be kept: ${failure(error)}`);
+      say(m.settings.notKept(failure(error)));
       if (waiting === null && !again) {
         preferences.value = kept;
         cache(kept);

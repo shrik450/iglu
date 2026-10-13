@@ -34,10 +34,10 @@ test("what Ghostty takes that iglu has no use for passes", () => {
 });
 
 test("what can't be read says where", () => {
-  assert.deepEqual(parseTheme("background = #000000\nforeground = white"), { error: "Line 2: white isn't a colour iglu reads; use hex, like #1e1e2e." });
-  assert.deepEqual(parseTheme("background = #000000\npalette = #ffffff"), { error: "Line 2: a palette entry is `palette = 0=#1e1e2e`." });
-  assert.deepEqual(parseTheme("background #000000"), { error: "Line 1 isn't `key = value`." });
-  assert.deepEqual(parseTheme("background = #000000"), { error: "A theme needs at least a background and a foreground." });
+  assert.deepEqual(parseTheme("background = #000000\nforeground = white"), { error: { kind: "colour", line: 2, value: "white" } });
+  assert.deepEqual(parseTheme("background = #000000\npalette = #ffffff"), { error: { kind: "palette-entry", line: 2 } });
+  assert.deepEqual(parseTheme("background #000000"), { error: { kind: "not-key-value", line: 1 } });
+  assert.deepEqual(parseTheme("background = #000000"), { error: { kind: "missing" } });
 });
 
 test("every theme iglu has goes out and comes back in Ghostty's format", () => {

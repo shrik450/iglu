@@ -1,7 +1,7 @@
 // A workspace's published ports, as links.
 
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
-import { ONLY_YOU } from "./CopyLink.tsx";
+import { m } from "../messages.tsx";
 
 export function Previews({ ws }: { ws: WorkspaceView }) {
   const asleep = ws.phase !== "running";
@@ -15,7 +15,7 @@ export function Previews({ ws }: { ws: WorkspaceView }) {
           target="_blank"
           rel="noopener"
           translate={false}
-          title={`${route.url}${asleep ? ` (the workspace is ${ws.phase})` : ""}. ${ONLY_YOU}`}
+          title={m.preview.title(route.url, asleep ? m.phase(ws.phase) : null)}
         >
           ↗ <b>{route.name}</b> :{route.port}
         </a>

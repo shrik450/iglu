@@ -16,11 +16,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
 use iglu_api::{
-    AccessGrant, AddColumn, Condition, CreateEnvironment, CreateProject, CreateWorkspace, Identity,
-    LabelWorkspace, ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace,
+    AccessGrant, Activity, AddColumn, Condition, CreateEnvironment, CreateProject, CreateWorkspace,
+    Identity, LabelWorkspace, ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace,
     RevisionStatus, RouteView, SendInput, SetDesiredState, WorkspaceView,
 };
-use iglu_domain::activity::ActivityKind;
 use iglu_domain::auth::Permission;
 use iglu_domain::column::ColumnKind;
 use iglu_domain::env::{EnvName, EnvSource};
@@ -324,7 +323,7 @@ fn describe(ws: &WorkspaceView) -> String {
         ));
     }
     if let Some(condition) = &ws.condition {
-        lines.push(format!("  ! {}", condition_text(condition)));
+        lines.push(format!("  ! {condition}"));
     }
     lines.extend(
         ws.routes
@@ -336,19 +335,6 @@ fn describe(ws: &WorkspaceView) -> String {
 
 fn route_line(route: &RouteView) -> String {
     format!(":{} → {}", route.port, route.url)
-}
-
-fn condition_text(condition: &Condition) -> String {
-    match condition {
-        Condition::Error { message, .. } => message.clone(),
-        Condition::Capacity { available, needed } => {
-            format!("waiting for the host to have room: {needed} needed, {available} free")
-        }
-        Condition::RuntimeFailed => {
-            "the runtime reports the workspace as broken; stop or delete it".into()
-        }
-        Condition::HostOffline { .. } => "the host isn't answering".into(),
-    }
 }
 
 /// Polls until the workspace settles in `desired`. `None` means it's gone,
@@ -366,7 +352,7 @@ async fn wait_for(
             Some(ws) if ws.phase == desired.settled() => return Ok(Some(ws)),
             Some(ws) => match &ws.condition {
                 Some(condition @ (Condition::Error { .. } | Condition::RuntimeFailed)) => {
-                    bail!("{}", condition_text(condition));
+                    bail!("{condition}");
                 }
                 Some(Condition::Capacity { .. } | Condition::HostOffline { .. }) | None => {}
             },
@@ -408,11 +394,11 @@ async fn wait_for_upgrade(client: &Client, id: WorkspaceId) -> anyhow::Result<()
         let log = client.activity(id).await?;
         let asked = log
             .iter()
-            .find(|e| e.kind == ActivityKind::UpdateAsked)
+            .find(|e| matches!(e.what, Activity::UpdateAsked { .. }))
             .map(|e| e.at);
         if log
             .iter()
-            .any(|e| e.kind == ActivityKind::Updated && asked.is_none_or(|asked| e.at >= asked))
+            .any(|e| e.what == Activity::Updated && asked.is_none_or(|asked| e.at >= asked))
         {
             return Ok(());
         }
@@ -420,7 +406,7 @@ async fn wait_for_upgrade(client: &Client, id: WorkspaceId) -> anyhow::Result<()
             && let Some(condition @ (Condition::Error { .. } | Condition::RuntimeFailed)) =
                 &ws.condition
         {
-            bail!("{}", condition_text(condition));
+            bail!("{condition}");
         }
         if started.elapsed() > Duration::from_secs(1800) {
             bail!("timed out waiting for the workspace to update");
@@ -590,7 +576,7 @@ async fn workspace(
             let ws = client.resolve(&workspace).await?;
             let log = client.activity(ws.id).await?;
             print(json_mode, log.as_slice(), |log| {
-                lines(log, |entry| format!("{:<18} {}", entry.kind, entry.detail))
+                lines(log, |entry| entry.what.to_string())
             });
         }
     }

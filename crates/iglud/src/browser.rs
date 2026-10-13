@@ -21,6 +21,7 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, Empty, Limited};
 use hyper_util::rt::TokioIo;
+use iglu_api::Closed;
 use iglu_api::browser::{BrowserEvent, BrowserInput};
 use iglu_domain::column::{BROWSER_DEBUG_PORT, BROWSER_DISPLAY_PORT};
 use iglu_domain::display::{DisplayReport, DisplayScale};
@@ -160,7 +161,7 @@ async fn display(
     host: &HostClient,
     workspace: WorkspaceId,
     scale: DisplayScale,
-) -> Result<DisplayReport, String> {
+) -> Result<DisplayReport, Closed> {
     let deadline = tokio::time::Instant::now() + STARTING;
     loop {
         match host.display(workspace, scale).await {
@@ -170,7 +171,7 @@ async fn display(
             }
             Err(error) => {
                 tracing::debug!(%workspace, %error, "the browser's display didn't answer");
-                return Err("the browser isn't running; restart its column".to_owned());
+                return Err(Closed::BrowserNotRunning);
             }
         }
     }
@@ -184,16 +185,16 @@ async fn open(
     ws: &WorkspaceRecord,
     host: &HostClient,
     scale: DisplayScale,
-) -> Result<(DisplayReport, reqwest::Upgraded, Option<Browser>), String> {
+) -> Result<(DisplayReport, reqwest::Upgraded, Option<Browser>), Closed> {
     let started = std::time::Instant::now();
     if !crate::idle::thaw(app, ws, THAW).await {
-        return Err("the workspace isn't running".to_owned());
+        return Err(Closed::NotRunning);
     }
     let report = display(host, ws.id, scale).await?;
-    let port = GuestPort::try_from(BROWSER_DISPLAY_PORT).map_err(|e| e.to_string())?;
+    let port = GuestPort::try_from(BROWSER_DISPLAY_PORT).expect("the display's port is a port");
     let screen = host.tunnel(ws.id, port).await.map_err(|error| {
         tracing::info!(workspace = %ws.id, %error, "couldn't reach the browser's display");
-        "the browser's display isn't answering; restart its column".to_owned()
+        Closed::BrowserUnreachable
     })?;
     let devtools = match connect(host, ws.id).await {
         Ok(mut browser) => browser
@@ -230,7 +231,7 @@ pub async fn relay(
     let (report, screen, mut devtools) = match open(&app, &ws, &host, scale).await {
         Ok(opened) => opened,
         Err(error) => {
-            let _ = to_console.send(refusal(&error)).await;
+            let _ = to_console.send(refusal(error)).await;
             return;
         }
     };
@@ -321,9 +322,7 @@ pub async fn relay(
         let _ = browser.close(None).await;
     }
     if revoked {
-        let _ = to_console
-            .send(refusal("access to this workspace ended"))
-            .await;
+        let _ = to_console.send(refusal(Closed::AccessEnded)).await;
     } else {
         let _ = to_console.close().await;
     }

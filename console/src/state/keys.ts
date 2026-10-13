@@ -96,10 +96,12 @@ interface Key {
   label: string;
 }
 
+/** Where a shortcut works; messages.tsx says what each does. */
+export type Group = "anywhere" | "workspaces" | "columns";
+
 export interface Binding {
   action: Action;
-  does: string;
-  group: "Anywhere" | "Workspaces" | "Columns";
+  group: Group;
   /** After the prefix. */
   after?: Key;
   /** Taken from terminals when the person allows it. */
@@ -111,44 +113,42 @@ export interface Binding {
 const letter = (l: string, shift = false): Key => ({ code: `Key${l.toUpperCase()}`, shift, label: shift ? `⇧${l.toUpperCase()}` : l });
 
 export const BINDINGS: readonly Binding[] = [
-  { action: { kind: "palette" }, does: "Search and commands", group: "Anywhere", after: { code: "Slash", label: "/" }, page: [{ code: "Slash", label: "/" }] },
-  { action: { kind: "new" }, does: "New workspace", group: "Anywhere", after: letter("n"), page: [letter("n")] },
-  { action: { kind: "next-waiting" }, does: "Next workspace that needs you", group: "Anywhere", after: letter("u"), page: [letter("u")] },
-  { action: { kind: "previews" }, does: "Previews", group: "Anywhere", after: letter("p"), page: [letter("p")] },
-  { action: { kind: "keys" }, does: "All shortcuts", group: "Anywhere", after: { code: "Slash", shift: true, label: "?" }, page: [{ code: "Slash", shift: true, label: "?" }] },
+  { action: { kind: "palette" }, group: "anywhere", after: { code: "Slash", label: "/" }, page: [{ code: "Slash", label: "/" }] },
+  { action: { kind: "new" }, group: "anywhere", after: letter("n"), page: [letter("n")] },
+  { action: { kind: "next-waiting" }, group: "anywhere", after: letter("u"), page: [letter("u")] },
+  { action: { kind: "previews" }, group: "anywhere", after: letter("p"), page: [letter("p")] },
+  { action: { kind: "keys" }, group: "anywhere", after: { code: "Slash", shift: true, label: "?" }, page: [{ code: "Slash", shift: true, label: "?" }] },
   {
     action: { kind: "workspace", step: 1 },
-    does: "Next workspace",
-    group: "Workspaces",
+    group: "workspaces",
     after: letter("j"),
     alt: letter("j"),
     page: [letter("j"), { code: "ArrowDown", label: "↓" }],
   },
   {
     action: { kind: "workspace", step: -1 },
-    does: "Previous workspace",
-    group: "Workspaces",
+    group: "workspaces",
     after: letter("k"),
     alt: letter("k"),
     page: [letter("k"), { code: "ArrowUp", label: "↑" }],
   },
-  { action: { kind: "open" }, does: "Open the selected workspace", group: "Workspaces", page: [{ code: "Enter", label: "↩" }] },
-  { action: { kind: "back" }, does: "Back to the overview", group: "Workspaces", page: [{ code: "Escape", label: "esc" }] },
-  { action: { kind: "last-workspace" }, does: "The workspace you were in before", group: "Workspaces", after: { code: "Semicolon", label: ";" } },
-  { action: { kind: "rename" }, does: "Rename", group: "Workspaces", after: letter("r") },
-  { action: { kind: "freeze" }, does: "Freeze or thaw", group: "Workspaces", after: letter("f") },
-  { action: { kind: "details" }, does: "Details", group: "Workspaces", after: letter("i") },
-  { action: { kind: "column", step: -1 }, does: "Previous column", group: "Columns", after: letter("h"), alt: letter("h") },
-  { action: { kind: "column", step: 1 }, does: "Next column", group: "Columns", after: letter("l"), alt: letter("l") },
-  { action: { kind: "move-column", step: -1 }, does: "Move the column left", group: "Columns", after: letter("h", true) },
-  { action: { kind: "move-column", step: 1 }, does: "Move the column right", group: "Columns", after: letter("l", true) },
-  { action: { kind: "width" }, does: "Change its width", group: "Columns", after: letter("w") },
-  { action: { kind: "zoom" }, does: "Zoom it to fill the page, or put it back", group: "Columns", after: letter("z") },
-  { action: { kind: "find" }, does: "Find in its output", group: "Columns", after: letter("s") },
-  { action: { kind: "leave" }, does: "Leave the terminal for the page (⇧ goes back)", group: "Columns", after: { code: "Tab", label: "tab" } },
-  { action: { kind: "add-column" }, does: "New column", group: "Columns", after: letter("c") },
-  { action: { kind: "label-column" }, does: "Rename the column", group: "Columns", after: { code: "Comma", label: "," } },
-  { action: { kind: "close-column" }, does: "End the column", group: "Columns", after: letter("x") },
+  { action: { kind: "open" }, group: "workspaces", page: [{ code: "Enter", label: "↩" }] },
+  { action: { kind: "back" }, group: "workspaces", page: [{ code: "Escape", label: "esc" }] },
+  { action: { kind: "last-workspace" }, group: "workspaces", after: { code: "Semicolon", label: ";" } },
+  { action: { kind: "rename" }, group: "workspaces", after: letter("r") },
+  { action: { kind: "freeze" }, group: "workspaces", after: letter("f") },
+  { action: { kind: "details" }, group: "workspaces", after: letter("i") },
+  { action: { kind: "column", step: -1 }, group: "columns", after: letter("h"), alt: letter("h") },
+  { action: { kind: "column", step: 1 }, group: "columns", after: letter("l"), alt: letter("l") },
+  { action: { kind: "move-column", step: -1 }, group: "columns", after: letter("h", true) },
+  { action: { kind: "move-column", step: 1 }, group: "columns", after: letter("l", true) },
+  { action: { kind: "width" }, group: "columns", after: letter("w") },
+  { action: { kind: "zoom" }, group: "columns", after: letter("z") },
+  { action: { kind: "find" }, group: "columns", after: letter("s") },
+  { action: { kind: "leave" }, group: "columns", after: { code: "Tab", label: "tab" } },
+  { action: { kind: "add-column" }, group: "columns", after: letter("c") },
+  { action: { kind: "label-column" }, group: "columns", after: { code: "Comma", label: "," } },
+  { action: { kind: "close-column" }, group: "columns", after: letter("x") },
 ];
 
 const matches = (key: Key, input: KeyInput) => key.code === input.code && Boolean(key.shift) === input.shift;
