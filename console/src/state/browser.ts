@@ -135,9 +135,11 @@ export function scaleOf(ratio: number): number {
 
 /** How large the display should be for a box of this size, in CSS pixels,
  * at `scale`: in device pixels, so the browser draws as sharp as the
- * screen shows. */
-export function displaySize(box: { w: number; h: number }, scale: number): { w: number; h: number } {
-  return { w: Math.round(box.w * scale), h: Math.round(box.h * scale) };
+ * screen shows. A box without a whole pixel each way, as a hidden one,
+ * has no size for it. */
+export function displaySize(box: { w: number; h: number }, scale: number): { w: number; h: number } | null {
+  const size = { w: Math.round(box.w * scale), h: Math.round(box.h * scale) };
+  return size.w > 0 && size.h > 0 ? size : null;
 }
 
 /** RFB encodings, as noVNC numbers them. */

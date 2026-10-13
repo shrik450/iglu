@@ -34,8 +34,8 @@ const REPORT: &str = "display.json";
 /// How long sway has to make its sockets.
 const STARTING: Duration = Duration::from_secs(10);
 
-/// A Chromium that ends sooner than this after starting is waited for
-/// longer each time before it's started again.
+/// A program on the display that ends sooner than this after starting is
+/// waited for longer each time before it's started again.
 const STEADY: Duration = Duration::from_secs(10);
 
 /// sway's configuration: one output, no bars or borders, and tabs, so a
@@ -221,7 +221,11 @@ fn spawn(
     env: &[(&str, String)],
     log: &Path,
 ) -> std::io::Result<Child> {
-    let log = std::fs::File::create(log)?;
+    // A program started again writes after what it said before it ended.
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)?;
     Command::new(program)
         .args(args)
         .envs(env.iter().map(|(k, v)| (*k, v.as_str())))
@@ -269,12 +273,67 @@ fn end(children: &mut [&mut Child]) {
     }
 }
 
-/// Runs the display and the browser on it until the column ends, starting
-/// the browser again whenever it's closed.
+/// A program that shows or draws on the display, started again whenever it
+/// ends: the browser when its last window is closed, and the VNC server when
+/// the display drops it for a request it refuses, which leaves the browser
+/// as it was. One that keeps ending at once is waited for longer each time.
+struct Kept {
+    program: &'static str,
+    args: Vec<String>,
+    log: PathBuf,
+    child: Option<Child>,
+    started: Instant,
+    next: Instant,
+    wait: Duration,
+}
+
+impl Kept {
+    fn new(program: &'static str, args: Vec<String>, log: PathBuf) -> Self {
+        let now = Instant::now();
+        Self {
+            program,
+            args,
+            log,
+            child: None,
+            started: now,
+            next: now,
+            wait: Duration::ZERO,
+        }
+    }
+
+    /// Starts the program if it isn't running and its wait is over.
+    fn keep(&mut self, env: &[(&str, String)]) -> std::io::Result<()> {
+        if let Some(child) = self.child.as_mut()
+            && let Some(status) = child.try_wait()?
+        {
+            eprintln!(
+                "iglu-guest: {} ended ({status}); starting it again",
+                self.program
+            );
+            self.child = None;
+            self.wait = if self.started.elapsed() < STEADY {
+                (self.wait * 2).clamp(Duration::from_millis(500), STEADY)
+            } else {
+                Duration::ZERO
+            };
+            self.next = Instant::now() + self.wait;
+        }
+        if self.child.is_none() && Instant::now() >= self.next {
+            self.started = Instant::now();
+            self.child = Some(spawn(self.program, &self.args, env, &self.log)?);
+        }
+        Ok(())
+    }
+}
+
+/// Runs the display, the VNC server that shows it, and the browser on it
+/// until the column ends, starting the browser or the VNC server again
+/// whenever either ends.
 ///
 /// # Errors
 ///
-/// When the display can't start, or ends on its own.
+/// When the display can't start or ends on its own, or a program on it
+/// can't be started.
 pub fn run(dirs: &Dirs) -> std::io::Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     for signal in [
@@ -293,62 +352,41 @@ pub fn run(dirs: &Dirs) -> std::io::Result<()> {
         ("XDG_RUNTIME_DIR", dir.display().to_string()),
         ("WAYLAND_DISPLAY", display),
     ];
-    let mut wayvnc = match spawn(
-        "wayvnc",
-        &wayvnc_args(report.hardware),
-        &env,
-        &dir.join("wayvnc.log"),
-    ) {
-        Ok(child) => child,
-        Err(error) => {
-            end(&mut [&mut sway]);
-            return Err(error);
-        }
-    };
-    let args = chromium_args(&profile);
-    let log = dir.join("chromium.log");
-    let mut chromium: Option<Child> = None;
-    let mut started = Instant::now();
-    let mut next = Instant::now();
-    let mut wait = Duration::ZERO;
+    let mut kept = [
+        Kept::new(
+            "wayvnc",
+            wayvnc_args(report.hardware),
+            dir.join("wayvnc.log"),
+        ),
+        Kept::new(
+            "chromium",
+            chromium_args(&profile),
+            dir.join("chromium.log"),
+        ),
+    ];
     let failed = loop {
         if stop.load(Ordering::Relaxed) {
             break None;
         }
-        if let Some(status) = sway.try_wait()? {
-            break Some(format!("the browser's display ended: {status}"));
-        }
-        if let Some(status) = wayvnc.try_wait()? {
-            break Some(format!("the browser's VNC server ended: {status}"));
-        }
-        // Closing the browser's last window ends it, and it's started
-        // again; one that keeps ending at once is waited for longer.
-        if let Some(child) = chromium.as_mut()
-            && child.try_wait()?.is_some()
-        {
-            chromium = None;
-            wait = if started.elapsed() < STEADY {
-                (wait * 2).clamp(Duration::from_millis(500), STEADY)
-            } else {
-                Duration::ZERO
-            };
-            next = Instant::now() + wait;
-        }
-        if chromium.is_none() && Instant::now() >= next {
-            started = Instant::now();
-            chromium = Some(spawn("chromium", &args, &env, &log)?);
+        if let Err(error) = tend(&mut sway, &mut kept, &env) {
+            break Some(error);
         }
         std::thread::sleep(Duration::from_millis(200));
     };
-    let mut children: Vec<&mut Child> = vec![&mut wayvnc, &mut sway];
-    if let Some(chromium) = chromium.as_mut() {
-        children.insert(0, chromium);
-    }
+    let mut children: Vec<&mut Child> = kept.iter_mut().filter_map(|k| k.child.as_mut()).collect();
+    children.push(&mut sway);
     end(&mut children);
-    match failed {
-        None => Ok(()),
-        Some(why) => Err(std::io::Error::other(why)),
+    failed.map_or(Ok(()), Err)
+}
+
+/// Checks the display is still there, and keeps what's on it running.
+fn tend(sway: &mut Child, kept: &mut [Kept], env: &[(&str, String)]) -> std::io::Result<()> {
+    if let Some(status) = sway.try_wait()? {
+        return Err(std::io::Error::other(format!(
+            "the browser's display ended: {status}"
+        )));
     }
+    kept.iter_mut().try_for_each(|program| program.keep(env))
 }
 
 /// Starts sway in `dir`, a display of its own, afresh: the last one's
