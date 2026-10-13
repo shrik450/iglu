@@ -17,12 +17,8 @@ pub struct IdlePolicy {
 
 /// A project's say over how its workspaces idle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(tag = "kind"))]
 pub enum IdleRule {
     /// Whatever the host's operator set.
     #[default]

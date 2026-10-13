@@ -7,4 +7,4 @@ import type { Timestamp } from "./Timestamp";
 /**
  * Something about a workspace the owner should know, beyond its phase.
  */
-export type Condition = { "kind": "error", step: Effect, failure: Failure, at: Timestamp, } | { "kind": "capacity", available: Bytes, needed: Bytes, } | { "kind": "runtime_failed" } | { "kind": "host_offline", last_seen: Timestamp | null, };
+export type Condition = { "kind": "Error", step: Effect, failure: Failure, at: Timestamp, } | { "kind": "Capacity", available: Bytes, needed: Bytes, } | { "kind": "RuntimeFailed" } | { "kind": "HostOffline", last_seen: Timestamp | null, };

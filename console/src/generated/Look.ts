@@ -3,4 +3,4 @@
 /**
  * The console's colours: the system's choice, or one of the two looks.
  */
-export type Look = "auto" | "dark" | "light";
+export type Look = "Auto" | "Dark" | "Light";

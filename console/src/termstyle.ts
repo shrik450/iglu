@@ -5,7 +5,7 @@
 import { signal } from "@preact/signals";
 
 import type { TerminalStyle } from "./generated/TerminalStyle.ts";
-import type { ShownLook } from "./preferences.ts";
+import { COLOURS, type ShownLook } from "./preferences.ts";
 import { XTERM, cellSize, colorsOf, isLight } from "./state/themes.ts";
 
 /** The terminal font's character width as a fraction of its size, as last
@@ -42,7 +42,7 @@ export function applyTermStyle(prefs: TerminalStyle, look: ShownLook): Promise<v
 
     // iglu's own colours are the stylesheet's, which follow the look; a
     // theme's take over the terminal and its column alike.
-    const chosen = prefs[look];
+    const chosen = prefs[COLOURS[look]];
     const colors = colorsOf(chosen.theme, chosen.pasted);
     set("--term-bg", colors?.background ?? null);
     set("--term-ink", colors?.foreground ?? null);

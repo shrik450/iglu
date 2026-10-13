@@ -161,11 +161,11 @@ window.addEventListener("blur", () => options.clear());
 /** Whether the Option held now is one the person reads as Meta. */
 function optionIsMeta(): boolean {
   switch (keyboard.value.option_as_meta) {
-    case "off":
+    case "Off":
       return false;
-    case "both":
+    case "Both":
       return true;
-    case "left":
+    case "Left":
       return options.has("AltLeft") || !mac;
     default:
       return unreachable(keyboard.value.option_as_meta);

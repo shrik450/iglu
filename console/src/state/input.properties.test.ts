@@ -93,7 +93,7 @@ test("Ctrl makes letters control characters and leaves the rest", () => {
 });
 
 const columns = fc.uniqueArray(fc.stringMatching(/^[a-z][a-z0-9]{0,6}$/), { maxLength: 8 }).map((names) =>
-  names.map((name): ColumnSpec => ({ name, kind: { kind: "shell" }, width: "half", label: null })),
+  names.map((name): ColumnSpec => ({ name, kind: { kind: "Shell" }, width: "half", label: null })),
 );
 
 test("moving or placing a column only reorders the strip", () => {

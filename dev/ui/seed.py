@@ -83,11 +83,11 @@ def main() -> None:
             "repo": project["repo"],
             "environment": project["environment"],
             "opening": [
-                {"name": "agent", "kind": {"kind": "shell"}, "width": "two-thirds"},
-                {"kind": {"kind": "shell"}, "width": "third"},
+                {"name": "agent", "kind": {"kind": "Shell"}, "width": "two-thirds"},
+                {"kind": {"kind": "Shell"}, "width": "third"},
             ],
             "ports": [],
-            "idle": {"kind": "never"},
+            "idle": {"kind": "Never"},
         })
 
         existing = {ws["name"] for ws in api.get("/v1/workspaces")}
@@ -127,7 +127,7 @@ def main() -> None:
         # A server, published at its own preview address.
         ws = api.workspace("preview-server")
         if not any(r["port"] == PREVIEW_PORT for r in ws.get("routes", [])):
-            api.send("POST", f"/v1/workspaces/{ws['id']}/columns", {"kind": {"kind": "shell"}, "name": "server"})
+            api.send("POST", f"/v1/workspaces/{ws['id']}/columns", {"kind": {"kind": "Shell"}, "name": "server"})
             page.goto(f"{CONSOLE}/w/preview-server")
             type_in(page, "server", f"python3 -m http.server {PREVIEW_PORT} --bind 127.0.0.1", "Serving HTTP")
             api.send("POST", f"/v1/workspaces/{ws['id']}/routes", {"port": PREVIEW_PORT})

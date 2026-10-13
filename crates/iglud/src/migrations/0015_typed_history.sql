@@ -13,7 +13,23 @@ CREATE TABLE activity_typed (
 ) STRICT;
 
 INSERT INTO activity_typed (id, workspace_id, actor_id, via_workspace_id, what, at)
-SELECT id, workspace_id, actor_id, via_workspace_id, json_object('kind', kind), at
+SELECT id, workspace_id, actor_id, via_workspace_id, json_object('kind', CASE kind
+    WHEN 'created' THEN 'Created'
+    WHEN 'started' THEN 'Started'
+    WHEN 'secrets-delivered' THEN 'SecretsDelivered'
+    WHEN 'provisioned' THEN 'Provisioned'
+    WHEN 'columns-opened' THEN 'ColumnsOpened'
+    WHEN 'frozen' THEN 'Frozen'
+    WHEN 'thawed' THEN 'Thawed'
+    WHEN 'stopped' THEN 'Stopped'
+    WHEN 'removed' THEN 'Removed'
+    WHEN 'deleted' THEN 'Deleted'
+    WHEN 'thawed-on-open' THEN 'ThawedOnOpen'
+    WHEN 'idle-froze' THEN 'IdleFroze'
+    WHEN 'idle-stopped' THEN 'IdleStopped'
+    WHEN 'access-changed' THEN 'AccessChanged'
+    WHEN 'updated' THEN 'Updated'
+END), at
 FROM activity
 WHERE kind IN (
     'created', 'started', 'secrets-delivered', 'provisioned', 'columns-opened',

@@ -18,13 +18,13 @@ import { say } from "./state/store.ts";
 
 /** What iglud starts everyone with, as iglu-domain's preferences.rs has it. */
 const DEFAULTS: Preferences = {
-  look: "auto",
-  keyboard: { prefix: DEFAULT_PREFIX, alt_moves: true, option_as_meta: "left" },
+  look: "Auto",
+  keyboard: { prefix: DEFAULT_PREFIX, alt_moves: true, option_as_meta: "Left" },
   terminal: { font: null, size: 13, dark: { theme: "iglu", pasted: "" }, light: { theme: "iglu", pasted: "" } },
 };
 
-// Named for the shape it holds, so one kept in an older shape isn't read.
-const CACHE = "iglu.preferences.2";
+// Named for the shape and spelling it holds, so one kept in an older one isn't read.
+const CACHE = "iglu.preferences.3";
 
 function cached(): Preferences | null {
   try {
@@ -116,14 +116,17 @@ export const look = computed<Look>(() => preferences.value.look);
 export const setLook = (value: Look) => setPreferences({ ...preferences.peek(), look: value });
 
 /** One of the two looks, as against the system's choice of one. */
-export type ShownLook = Exclude<Look, "auto">;
+export type ShownLook = Exclude<Look, "Auto">;
+
+/** Where a terminal style keeps each look's colours. */
+export const COLOURS = { Dark: "dark", Light: "light" } as const satisfies Record<ShownLook, keyof TerminalStyle>;
 
 const systemDark = matchMedia("(prefers-color-scheme: dark)");
-const systemLook = signal<ShownLook>(systemDark.matches ? "dark" : "light");
-systemDark.addEventListener("change", () => (systemLook.value = systemDark.matches ? "dark" : "light"));
+const systemLook = signal<ShownLook>(systemDark.matches ? "Dark" : "Light");
+systemDark.addEventListener("change", () => (systemLook.value = systemDark.matches ? "Dark" : "Light"));
 
 /** The look the page is in: the one chosen, or the system's. */
-export const shownLook = computed<ShownLook>(() => (look.value === "auto" ? systemLook.value : look.value));
+export const shownLook = computed<ShownLook>(() => (look.value === "Auto" ? systemLook.value : look.value));
 
 /** The keyboard, with a prefix the console can use whatever was stored. */
 export const keyboard = computed<Keyboard>(() => {

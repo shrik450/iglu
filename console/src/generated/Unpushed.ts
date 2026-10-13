@@ -3,4 +3,4 @@
 /**
  * Commits only this checkout has.
  */
-export type Unpushed = { "kind": "none" } | { "kind": "commits", count: number, } | { "kind": "no_upstream" };
+export type Unpushed = { "kind": "None" } | { "kind": "Commits", count: number, } | { "kind": "NoUpstream" };

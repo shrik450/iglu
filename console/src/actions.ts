@@ -339,7 +339,7 @@ export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<vo
 /** Opens `address` in the workspace's browser, and shows it: in the browser
  * column, which is opened first if there isn't one. */
 export async function openInBrowser(ws: WorkspaceView, address: string): Promise<void> {
-  const column = columnsOf(ws).find((c) => c.kind.kind === "browser");
+  const column = columnsOf(ws).find((c) => c.kind.kind === "Browser");
   const pane = column && panes.get(`${ws.id}/${column.name}`);
   if (column && pane instanceof BrowserPane) {
     pane.open(address);
@@ -347,11 +347,11 @@ export async function openInBrowser(ws: WorkspaceView, address: string): Promise
     return;
   }
   openOnceShown(ws.id, address);
-  if (column && column.state !== "ended") {
+  if (column && column.state !== "Ended") {
     focusColumn(ws, column.name);
     return;
   }
-  const started = await attempt(() => (column ? api.restartColumn(ws.id, column.name) : openColumn(ws, { kind: "browser" })));
+  const started = await attempt(() => (column ? api.restartColumn(ws.id, column.name) : openColumn(ws, { kind: "Browser" })));
   // A browser that didn't start mustn't open it when one next does.
   if (!started) openOnceShown(ws.id, null);
   else if (column) await loadColumns(ws);

@@ -6,4 +6,4 @@ import type { Timestamp } from "./Timestamp";
 /**
  * One build of an environment.
  */
-export type RevisionView = { id: EnvRevisionId, created_at: Timestamp, } & ({ "status": "building" } | { "status": "ready", image: BuiltImage, } | { "status": "failed", log_tail: string, });
+export type RevisionView = { id: EnvRevisionId, created_at: Timestamp, } & ({ "status": "Building" } | { "status": "Ready", image: BuiltImage, } | { "status": "Failed", log_tail: string, });

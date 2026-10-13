@@ -16,7 +16,7 @@ export type Situation =
   /** The runtime gave up on it; only stopping or deleting helps. */
   | { kind: "broken" }
   /** Held up by something outside it, which iglu waits out. */
-  | { kind: "held"; condition: Extract<Condition, { kind: "host_offline" | "capacity" }> }
+  | { kind: "held"; condition: Extract<Condition, { kind: "HostOffline" | "Capacity" }> }
   | { kind: "frozen"; freezing: boolean }
   | { kind: "stopped" }
   /** Stopping or being deleted. */
@@ -27,12 +27,12 @@ export function situation(ws: Pick<WorkspaceView, "phase" | "condition">): Situa
   const condition = ws.condition;
   if (condition) {
     switch (condition.kind) {
-      case "error":
+      case "Error":
         return { kind: "stuck", phase: ws.phase, step: condition.step, failure: condition.failure };
-      case "runtime_failed":
+      case "RuntimeFailed":
         return { kind: "broken" };
-      case "host_offline":
-      case "capacity":
+      case "HostOffline":
+      case "Capacity":
         return { kind: "held", condition };
       default:
         return unreachable(condition);

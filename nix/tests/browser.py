@@ -1242,7 +1242,7 @@ def drafts_survive(page: Page, project: str) -> Any:
     before = idle.input_value()
     previews = form.get_by_label("Previews")
     previews.fill("18480")
-    idle.select_option("never" if before != "never" else "default")
+    idle.select_option("Never" if before != "Never" else "Default")
     theirs.get_by_role("button", name="Save").click()
     notice = form.get_by_role("status")
     expect(notice).to_contain_text("saved elsewhere")

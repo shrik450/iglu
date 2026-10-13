@@ -23,11 +23,11 @@ function mark(ws: WorkspaceView): string {
 /** What to tell the person, for the reason the core gave. */
 function notice(ws: WorkspaceView, need: Need): { title: string; body: string } {
   switch (need) {
-    case "waiting":
+    case "Waiting":
       return { title: m.notice.waiting(called(ws)), body: ws.attention?.summary ?? "" };
-    case "done":
+    case "Done":
       return { title: m.notice.done(called(ws)), body: ws.attention?.summary ?? "" };
-    case "trouble": {
+    case "Trouble": {
       const now = situation(ws);
       switch (now.kind) {
         case "stuck":

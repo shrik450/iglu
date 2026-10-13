@@ -456,7 +456,7 @@ def mac_keys(h: Harness) -> Any:
     was selected and kept Ctrl+V for a paste that never came. Ctrl+Option
     and a letter is Meta with its control byte, which sent nothing, and an
     Option that isn't Meta types its character, which went as Meta anyway."""
-    h.page.evaluate("() => harness.keyboard({ option_as_meta: 'off' })")
+    h.page.evaluate("() => harness.keyboard({ option_as_meta: 'Off' })")
     s = h.open("one")
     text_to_select(s)
     select_text(s)

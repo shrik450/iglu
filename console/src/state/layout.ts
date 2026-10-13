@@ -34,14 +34,14 @@ export interface Shown {
  */
 export function shown(asked: readonly ColumnSpec[], statuses: readonly ColumnStatus[] | undefined): Shown[] {
   const state = new Map(statuses?.map((s) => [s.name, s.state]));
-  const columns: Shown[] = asked.map((spec) => ({ ...spec, state: statuses ? (state.get(spec.name) ?? "ended") : null }));
+  const columns: Shown[] = asked.map((spec) => ({ ...spec, state: statuses ? (state.get(spec.name) ?? "Ended") : null }));
   for (const status of statuses ?? []) {
     switch (status.state) {
-      case "adopted":
-        columns.push({ name: status.name, kind: { kind: "shell" }, width: "half", label: null, state: "adopted" });
+      case "Adopted":
+        columns.push({ name: status.name, kind: { kind: "Shell" }, width: "half", label: null, state: "Adopted" });
         break;
-      case "open":
-      case "ended":
+      case "Open":
+      case "Ended":
         break;
       default:
         unreachable(status.state);

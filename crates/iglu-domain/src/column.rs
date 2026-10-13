@@ -167,12 +167,8 @@ serde_text!(
 
 /// What a column runs.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(tag = "kind"))]
 pub enum ColumnKind {
     /// The workspace user's login shell, where agents are run like anything
     /// else.
@@ -255,8 +251,7 @@ pub struct ColumnTemplate {
 
 /// Whether a column's session is there, compared with what was asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum ColumnState {
     /// Asked for, and its session is open.
     Open,
@@ -415,7 +410,7 @@ mod tests {
 
     #[test]
     fn kinds_and_widths_round_trip_as_the_console_writes_them() {
-        let kind: ColumnKind = serde_json::from_str(r#"{"kind":"browser"}"#).expect("parses");
+        let kind: ColumnKind = serde_json::from_str(r#"{"kind":"Browser"}"#).expect("parses");
         assert_eq!(kind, ColumnKind::Browser);
         let width: ColumnWidth = serde_json::from_str(r#""two-thirds""#).expect("parses");
         assert_eq!(width, ColumnWidth::TwoThirds);
@@ -471,12 +466,13 @@ mod tests {
     }
 
     #[test]
-    fn a_column_shows_its_state_as_the_api_names_it() {
-        for state in [ColumnState::Open, ColumnState::Ended, ColumnState::Adopted] {
-            assert_eq!(
-                serde_json::to_value(state).ok(),
-                Some(serde_json::Value::String(state.to_string()))
-            );
+    fn a_column_shows_its_state_as_a_word() {
+        for (state, shown) in [
+            (ColumnState::Open, "open"),
+            (ColumnState::Ended, "ended"),
+            (ColumnState::Adopted, "adopted"),
+        ] {
+            assert_eq!(state.to_string(), shown);
         }
     }
 

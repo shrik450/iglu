@@ -21,12 +21,8 @@ pub struct BrowserQuery {
 
 /// What the console asks of the browser, beside what VNC carries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "type", rename_all = "snake_case")
-)]
+#[serde(tag = "type")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "type"))]
 pub enum BrowserInput {
     /// The screen it's shown on now has this pixel ratio.
     Scale { scale: DisplayScale },
@@ -37,12 +33,8 @@ pub enum BrowserInput {
 
 /// What iglu tells the console of the browser, beside what VNC carries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "type", rename_all = "snake_case")
-)]
+#[serde(tag = "type")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "type"))]
 pub enum BrowserEvent {
     /// What the display draws and encodes with: on the host's GPU, which
     /// sends H.264, or on the CPU, which sends losslessly.

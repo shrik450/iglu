@@ -3,4 +3,4 @@
 /**
  * Why the control plane should change its own intent to match reality.
  */
-export type AdoptReason = "frozen_state_lost";
+export type AdoptReason = "FrozenStateLost";

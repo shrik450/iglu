@@ -4,4 +4,4 @@ import type { DisplayScale } from "./DisplayScale";
 /**
  * What the console asks of the browser, beside what VNC carries.
  */
-export type BrowserInput = { "type": "scale", scale: DisplayScale, } | { "type": "open", address: string, };
+export type BrowserInput = { "type": "Scale", scale: DisplayScale, } | { "type": "Open", address: string, };
