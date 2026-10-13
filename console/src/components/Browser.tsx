@@ -7,6 +7,7 @@ import { focusColumn, markActive } from "../actions.ts";
 import { BrowserPane } from "../browser.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { browserKey, mac } from "../keyboard.ts";
+import { m } from "../messages.tsx";
 import { keyboard } from "../preferences.ts";
 import { chordLabel } from "../state/keys.ts";
 
@@ -36,20 +37,20 @@ export function Browser(props: { ws: WorkspaceView; name: string; title: string;
       opened.dispose();
     };
   }, [ws.id, name]);
-  const waiting = pane ? pane.waiting.value : "Opening the browser…";
+  const waiting = pane ? pane.waiting.value : m.browser.opening;
   const downloaded = pane?.downloaded.value ?? null;
   return (
     <div class="browser">
       {pane && downloaded ? (
-        <div class="browser-dialog" role="status" aria-label="Downloaded">
-          <p translate={false}>{downloaded.name === null ? `Downloaded to ${downloaded.path}.` : `Downloaded ${downloaded.name}.`}</p>
+        <div class="browser-dialog" role="status" aria-label={m.browser.downloaded}>
+          <p>{m.browser.downloadedTo(downloaded.name, downloaded.path)}</p>
           <span class="browser-dialog-do">
             <button type="button" class="btn" onClick={() => (pane.downloaded.value = null)}>
-              Dismiss
+              {m.browser.dismiss}
             </button>
             {downloaded.url ? (
               <a class="btn primary" href={downloaded.url} download={downloaded.name ?? true} onClick={() => (pane.downloaded.value = null)}>
-                Save to this computer
+                {m.browser.save}
               </a>
             ) : null}
           </span>

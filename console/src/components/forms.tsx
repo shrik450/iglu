@@ -4,7 +4,9 @@
 // an InputError from reading the form) shows by the input its first segment
 // names, through that input's FieldError; any other error shows at the
 // form's FormError. The server is the one parser of what inputs mean, so
-// forms only turn text into the request's shape.
+// forms only turn text into the request's shape. iglu says which input it
+// couldn't take, not why: each form gives, from messages.tsx, what each of
+// its inputs takes, and that's said by the one refused.
 
 import { type RefObject } from "preact";
 import { useId, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -43,8 +45,12 @@ export interface Form {
   readonly onSubmit: (e: Event) => Promise<void>;
 }
 
-/** Submits a form with `run`, showing what it throws by the input it's about. */
-export function useForm(run: (data: FormData, form: HTMLFormElement) => Promise<void>): Form {
+/** What each of a form's inputs takes, by input name. */
+export type Rules = Readonly<Record<string, string>>;
+
+/** Submits a form with `run`, showing what it throws by the input it's
+ * about: for an input iglu couldn't take, what it takes, from `rules`. */
+export function useForm(run: (data: FormData, form: HTMLFormElement) => Promise<void>, rules: Rules = {}): Form {
   const id = useId();
   const [problem, setProblem] = useState<Problem | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,8 +63,11 @@ export function useForm(run: (data: FormData, form: HTMLFormElement) => Promise<
       await run(new FormData(form), form);
     } catch (error) {
       const field = error instanceof ApiError || error instanceof InputError ? error.field : null;
-      const named = field === null ? null : form.elements.namedItem(inputOf(field));
-      setProblem({ message: failure(error), input: named && field !== null ? inputOf(field) : null });
+      const input = field === null ? null : inputOf(field);
+      const named = input === null ? null : form.elements.namedItem(input);
+      const invalid = error instanceof ApiError && error.refusal.from === "iglu" && error.refusal.reason.kind === "invalid";
+      const rule = invalid && input !== null ? rules[input] : undefined;
+      setProblem({ message: rule ?? failure(error), input: named ? input : null });
       if (named instanceof HTMLElement) {
         const folded = named.closest("details");
         if (folded) folded.open = true;

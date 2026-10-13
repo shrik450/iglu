@@ -212,8 +212,9 @@ try:
     with subtest("every refused request says why, as JSON naming the input"):
         json_body = ("-H", "Content-Type: application/json")
         status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":"broken","source":"github:a/b"}')
-        assert status == 400 and body["error"] == "bad_request" and body["field"] == "source", body
-        assert "#" in body["message"] and " at line " not in body["message"], body
+        assert status == 400 and body["reason"] == {"kind": "invalid"} and body["field"] == "source", body
+        # Why is data, for whoever shows it to say; iglud sends no prose.
+        assert set(body) == {"reason", "field"}, body
         # A path parameter's own parser doesn't know its name; the route's only one is it.
         status, body, _ = api_refusal(
             "PUT", "/v1/secrets/Bad%20Name", *json_body, "-d", '{"target":{"kind":"env","name":"X"},"value":"x"}'
@@ -223,21 +224,21 @@ try:
         assert status == 400 and body["field"] == "id", body
         # Not the console's page, which every other path gets.
         status, body, _ = api_refusal("GET", "/v1/no-such-thing")
-        assert status == 404 and body["error"] == "not_found", body
+        assert status == 404 and body["reason"]["kind"] == "not_found", body
         status, body, headers = api_refusal("DELETE", "/v1/me")
-        assert status == 405 and body["error"] == "method_not_allowed", body
+        assert status == 405 and body["reason"]["kind"] == "method_not_allowed", body
         assert "allow: get" in headers, headers
         status, body, _ = api_refusal("POST", "/v1/environments", "-d", "name=broken")
-        assert status == 415 and body["error"] == "unsupported_media_type", body
+        assert status == 415 and body["reason"]["kind"] == "json_expected", body
         status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":')
-        assert status == 400 and body["field"] is None and "isn't JSON" in body["message"], body
-        # The CLI shows the server's reason and the input it's about.
+        assert status == 400 and body["field"] is None and body["reason"]["kind"] == "not_json", body
+        # The CLI says the server's reason, and the input it's about.
         code, said = control.execute(f"{IGLU} env add example 'path:{SELF}#example' 2>&1")
         assert code != 0 and "name: an environment with that name exists" in said, said
 
     with subtest("the console shows a refusal by the input it's about"):
         shown = browser("refused-environment")
-        assert "invalid environment source" in shown["error"], shown
+        assert "flake#name" in shown["error"], shown
 
     with subtest("the same Git credential lets the host fetch the private environment"):
         iglu("env build private")
@@ -464,9 +465,9 @@ try:
         # Unpublishing it is in its history, as publishing it is.
         route = https["routes"][0]
         control.succeed(f"{api} -X DELETE {CONSOLE}/v1/workspaces/{https['id']}/routes/{route['id']}")
-        history = [(entry["kind"], entry["detail"]) for entry in iglu("log over-https")]
-        said = f"port 3000 as {route['name']}"
-        assert ("published", said) in history and ("unpublished", said) in history, history
+        history = [(entry["kind"], entry.get("port"), entry.get("route")) for entry in iglu("log over-https")]
+        assert ("published", 3000, route["name"]) in history, history
+        assert ("unpublished", 3000, route["name"]) in history, history
 
     with subtest("a workspace without a repository opens a shell, named for what it's called"):
         scratch = iglu("new general --label 'Fix the login bug' --wait")

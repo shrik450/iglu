@@ -203,7 +203,7 @@ def create(page: Page, environment: str, repo: str, name: str) -> Any:
 
 def refused_environment(page: Page) -> Any:
     """Adds an environment whose flake has no #attribute; iglu refuses it,
-    and the console shows why by the Flake input."""
+    and the console says what the Flake input takes, by it."""
     page.goto(f"{CONSOLE}/settings")
     form = page.get_by_role("form", name="Add an environment")
     form.get_by_label("Name").fill("broken")
@@ -212,7 +212,7 @@ def refused_environment(page: Page) -> Any:
     form.get_by_role("button", name="Add").click()
     expect(flake).to_have_attribute("aria-invalid", "true")
     expect(flake).to_be_focused()
-    expect(flake).to_have_accessible_description(re.compile("invalid environment source"))
+    expect(flake).to_have_accessible_description(re.compile("flake#name"))
     return {"error": form.locator(".field-err").inner_text()}
 
 

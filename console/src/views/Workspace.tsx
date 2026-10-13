@@ -35,7 +35,7 @@ import {
 import { api, failure } from "../api/client.ts";
 import { FieldError, type Form, FormError, InputError, invalid, textOf, useForm, useGrab } from "../components/forms.tsx";
 import { Browser } from "../components/Browser.tsx";
-import { CopyLink, ONLY_YOU } from "../components/CopyLink.tsx";
+import { CopyLink } from "../components/CopyLink.tsx";
 import { Previews } from "../components/Previews.tsx";
 import {
   attentionGlyph,
@@ -50,19 +50,19 @@ import {
 } from "../components/bits.tsx";
 import type { AccessGrant } from "../generated/AccessGrant.ts";
 import type { ActivityEntry } from "../generated/ActivityEntry.ts";
-import type { ActivityKind } from "../generated/ActivityKind.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { keysFor, mac, terminalKey, touchOnly } from "../keyboard.ts";
+import { m } from "../messages.tsx";
 import { keyboard } from "../preferences.ts";
 import { chordLabel } from "../state/keys.ts";
 import { FRACTION, inView, LABEL, scrollTarget, type Shown, titleOf } from "../state/layout.ts";
 import { bySession } from "../state/threads.ts";
-import { unreachable, unsavedText } from "../state/unsaved.ts";
-import { gibibytes, situation } from "../state/situation.ts";
+import { unreachable } from "../state/unsaved.ts";
+import { situation } from "../state/situation.ts";
 import { holds, named, PERMISSIONS, toggled } from "../state/access.ts";
 import { ask, collapsed, details, groups, inside, isAsking, navigate, projects, question, route, say, settle, workspaces } from "../state/store.ts";
 import { ctrlHeld, newCore, offers, panes, rang, setOffer, TerminalPane, titles } from "../terminal.ts";
@@ -77,9 +77,9 @@ export function Workspace({ ws }: { ws: WorkspaceView | null }) {
         <Main ws={ws} />
       ) : (
         <div class="empty-state">
-          <p class="empty">No workspace called {r.view === "workspace" ? r.name : "that"}.</p>
+          <p class="empty">{m.workspace.missing(r.view === "workspace" ? r.name : null)}</p>
           <button type="button" class="btn" onClick={() => navigate({ view: "overview" })}>
-            Overview
+            {m.workspace.overview}
           </button>
         </div>
       )}
@@ -96,7 +96,7 @@ function Tree({ current }: { current: WorkspaceView | null }) {
   };
   // Finding a workspace by name is the palette's job, so the list is only a list.
   return (
-    <nav class="side" aria-label="Workspaces">
+    <nav class="side" aria-label={m.workspace.list}>
       <div class="tree">
         {groups.value
           .filter((group) => group.workspaces.length > 0)
@@ -106,7 +106,7 @@ function Tree({ current }: { current: WorkspaceView | null }) {
             return (
               <div key={group.key} role="group" aria-label={group.label}>
                 <div class="t-group">
-                  <button type="button" class="chev" aria-expanded={!closed} aria-label={`${closed ? "Expand" : "Collapse"} ${group.label}`} onClick={() => toggle(group.key)}>
+                  <button type="button" class="chev" aria-expanded={!closed} aria-label={closed ? m.overview.expand(group.label) : m.overview.collapse(group.label)} onClick={() => toggle(group.key)}>
                     <Icon name="chevron" size={12} />
                   </button>
                   <span class="label" translate={false}>
@@ -115,10 +115,10 @@ function Tree({ current }: { current: WorkspaceView | null }) {
                   <span class={`cnt${need ? " hot" : ""}`}>
                     {need ? (
                       <>
-                        <Glyph kind="waiting" /> {need}
+                        <Glyph kind="waiting" /> {m.overview.count(need)}
                       </>
                     ) : (
-                      group.workspaces.length
+                      m.overview.count(group.workspaces.length)
                     )}
                   </span>
                 </div>
@@ -185,20 +185,20 @@ function Main({ ws }: { ws: WorkspaceView }) {
  * next key, tapped or typed. Keys go as the program asks for them, so arrows
  * suit a shell and a full-screen program alike; ^C is always an interrupt. */
 const ROW: readonly ({ label: string; name: string } & ({ key: string } | { text: string }))[] = [
-  { label: "esc", name: "Escape", key: "Escape" },
-  { label: "tab", name: "Tab", key: "Tab" },
-  { label: "←", name: "Left", key: "ArrowLeft" },
-  { label: "↓", name: "Down", key: "ArrowDown" },
-  { label: "↑", name: "Up", key: "ArrowUp" },
-  { label: "→", name: "Right", key: "ArrowRight" },
-  { label: "^C", name: "Interrupt (Ctrl+C)", text: "\x03" },
+  { label: "esc", name: m.workspace.keys.escape, key: "Escape" },
+  { label: "tab", name: m.workspace.keys.tab, key: "Tab" },
+  { label: "←", name: m.workspace.keys.left, key: "ArrowLeft" },
+  { label: "↓", name: m.workspace.keys.down, key: "ArrowDown" },
+  { label: "↑", name: m.workspace.keys.up, key: "ArrowUp" },
+  { label: "→", name: m.workspace.keys.right, key: "ArrowRight" },
+  { label: "^C", name: m.workspace.keys.interrupt, text: "\x03" },
 ];
 
 function KeyRow({ ws }: { ws: WorkspaceView }) {
   const pane = () => panes.get(`${ws.id}/${activeOf(ws) ?? ""}`);
   return (
-    <div class="keyrow" role="toolbar" aria-label="Terminal keys" onPointerDown={(e) => e.preventDefault()}>
-      <button type="button" aria-pressed={ctrlHeld.value} aria-label="Ctrl, for the next key" onClick={() => (ctrlHeld.value = !ctrlHeld.value)}>
+    <div class="keyrow" role="toolbar" aria-label={m.workspace.keyRow} onPointerDown={(e) => e.preventDefault()}>
+      <button type="button" aria-pressed={ctrlHeld.value} aria-label={m.workspace.ctrl} onClick={() => (ctrlHeld.value = !ctrlHeld.value)}>
         ctrl
       </button>
       {ROW.map((key) => (
@@ -215,13 +215,13 @@ function Header({ ws }: { ws: WorkspaceView }) {
   const naming = useForm(async (data) => {
     const text = textOf(data);
     await rename(ws, text("label") ?? "", text("name") ?? ws.name);
-  });
+  }, m.workspace.renameRules);
   const publishing = useForm(async (data) => {
     const text = String(data.get("port") ?? "").trim();
     const port = Number(text);
-    if (!/^\d+$/.test(text)) throw new InputError("port", `${text || "That"} isn't a port number.`);
+    if (!/^\d+$/.test(text)) throw new InputError("port", m.workspace.notAPort(text));
     await publish(ws, port);
-  });
+  }, m.workspace.portRules);
   return (
     <>
       <header class="w-head">
@@ -231,18 +231,18 @@ function Header({ ws }: { ws: WorkspaceView }) {
             <input
               name="name"
               class="slug"
-              aria-label="Name, in URLs and the CLI"
-              title="Name, in URLs and the CLI"
+              aria-label={m.workspace.name}
+              title={m.workspace.name}
               defaultValue={ws.name}
               autocomplete="off"
               spellcheck={false}
               {...invalid(naming, "name")}
             />
             <button type="submit" class="btn">
-              Rename
+              {m.workspace.renameSubmit}
             </button>
             <button type="button" class="btn" onClick={() => settle(ws)}>
-              Cancel
+              {m.workspace.cancel}
             </button>
             <FieldError form={naming} input="label" />
             <FieldError form={naming} input="name" />
@@ -251,11 +251,11 @@ function Header({ ws }: { ws: WorkspaceView }) {
         ) : (
           <div class="w-title">
             <Glyph kind={workspaceGlyph(ws)} />
-            <button type="button" class="nm" title={`Rename (${keysFor("rename")})`} translate={false} onClick={() => ask(ws, { kind: "rename" })}>
+            <button type="button" class="nm" title={m.workspace.renameTitle(keysFor("rename"))} translate={false} onClick={() => ask(ws, { kind: "rename" })}>
               <h1>{called(ws)}</h1>
             </button>
             {ws.label ? (
-              <span class="slug" translate={false} title="Name, in URLs and the CLI">
+              <span class="slug" translate={false} title={m.workspace.name}>
                 {ws.name}
               </span>
             ) : null}
@@ -271,34 +271,34 @@ function Header({ ws }: { ws: WorkspaceView }) {
               <form class="addport" onSubmit={publishing.onSubmit} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
                 <PortInput form={publishing} />
                 <button type="submit" class="btn" disabled={publishing.busy}>
-                  Publish
+                  {m.workspace.publish}
                 </button>
                 <FieldError form={publishing} input="port" />
                 <FormError form={publishing} />
               </form>
             ) : (
-              <button type="button" class="chip" aria-label="Publish a port" onClick={() => ask(ws, { kind: "port" })}>
+              <button type="button" class="chip" aria-label={m.workspace.publishPort} onClick={() => ask(ws, { kind: "port" })}>
                 <Icon name="plus" size={11} />
-                port
+                {m.workspace.port}
               </button>
             )
           ) : null}
         </div>
         <div class="w-actions">
           {ws.phase === "running" ? (
-            <button type="button" class="btn icon" aria-label="Freeze" title={`Freeze (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
+            <button type="button" class="btn icon" aria-label={m.workspace.freeze} title={m.workspace.freezeTitle(keysFor("freeze"))} onClick={() => void toggleFreeze(ws)}>
               <Icon name="snow" />
             </button>
           ) : ws.phase === "frozen" ? (
-            <button type="button" class="btn" title={`Thaw (${keysFor("freeze")})`} onClick={() => void toggleFreeze(ws)}>
-              Thaw
+            <button type="button" class="btn" title={m.workspace.thawTitle(keysFor("freeze"))} onClick={() => void toggleFreeze(ws)}>
+              {m.workspace.thaw}
             </button>
           ) : ws.phase === "stopped" ? (
             <button type="button" class="btn primary" onClick={() => void setState(ws, "running")}>
-              Start
+              {m.workspace.start}
             </button>
           ) : null}
-          <button type="button" class="btn icon" aria-label="Details" title={`Details (${keysFor("details")})`} aria-pressed={details.value} onClick={() => (details.value = !details.value)}>
+          <button type="button" class="btn icon" aria-label={m.workspace.details} title={m.workspace.detailsTitle(keysFor("details"))} aria-pressed={details.value} onClick={() => (details.value = !details.value)}>
             ⋯
           </button>
         </div>
@@ -315,12 +315,10 @@ function Trouble({ ws }: { ws: WorkspaceView }) {
   switch (now.kind) {
     case "stuck":
     case "broken":
-    case "held":
-      return (
-        <p class={`condition${now.kind === "held" ? " calm" : ""}`} translate={false}>
-          <b>{now.title}.</b> {now.detail}
-        </p>
-      );
+    case "held": {
+      const { title, detail } = m.situation.trouble(now);
+      return <p class={`condition${now.kind === "held" ? " calm" : ""}`}>{m.workspace.troubleLine(title, detail)}</p>;
+    }
     case "building":
     case "frozen":
     case "stopped":
@@ -338,19 +336,19 @@ function Branch({ ws }: { ws: WorkspaceView }) {
   const branch = git?.branch ?? ws.checkout?.branch ?? "";
   const marks = git
     ? [
-        git.ahead ? `↑${git.ahead}` : "",
-        git.behind ? `↓${git.behind}` : "",
-        git.changed + git.untracked ? `${git.changed + git.untracked} changed` : "",
-        git.conflicted ? `${git.conflicted} conflicted` : "",
+        git.ahead ? m.workspace.ahead(git.ahead) : "",
+        git.behind ? m.workspace.behind(git.behind) : "",
+        git.changed + git.untracked ? m.workspace.changed(git.changed + git.untracked) : "",
+        git.conflicted ? m.workspace.conflicted(git.conflicted) : "",
       ].filter(Boolean)
     : [];
   // A branch named after the workspace goes without saying.
   const named = branch && branch !== ws.name;
   if (!named && !marks.length) return null;
   return (
-    <span class="sub" title={branch ? `On ${branch}` : undefined}>
+    <span class="sub" title={branch ? m.workspace.branchTitle(branch) : undefined}>
       <span translate={false}>⎇{named ? ` ${branch}` : ""}</span>
-      {marks.length ? <span class="git"> {marks.join(" · ")}</span> : null}
+      {marks.length ? <span class="git"> {m.workspace.gitMarks(marks)}</span> : null}
     </span>
   );
 }
@@ -366,14 +364,14 @@ function Listening({ ws }: { ws: WorkspaceView }) {
             key={l.port}
             type="button"
             class="chip listening"
-            aria-label={`Publish :${l.port}${l.process ? ` (${l.process})` : ""}`}
-            title={`${l.process || "Something"} is listening${l.column ? ` in ${l.column}` : ""}. Publish it.`}
+            aria-label={m.workspace.listening.label(l.port, l.process || null)}
+            title={m.workspace.listening.title(l.process || null, l.column || null)}
             onClick={() => void attempt(() => publish(ws, l.port))}
           >
             + :{l.port} <span translate={false}>{l.process}</span>
           </button>
         ) : (
-          <span key={l.port} class="chip listening off" title={`${l.process || "Something"} listens on :${l.port} only where previews can't reach. Bind 0.0.0.0 or 127.0.0.1 to publish it.`}>
+          <span key={l.port} class="chip listening off" title={m.workspace.listening.unreachable(l.process || null, l.port)}>
             :{l.port} <span translate={false}>{l.process}</span>
           </span>
         ),
@@ -396,7 +394,7 @@ function Strip({ ws }: { ws: WorkspaceView }) {
   };
   return (
     <div class="w-strip">
-      <nav class="minimap" aria-label="Columns">
+      <nav class="minimap" aria-label={m.workspace.columns}>
         {columns.map((c) => (
           <button
             type="button"
@@ -427,13 +425,13 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             onClick={() => focusColumn(ws, c.name)}
           >
             <Glyph kind={attentionGlyph(threads.get(c.name)?.[0] ?? null)} />
-            <span translate={false} title={c.label ? `${c.label} (session ${c.name})` : undefined}>
+            <span translate={false} title={c.label ? m.workspace.sessionTitle(c.label, c.name) : undefined}>
               {titleOf(c)}
             </span>
             {rang.value.has(`${ws.id}/${c.name}`) ? (
-              <span class="bell" title="It rang the bell">
+              <span class="bell" title={m.workspace.rang}>
                 <Icon name="bell" size={12} />
-                <span class="sr-only">(rang the bell)</span>
+                <span class="sr-only">{m.workspace.rangLabel}</span>
               </span>
             ) : null}
           </button>
@@ -443,9 +441,9 @@ function Strip({ ws }: { ws: WorkspaceView }) {
         <button
           type="button"
           class="sc-add"
-          aria-label="Add a column"
+          aria-label={m.workspace.addColumn}
           aria-expanded={isAsking("add-column")}
-          title={`Add a column (${keysFor("add-column")})`}
+          title={m.workspace.addColumnTitle(keysFor("add-column"))}
           onClick={() => (isAsking("add-column") ? settle(ws) : ask(ws, { kind: "add-column" }))}
         >
           <Icon name="plus" size={13} />
@@ -462,8 +460,8 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
   const [opening, setOpening] = useState<string | null>(null);
   // A workspace has one browser; asking for it again goes to it.
   const browser = columnsOf(ws).find((c) => c.kind.kind === "browser");
-  const add = (label: string, kind: ColumnKind) => {
-    setOpening(label);
+  const add = (kind: ColumnKind) => {
+    setOpening(kind.kind);
     void addColumn(ws, kind).finally(() => setOpening(null));
   };
   const first = useGrab<HTMLButtonElement>();
@@ -475,17 +473,17 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
     return () => document.removeEventListener("pointerdown", away);
   }, []);
   return (
-    <div class="add-menu" role="group" aria-label="Add a column" aria-busy={opening !== null} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
-      <button type="button" ref={first} disabled={opening !== null} onClick={() => add("Shell", { kind: "shell" })}>
-        {opening === "Shell" ? "Opening a shell…" : "Shell"}
+    <div class="add-menu" role="group" aria-label={m.workspace.addColumn} aria-busy={opening !== null} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
+      <button type="button" ref={first} disabled={opening !== null} onClick={() => add({ kind: "shell" })}>
+        {opening === "shell" ? m.workspace.openingShell : m.workspace.shell}
       </button>
       {browser ? (
         <button type="button" disabled={opening !== null} onClick={() => (settle(ws, "add-column"), focusColumn(ws, browser.name))}>
-          Browser <span class="about">(open)</span>
+          {m.workspace.browser} <span class="about">{m.workspace.browserOpen}</span>
         </button>
       ) : ws.browser ? (
-        <button type="button" disabled={opening !== null} onClick={() => add("Browser", { kind: "browser" })}>
-          {opening === "Browser" ? "Opening the browser…" : "Browser"}
+        <button type="button" disabled={opening !== null} onClick={() => add({ kind: "browser" })}>
+          {opening === "browser" ? m.workspace.openingBrowser : m.workspace.browser}
         </button>
       ) : null}
     </div>
@@ -494,12 +492,12 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
 
 function RenameInput({ ws, form }: { ws: WorkspaceView; form: Form }) {
   const ref = useGrab<HTMLInputElement>(true);
-  return <input ref={ref} name="label" aria-label="What to call it" defaultValue={ws.label ?? ""} placeholder={ws.name} autocomplete="off" {...invalid(form, "label")} />;
+  return <input ref={ref} name="label" aria-label={m.workspace.label} defaultValue={ws.label ?? ""} placeholder={ws.name} autocomplete="off" {...invalid(form, "label")} />;
 }
 
 function PortInput({ form }: { form: Form }) {
   const ref = useGrab<HTMLInputElement>();
-  return <input ref={ref} name="port" inputMode="numeric" placeholder="3000…" aria-label="Port to publish" autocomplete="off" {...invalid(form, "port")} />;
+  return <input ref={ref} name="port" inputMode="numeric" placeholder="3000…" aria-label={m.workspace.portLabel} autocomplete="off" {...invalid(form, "port")} />;
 }
 
 /** Naming a column: Enter, or leaving the field, keeps the name, as renaming
@@ -507,7 +505,7 @@ function PortInput({ form }: { form: Form }) {
  * leaves it as it was. Leaving matters on a phone, which has no Enter to see. */
 function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
   const ref = useGrab<HTMLInputElement>(true);
-  const naming = useForm(async (data) => labelColumn(ws, column.name, textOf(data)("label") ?? ""));
+  const naming = useForm(async (data) => labelColumn(ws, column.name, textOf(data)("label") ?? ""), m.workspace.columnRules);
   // Once kept or given up, leaving the field mustn't keep it again.
   const done = useRef(false);
   return (
@@ -529,7 +527,7 @@ function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
         }}
         ref={ref}
         name="label"
-        aria-label={`Name of ${titleOf(column)}`}
+        aria-label={m.workspace.columnName(titleOf(column))}
         placeholder={column.name}
         defaultValue={titleOf(column)}
         maxLength={40}
@@ -561,13 +559,13 @@ function Finding({ ws, name, title }: { ws: WorkspaceView; name: string; title: 
   };
   const again = (back: boolean) => pane?.findAgain(back);
   return (
-    <div class="col-find" role="search" aria-label={`Find in ${title}`}>
+    <div class="col-find" role="search" aria-label={m.workspace.find.label(title)}>
       <Icon name="search" size={12} />
       <input
         ref={field}
         type="search"
-        aria-label={`Find in ${title}`}
-        placeholder="Find"
+        aria-label={m.workspace.find.label(title)}
+        placeholder={m.workspace.find.placeholder}
         autocomplete="off"
         spellcheck={false}
         onInput={(e) => pane?.find(e.currentTarget.value)}
@@ -584,13 +582,13 @@ function Finding({ ws, name, title }: { ws: WorkspaceView; name: string; title: 
       <span class="n" aria-live="polite">
         {foundText(found)}
       </span>
-      <button type="button" aria-label="Earlier match" title="Earlier (↩)" disabled={!found?.count} onClick={() => again(true)}>
+      <button type="button" aria-label={m.workspace.find.earlier} title={m.workspace.find.earlierTitle} disabled={!found?.count} onClick={() => again(true)}>
         <Icon name="up" size={11} />
       </button>
-      <button type="button" aria-label="Later match" title="Later (⇧↩)" disabled={!found?.count} onClick={() => again(false)}>
+      <button type="button" aria-label={m.workspace.find.later} title={m.workspace.find.laterTitle} disabled={!found?.count} onClick={() => again(false)}>
         <Icon name="down" size={11} />
       </button>
-      <button type="button" aria-label="Close find" title="Close (esc)" onClick={close}>
+      <button type="button" aria-label={m.workspace.find.close} title={m.workspace.find.closeTitle} onClick={close}>
         <Icon name="close" size={11} />
       </button>
     </div>
@@ -608,13 +606,13 @@ function Offering({ ws, name }: { ws: WorkspaceView; name: string }) {
   const places = asked.places.filter((place) => place !== "workspace" || ws.browser);
   const done = () => setOffer(key, null);
   return (
-    <div class="col-offer" role="group" aria-label="A program asks to open an address">
+    <div class="col-offer" role="group" aria-label={m.workspace.offer.label}>
       <span class="what" translate={false} title={asked.url}>
         {asked.url}
       </span>
       {places.includes("here") ? (
         <a class="btn" href={asked.url} target="_blank" rel="noopener noreferrer" onClick={done}>
-          Open
+          {m.workspace.offer.open}
         </a>
       ) : null}
       {places.includes("workspace") ? (
@@ -626,15 +624,15 @@ function Offering({ ws, name }: { ws: WorkspaceView; name: string }) {
             void openInBrowser(ws, asked.url);
           }}
         >
-          Open in the workspace's browser
+          {m.workspace.offer.inWorkspace}
         </button>
       ) : null}
-      {places.length === 0 ? <span class="why">Only the workspace's browser reaches this, and its environment has none.</span> : null}
+      {places.length === 0 ? <span class="why">{m.workspace.offer.nowhere}</span> : null}
       <button
         type="button"
         class="x"
-        aria-label="Don't open it"
-        title="Don't open it"
+        aria-label={m.workspace.offer.dismiss}
+        title={m.workspace.offer.dismiss}
         onClick={() => {
           done();
           focusColumn(ws, name);
@@ -649,9 +647,8 @@ function Offering({ ws, name }: { ws: WorkspaceView; name: string }) {
 /** Where finding has got to: which match of how many, counted from the oldest. */
 function foundText(found: { count: number; activeIndex: number; searching: boolean; limited: boolean } | null): string {
   if (!found) return "";
-  if (found.count === 0) return found.searching ? "Finding…" : "No matches";
-  const of = `${found.count.toLocaleString()}${found.limited ? "+" : ""}`;
-  return found.activeIndex === -1 ? of : `${(found.activeIndex + 1).toLocaleString()} of ${of}`;
+  if (found.count === 0) return found.searching ? m.workspace.find.finding : m.workspace.find.none;
+  return found.activeIndex === -1 ? m.workspace.find.count(found.count, found.limited) : m.workspace.find.at(found.activeIndex + 1, found.count, found.limited);
 }
 
 /** Ending a column asks first; the question takes the keyboard, and Escape keeps the column. */
@@ -660,10 +657,10 @@ function Ending({ ws, name, title }: { ws: WorkspaceView; name: string; title: s
   return (
     <span class="col-ctl" style={{ opacity: 1 }} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
       <button type="button" class="end" ref={end} onClick={() => void closeColumn(ws, name)}>
-        End {title}
+        {m.workspace.end(title)}
       </button>
       <button type="button" onClick={() => settle(ws)}>
-        Keep
+        {m.workspace.keep}
       </button>
     </span>
   );
@@ -723,7 +720,7 @@ function Columns({ ws }: { ws: WorkspaceView }) {
     return (
       <div class="cols-note">
         <button type="button" class="btn" onClick={() => void addColumn(ws, { kind: "shell" })}>
-          Open a shell
+          {m.workspace.openShell}
         </button>
       </div>
     );
@@ -753,7 +750,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
   const naming = asked?.kind === "label" && asked.column === name;
   const finding = asked?.kind === "find" && asked.column === name;
   return (
-    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[props.zoomed ? "full" : column.width]) }} data-column={name} aria-label={`Column ${title}`}>
+    <section class={`col${props.on ? " on" : ""}`} style={{ "--cw": String(FRACTION[props.zoomed ? "full" : column.width]) }} data-column={name} aria-label={m.workspace.column(title)}>
       <header
         class={`col-h${attention?.state === "waiting" ? " asks" : ""}`}
         // Whatever is pressed in a column's header acts on that column, so it
@@ -770,7 +767,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
         ) : (
           <b
             translate={false}
-            title={column.state === "adopted" ? undefined : `${column.label ? `Session ${name}. ` : ""}Double-click to rename (${keysFor("label-column")})`}
+            title={column.state === "adopted" ? undefined : m.workspace.renameColumnTitle(column.label ? name : null, keysFor("label-column"))}
             onDblClick={() => labelOrSay(ws, name)}
           >
             {title}
@@ -779,14 +776,14 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
         {attention?.summary ? (
           <span class="ct">{attention.summary}</span>
         ) : program ? (
-          <span class="ct" translate={false} title="What the program here calls itself">
+          <span class="ct" translate={false} title={m.workspace.programTitle}>
             {program}
           </span>
         ) : null}
-        {state && state.text !== "idle" ? <span class={`state ${state.tone}`}>{state.text}</span> : null}
+        {state && attention?.state !== "idle" ? <span class={`state ${state.tone}`}>{state.text}</span> : null}
         {threads.length > 1 ? (
           <button type="button" class="threads-btn" aria-expanded={listing} onClick={() => setListing(!listing)}>
-            {threads.length} threads
+            {m.workspace.threads(threads.length)}
           </button>
         ) : null}
         {status && column.state !== "ended" ? <span class="status">{status}</span> : null}
@@ -799,24 +796,24 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
                 <button
                   type="button"
                   aria-pressed={props.zoomed}
-                  aria-label={props.zoomed ? `Unzoom ${title}` : `Zoom ${title}`}
-                  title={`${props.zoomed ? "Unzoom: put it back" : "Zoom to fill the page"} (${keysFor("zoom")})`}
+                  aria-label={props.zoomed ? m.workspace.unzoom(title) : m.workspace.zoom(title)}
+                  title={props.zoomed ? m.workspace.unzoomTitle(keysFor("zoom")) : m.workspace.zoomTitle(keysFor("zoom"))}
                   onClick={() => (focusColumn(ws, name), toggleZoom(ws))}
                 >
                   <Icon name={props.zoomed ? "unzoom" : "zoom"} size={11} />
                 </button>
-                <button type="button" class="wbtn" title={`Width (${keysFor("width")})`} aria-label={`Width of ${title}: ${LABEL[column.width]}`} onClick={() => (focusColumn(ws, name), void cycleWidth(ws, name))}>
+                <button type="button" class="wbtn" title={m.workspace.widthTitle(keysFor("width"))} aria-label={m.workspace.widthLabel(title, LABEL[column.width])} onClick={() => (focusColumn(ws, name), void cycleWidth(ws, name))}>
                   {LABEL[column.width]}
                 </button>
-                <button type="button" aria-label={`Move ${title} left`} onClick={() => (focusColumn(ws, name), void moveColumn(ws, -1))}>
+                <button type="button" aria-label={m.workspace.moveLeft(title)} onClick={() => (focusColumn(ws, name), void moveColumn(ws, -1))}>
                   <Icon name="back" size={11} />
                 </button>
-                <button type="button" aria-label={`Move ${title} right`} onClick={() => (focusColumn(ws, name), void moveColumn(ws, 1))}>
+                <button type="button" aria-label={m.workspace.moveRight(title)} onClick={() => (focusColumn(ws, name), void moveColumn(ws, 1))}>
                   <Icon name="chevron" size={11} />
                 </button>
               </>
             ) : null}
-            <button type="button" aria-label={`End ${title}`} title={`End this column (${keysFor("close-column")})`} onClick={() => (focusColumn(ws, name), ask(ws, { kind: "end", column: name }))}>
+            <button type="button" aria-label={m.workspace.end(title)} title={m.workspace.endTitle(keysFor("close-column"))} onClick={() => (focusColumn(ws, name), ask(ws, { kind: "end", column: name }))}>
               <Icon name="close" size={11} />
             </button>
           </span>
@@ -825,13 +822,13 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
       {finding ? <Finding ws={ws} name={name} title={title} /> : null}
       <Offering ws={ws} name={name} />
       {listing && threads.length > 1 ? (
-        <ul class="threads" aria-label={`Threads in ${title}`}>
+        <ul class="threads" aria-label={m.workspace.threadsIn(title)}>
           {threads.map((t) => {
             const text = attentionText(t);
             return (
               <li key={t.thread}>
                 <Glyph kind={attentionGlyph(t)} />
-                <span class="tt">{t.title || t.summary || "New thread"}</span>
+                <span class="tt">{t.title || t.summary || m.workspace.newThread}</span>
                 <span class={`state ${text.tone}`}>{text.text}</span>
               </li>
             );
@@ -865,9 +862,9 @@ function ColumnBody(props: { ws: WorkspaceView; column: Shown; on: boolean; onSt
     case "ended":
       return (
         <div class="col-ended">
-          <span>Ended.</span>
+          <span>{m.workspace.ended}</span>
           <button type="button" class="btn" onClick={() => void restartColumn(ws, column.name)}>
-            Restart
+            {m.workspace.restart}
           </button>
         </div>
       );
@@ -929,7 +926,7 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
         <div class="cols-note">
           <div class="building">
             <Igloo rows={buildRows(ws.phase)} />
-            <span class="what">{now.label}</span>
+            <span class="what">{m.situation.resting(now)}</span>
           </div>
         </div>
       );
@@ -938,32 +935,28 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
     case "held": {
       const project = projects.value.find((p) => p.id === ws.project);
       const cloning = now.kind === "stuck" && ws.phase === "creating" ? ws.checkout : null;
+      const { title, detail } = m.situation.trouble(now);
       return (
         <div class={`cols-note problem ${now.kind === "held" ? "calm" : "trouble"}`} role="status">
-          <b>{now.title}</b>
-          <p translate={false}>{now.detail}</p>
+          <b>{title}</b>
+          <p>{detail}</p>
           {/* A workspace keeps the repository it was made with: fixing the project's helps only the next one. */}
-          {cloning && project ? (
-            <p>
-              It clones <code translate={false}>{cloning.repo}</code>, as {project.name} had it when this workspace was made. If that's wrong, fix the project's
-              repository, then delete this workspace and make a new one.
-            </p>
-          ) : null}
+          {cloning && project ? <p>{m.workspace.cloning(<code translate={false}>{cloning.repo}</code>, project.name)}</p> : null}
           <div class="acts">
             {/* A failure of the build it's on, such as one an older iglu made, may be over on the newest. */}
             {ws.newer_build ? (
               <button type="button" class="btn primary" onClick={() => void update(ws)}>
-                Update to the newest build
+                {m.workspace.updateNewest}
               </button>
             ) : null}
             {cloning && project ? (
               <a class="btn" href={`/p/${project.name}`}>
-                Open {project.name}
+                {m.workspace.openProject(project.name)}
               </a>
             ) : null}
             {now.kind === "broken" ? (
               <button type="button" class="btn" onClick={() => void setState(ws, "stopped")}>
-                Stop
+                {m.workspace.stop}
               </button>
             ) : null}
             <button
@@ -974,7 +967,7 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
                 ask(ws, { kind: "delete" });
               }}
             >
-              Delete…
+              {m.workspace.deleteAsk}
             </button>
           </div>
         </div>
@@ -983,20 +976,20 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
     case "frozen":
       return (
         <div class="cols-note is-frozen">
-          <Frost label={now.label} hint={`${keysFor("freeze")} to thaw`} />
+          <Frost label={m.situation.resting(now)} hint={m.workspace.thawHint(keysFor("freeze"))} />
         </div>
       );
     case "stopped":
       return (
         <div class="cols-note">
-          <span>{now.label}</span>
+          <span>{m.situation.resting(now)}</span>
           <button type="button" class="btn primary" onClick={() => void setState(ws, "running")}>
-            Start
+            {m.workspace.start}
           </button>
         </div>
       );
     case "leaving":
-      return <div class="cols-note">{now.label}</div>;
+      return <div class="cols-note">{m.situation.resting(now)}</div>;
     case "running":
       return null;
     default:
@@ -1006,64 +999,64 @@ function Resting({ ws }: { ws: WorkspaceView }): VNode | null {
 
 /** What the delete confirmation warns about, as precisely as is known. */
 function lossText(ws: WorkspaceView): string {
-  if (!ws.checkout) return "Its files are lost.";
-  if (ws.phase !== "running") return `It's ${ws.phase}, so unpushed work can't be checked. Its files are lost.`;
+  if (!ws.checkout) return m.workspace.loss.noCheckout;
+  if (ws.phase !== "running") return m.workspace.loss.unchecked(m.phase(ws.phase));
   const live = inside.value[ws.id];
-  if (!live) return "Its files are lost; push your work first.";
-  if (live.unsaved) return `It has ${unsavedText(live.unsaved)}, which would be lost.`;
+  if (!live) return m.workspace.loss.unknown;
+  if (live.unsaved) return m.workspace.loss.unsaved(m.unsaved(live.unsaved));
   // Its checkout should be there; without it, nothing says what's pushed.
-  return live.git ? "Everything is committed and pushed." : "Its files are lost; push your work first.";
+  return live.git ? m.workspace.loss.none : m.workspace.loss.unknown;
 }
 
 function Details({ ws }: { ws: WorkspaceView }) {
   const project = projects.value.find((p) => p.id === ws.project);
   return (
-    <aside class="info" aria-label="Details">
+    <aside class="info" aria-label={m.workspace.info.label}>
       <div>
         <div class="info-head">
-          <h2>Workspace</h2>
-          <button type="button" class="btn icon" aria-label="Close details" onClick={() => (details.value = false)}>
+          <h2>{m.workspace.info.heading}</h2>
+          <button type="button" class="btn icon" aria-label={m.workspace.info.close} onClick={() => (details.value = false)}>
             <Icon name="close" />
           </button>
         </div>
         <dl>
-          <dt>Project</dt>
+          <dt>{m.workspace.info.project}</dt>
           <dd translate={false}>
             {project ? (
               <a href={`/p/${project.name}`}>
                 {project.name}
               </a>
             ) : (
-              "—"
+              m.workspace.info.none
             )}
           </dd>
           {ws.checkout ? (
             <>
-              <dt>Repository</dt>
+              <dt>{m.workspace.info.repo}</dt>
               <dd translate={false}>{ws.checkout.repo}</dd>
-              <dt>Branch</dt>
+              <dt>{m.workspace.info.branch}</dt>
               <dd translate={false}>{ws.checkout.branch}</dd>
             </>
           ) : null}
-          <dt>Environment</dt>
+          <dt>{m.workspace.info.environment}</dt>
           <dd translate={false}>{ws.environment}</dd>
-          <dt>Memory in use</dt>
-          <dd>{ws.memory === null ? "—" : gibibytes(ws.memory)}</dd>
-          <dt>Created</dt>
+          <dt>{m.workspace.info.memory}</dt>
+          <dd>{ws.memory === null ? m.workspace.info.none : m.workspace.info.memoryAmount(ws.memory)}</dd>
+          <dt>{m.workspace.info.created}</dt>
           <dd>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(ws.created_at)}</dd>
         </dl>
         {ws.columns.length ? (
           <button type="button" class="btn" onClick={() => void saveOpening(ws)}>
-            Open new workspaces like this
+            {m.workspace.info.saveOpening}
           </button>
         ) : null}
       </div>
       {ws.newer_build ? (
         <div class="update">
-          <h2>A newer build of {ws.environment}</h2>
-          <p class="muted">Updating upgrades this workspace to it and restarts it. Its files stay; what's running ends.</p>
+          <h2>{m.workspace.info.newer(ws.environment)}</h2>
+          <p class="muted">{m.workspace.info.newerAbout}</p>
           <button type="button" class="btn primary" onClick={() => void update(ws)}>
-            Update
+            {m.workspace.info.update}
           </button>
         </div>
       ) : null}
@@ -1071,7 +1064,7 @@ function Details({ ws }: { ws: WorkspaceView }) {
       <History ws={ws} />
       {ws.routes.length ? (
         <div>
-          <h2>Previews</h2>
+          <h2>{m.workspace.info.previews}</h2>
           {ws.routes.map((r) => (
             <RouteRow key={r.id} ws={ws} route={r} />
           ))}
@@ -1080,25 +1073,23 @@ function Details({ ws }: { ws: WorkspaceView }) {
       <div class="w-actions">
         {isAsking("delete") ? (
           <div class="confirm">
-            <span>
-              Delete {called(ws)}? {lossText(ws)}
-            </span>
+            <span>{m.workspace.confirmDelete(called(ws), lossText(ws))}</span>
             <button type="button" class="btn danger" onClick={() => void remove(ws)}>
-              Delete
+              {m.workspace.delete}
             </button>
             <button type="button" class="btn" onClick={() => settle(ws)}>
-              Keep it
+              {m.workspace.keepIt}
             </button>
           </div>
         ) : (
           <>
             {ws.phase === "running" || ws.phase === "frozen" ? (
               <button type="button" class="btn" onClick={() => void setState(ws, "stopped")}>
-                Stop
+                {m.workspace.stop}
               </button>
             ) : null}
             <button type="button" class="btn danger" onClick={() => ask(ws, { kind: "delete" })}>
-              Delete
+              {m.workspace.delete}
             </button>
           </>
         )}
@@ -1111,41 +1102,39 @@ function Details({ ws }: { ws: WorkspaceView }) {
  * the other workspaces it's been given. Any program in it can do as much. */
 function Access({ ws }: { ws: WorkspaceView }) {
   const [saving, setSaving] = useState(false);
-  const nameOf = (id: string) => (id === ws.id ? "This workspace" : (workspaces.value.find((w) => w.id === id)?.name ?? "A deleted workspace"));
+  const nameOf = (id: string) => (id === ws.id ? m.workspace.access.self : (workspaces.value.find((w) => w.id === id)?.name ?? m.workspace.access.gone));
   const save = (grants: AccessGrant[]) => {
     setSaving(true);
     api.putAccess(ws.id, grants).then(
       () => setSaving(false),
       (error: unknown) => {
         setSaving(false);
-        say(`That access couldn't be changed: ${failure(error)}`);
+        say(m.workspace.access.refused(failure(error)));
       },
     );
   };
   const addable = workspaces.value.filter((w) => w.id !== ws.id && !ws.access.some((grant) => grant.workspace === w.id));
   return (
     <div>
-      <h2>Access from inside</h2>
-      <p class="muted access-note">
-        What <code>iglu</code> can do when run in this workspace. Any program here can use it.
-      </p>
+      <h2>{m.workspace.access.heading}</h2>
+      <p class="muted access-note">{m.workspace.access.about}</p>
       <ul class="access" aria-busy={saving}>
         {named(ws.access, ws.id).map((id) => (
           <li key={id}>
             <span class="access-on" translate={id !== ws.id ? false : undefined}>
               {nameOf(id)}
             </span>
-            <div class="access-perms" role="group" aria-label={`What it may do to ${nameOf(id)}`}>
-              {PERMISSIONS.map(({ permission, label, title }) => (
+            <div class="access-perms" role="group" aria-label={m.workspace.access.may(nameOf(id))}>
+              {PERMISSIONS.map((permission) => (
                 <button
                   key={permission}
                   type="button"
-                  title={title}
+                  title={m.permission(permission).title}
                   disabled={saving}
                   aria-pressed={holds(ws.access, id, permission)}
                   onClick={() => save(toggled(ws.access, id, permission))}
                 >
-                  {label}
+                  {m.permission(permission).label}
                 </button>
               ))}
             </div>
@@ -1155,7 +1144,7 @@ function Access({ ws }: { ws: WorkspaceView }) {
       {addable.length ? (
         <select
           class="access-add"
-          aria-label="Let it see another workspace"
+          aria-label={m.workspace.access.add}
           value=""
           disabled={saving}
           onChange={(e) => {
@@ -1163,7 +1152,7 @@ function Access({ ws }: { ws: WorkspaceView }) {
             if (id) save(toggled(ws.access, id, "view"));
           }}
         >
-          <option value="">Let it see another workspace…</option>
+          <option value="">{m.workspace.access.addHint}</option>
           {addable.map((w) => (
             <option key={w.id} value={w.id} translate={false}>
               {called(w)}
@@ -1176,39 +1165,6 @@ function Access({ ws }: { ws: WorkspaceView }) {
 }
 
 const stamp = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-
-/** Each kind of history entry in words; its detail follows. */
-const HAPPENED: Record<ActivityKind, string> = {
-  requested: "Asked for",
-  "state-set": "Set to",
-  created: "Created",
-  started: "Started",
-  "secrets-delivered": "Secrets delivered",
-  provisioned: "Set up",
-  "columns-opened": "Columns opened",
-  frozen: "Frozen",
-  thawed: "Thawed",
-  stopped: "Stopped",
-  removed: "Removed from its host",
-  deleted: "Deleted",
-  error: "Failed",
-  renamed: "Renamed",
-  typed: "Typed",
-  "thawed-on-open": "Thawed when opened",
-  "idle-froze": "Frozen while idle",
-  "idle-stopped": "Stopped while idle",
-  "secret-updated": "Secret updated",
-  published: "Published",
-  unpublished: "Unpublished",
-  "file-kept": "Kept a file",
-  adopted: "Changed by its host",
-  "access-changed": "Access changed",
-  "column-added": "Added a column",
-  "column-restarted": "Restarted a column",
-  "column-closed": "Closed a column",
-  "update-asked": "Asked to update",
-  updated: "Updated to the newest build",
-};
 
 /** What happened to the workspace, newest first. Loaded when shown, and again when it changes. */
 function History({ ws }: { ws: WorkspaceView }) {
@@ -1226,25 +1182,19 @@ function History({ ws }: { ws: WorkspaceView }) {
   if (!entries?.length) return null;
   return (
     <div>
-      <h2>History</h2>
+      <h2>{m.history.heading}</h2>
       <ol class="history">
-        {entries.map((entry, i) => (
-          <li key={`${entry.at}-${i}`}>
-            <time dateTime={new Date(entry.at).toISOString()}>{stamp.format(entry.at)}</time>
-            <span class="k">
-              {HAPPENED[entry.kind]}
-              {entry.via === ws.name ? (
-                " from this workspace"
-              ) : entry.via ? (
-                <>
-                  {" from "}
-                  <span translate={false}>{entry.via}</span>
-                </>
-              ) : null}
-            </span>
-            {entry.detail ? <span class="d">{entry.detail}</span> : null}
-          </li>
-        ))}
+        {entries.map((entry, i) => {
+          const { what, detail } = m.history.happened(entry);
+          const via = entry.via === null ? null : entry.via === ws.name ? { self: true as const } : { name: entry.via };
+          return (
+            <li key={`${entry.at}-${i}`}>
+              <time dateTime={new Date(entry.at).toISOString()}>{stamp.format(entry.at)}</time>
+              <span class="k">{m.history.by(what, via)}</span>
+              {detail ? <span class="d">{detail}</span> : null}
+            </li>
+          );
+        })}
       </ol>
     </div>
   );
@@ -1254,17 +1204,17 @@ function RouteRow({ ws, route: r }: { ws: WorkspaceView; route: RouteView }) {
   const [sure, setSure] = useState(false);
   return (
     <div class="row">
-      <a href={r.url} target="_blank" rel="noopener" translate={false} title={ONLY_YOU}>
+      <a href={r.url} target="_blank" rel="noopener" translate={false} title={m.preview.onlyYou}>
         {r.name} :{r.port}
       </a>
       <CopyLink url={r.url} name={r.name} />
       {sure ? (
         <button type="button" class="btn danger" onClick={() => void unpublish(ws, r)}>
-          Unpublish for good
+          {m.workspace.unpublishSure}
         </button>
       ) : (
-        <button type="button" class="btn" title="Its name is never reused" onClick={() => setSure(true)}>
-          Unpublish
+        <button type="button" class="btn" title={m.workspace.unpublishTitle} onClick={() => setSure(true)}>
+          {m.workspace.unpublish}
         </button>
       )}
     </div>

@@ -4,16 +4,8 @@ import type { AccessGrant } from "../generated/AccessGrant.ts";
 import type { Permission } from "../generated/Permission.ts";
 import type { WorkspaceId } from "../generated/WorkspaceId.ts";
 
-/** Every permission, in the order the console shows them, with what each
- * lets a workspace do, said plainly. */
-export const PERMISSIONS: readonly { permission: Permission; label: string; title: string }[] = [
-  { permission: "view", label: "See", title: "See the workspace, its columns and what they're doing; every other permission includes this" },
-  { permission: "read_output", label: "Read", title: "Read what its terminals show" },
-  { permission: "send_input", label: "Type", title: "Type into its terminals: as much as running commands there" },
-  { permission: "manage_columns", label: "Columns", title: "Open, close and restart its columns" },
-  { permission: "publish_routes", label: "Publish", title: "Publish its ports as previews" },
-  { permission: "operate", label: "Start/stop", title: "Start, freeze, stop and rename it" },
-];
+/** Every permission, in the order the console shows them. */
+export const PERMISSIONS: readonly Permission[] = ["view", "read_output", "send_input", "manage_columns", "publish_routes", "operate"];
 
 export function holds(access: readonly AccessGrant[], workspace: WorkspaceId, permission: Permission): boolean {
   return access.some((grant) => grant.workspace === workspace && grant.permissions.includes(permission));

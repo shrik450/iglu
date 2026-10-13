@@ -7,7 +7,6 @@
 
 pub mod browser;
 
-use iglu_domain::activity::ActivityKind;
 use iglu_domain::attention::{AttentionState, Seen, Summary, ThreadKey};
 use iglu_domain::auth::{DisplayName, Email, Permission};
 use iglu_domain::capacity::{Bytes, Capacity};
@@ -17,14 +16,14 @@ use iglu_domain::git::{GitState, Unsaved};
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::idle::IdleRule;
 use iglu_domain::label::{ProjectName, RouteName, WorkspaceName};
-use iglu_domain::lifecycle::{DesiredState, Phase, Revision};
+use iglu_domain::lifecycle::{AdoptReason, DesiredState, Effect, Phase, Revision, TransitionError};
 use iglu_domain::listener::Listener;
 use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::port::GuestPort;
 use iglu_domain::preferences::Preferences;
 use iglu_domain::project::{Opening, Origin, PreviewPorts};
 use iglu_domain::repo::{BranchName, Checkout, RepoUrl};
-use iglu_domain::secret::{SecretName, SecretTarget, SecretValue};
+use iglu_domain::secret::{BundleError, SecretName, SecretTarget, SecretValue};
 use iglu_domain::standing::Need;
 use iglu_domain::terminal::{SessionName, TerminalInput};
 use iglu_domain::time::Timestamp;
@@ -208,8 +207,8 @@ pub struct RouteView {
 pub enum Condition {
     /// The last step failed; the reconciler retries with backoff.
     Error {
-        code: ErrorCode,
-        message: String,
+        step: Effect,
+        failure: Failure,
         at: Timestamp,
     },
     /// Waiting for the host to have room.
@@ -227,6 +226,66 @@ impl Condition {
             Capacity::Fits => None,
             Capacity::Short { available, needed } => Some(Self::Capacity { available, needed }),
         }
+    }
+}
+
+impl std::fmt::Display for Condition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Error { step, failure, .. } => write!(f, "{}: {failure}", doing(*step)),
+            Self::Capacity { available, needed } => write!(
+                f,
+                "waiting for the host to have room: {needed} needed, {available} free"
+            ),
+            Self::RuntimeFailed => {
+                f.write_str("the runtime reports the workspace as broken; stop or delete it")
+            }
+            Self::HostOffline { .. } => f.write_str("the host isn't answering"),
+        }
+    }
+}
+
+/// Why a step on a workspace failed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, tag = "kind", rename_all = "snake_case")
+)]
+pub enum Failure {
+    /// The host or the guest failed. `detail` is in its own words, such as
+    /// `git clone`'s, so it's shown as it is, never translated.
+    Host { code: ErrorCode, detail: String },
+    /// Two of the owner's secrets go to the same place.
+    SecretsClash { clash: BundleError },
+    /// iglud's fault; its log says more.
+    Internal,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Host { detail, .. } => f.write_str(detail),
+            Self::SecretsClash { clash } => write!(f, "{clash}"),
+            Self::Internal => f.write_str("iglu failed; its log says more"),
+        }
+    }
+}
+
+/// A step, as a phrase that follows "while": `creating it`.
+const fn doing(step: Effect) -> &'static str {
+    match step {
+        Effect::Create => "creating it",
+        Effect::Start => "starting it",
+        Effect::DeliverSecrets => "delivering its secrets",
+        Effect::Provision => "setting it up",
+        Effect::OpenColumns => "opening its columns",
+        Effect::Freeze => "freezing it",
+        Effect::Thaw => "thawing it",
+        Effect::Stop => "stopping it",
+        Effect::Delete => "removing it from its host",
+        Effect::Upgrade => "upgrading its system to the newest build",
     }
 }
 
@@ -296,11 +355,151 @@ pub struct SecretView {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ActivityEntry {
-    pub kind: ActivityKind,
-    pub detail: String,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(flatten))]
+    pub what: Activity,
     pub at: Timestamp,
     /// The workspace it was done from, when a workspace did it.
     pub via: Option<WorkspaceName>,
+}
+
+/// What a workspace's history records, with what each entry needs to be
+/// said: stored and sent as data, so the console says each in words.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, tag = "kind", rename_all = "kebab-case")
+)]
+pub enum Activity {
+    /// Asked for, in `project`, working on `checkout` when it has a repository.
+    Requested {
+        project: ProjectName,
+        checkout: Option<Checkout>,
+    },
+    /// Asked to run, freeze, stop or be deleted.
+    StateSet {
+        state: DesiredState,
+    },
+    Created,
+    Started,
+    SecretsDelivered,
+    Provisioned,
+    ColumnsOpened,
+    Frozen,
+    Thawed,
+    Stopped,
+    /// Its instance was deleted from its host.
+    Removed,
+    /// Gone for good.
+    Deleted,
+    /// A step failed.
+    Error {
+        step: Effect,
+        failure: Failure,
+    },
+    Renamed {
+        from: WorkspaceName,
+        to: WorkspaceName,
+    },
+    /// What it's called changed; `None` went back to its name.
+    Relabeled {
+        to: Option<WorkspaceLabel>,
+    },
+    /// Text typed into a column for someone.
+    Typed {
+        column: SessionName,
+    },
+    ThawedOnOpen,
+    IdleFroze,
+    IdleStopped,
+    SecretUpdated {
+        secret: SecretName,
+    },
+    Published {
+        port: GuestPort,
+        route: RouteName,
+    },
+    Unpublished {
+        port: GuestPort,
+        route: RouteName,
+    },
+    /// A file kept in the workspace.
+    FileKept {
+        path: GuestPath,
+    },
+    /// Its host changed it.
+    Adopted {
+        reason: AdoptReason,
+    },
+    AccessChanged,
+    ColumnAdded {
+        column: SessionName,
+    },
+    ColumnRestarted {
+        column: SessionName,
+    },
+    ColumnClosed {
+        column: SessionName,
+    },
+    /// Asked to move to its environment's newest build.
+    UpdateAsked {
+        environment: EnvName,
+    },
+    /// It was upgraded in place to its new build's system.
+    Updated,
+}
+
+impl std::fmt::Display for Activity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Requested {
+                checkout: Some(checkout),
+                ..
+            } => write!(f, "requested, on {} of {}", checkout.branch, checkout.repo),
+            Self::Requested {
+                project,
+                checkout: None,
+            } => write!(f, "requested, in {project}"),
+            Self::StateSet { state } => write!(f, "set to {state}"),
+            Self::Created => f.write_str("created"),
+            Self::Started => f.write_str("started"),
+            Self::SecretsDelivered => f.write_str("secrets delivered"),
+            Self::Provisioned => f.write_str("set up"),
+            Self::ColumnsOpened => f.write_str("columns opened"),
+            Self::Frozen => f.write_str("frozen"),
+            Self::Thawed => f.write_str("thawed"),
+            Self::Stopped => f.write_str("stopped"),
+            Self::Removed => f.write_str("removed from its host"),
+            Self::Deleted => f.write_str("deleted"),
+            Self::Error { step, failure } => write!(f, "failed {}: {failure}", doing(*step)),
+            Self::Renamed { from, to } => write!(f, "renamed from {from} to {to}"),
+            Self::Relabeled { to: Some(label) } => write!(f, "called {label}"),
+            Self::Relabeled { to: None } => f.write_str("called by its name"),
+            Self::Typed { column } => write!(f, "typed into {column}"),
+            Self::ThawedOnOpen => f.write_str("thawed when opened"),
+            Self::IdleFroze => f.write_str("frozen when idle"),
+            Self::IdleStopped => f.write_str("stopped when idle"),
+            Self::SecretUpdated { secret } => write!(f, "secret {secret} updated"),
+            Self::Published { port, route } => write!(f, "port {port} published as {route}"),
+            Self::Unpublished { port, route } => {
+                write!(f, "port {port} no longer published as {route}")
+            }
+            Self::FileKept { path } => write!(f, "kept {path}"),
+            Self::Adopted {
+                reason: AdoptReason::FrozenStateLost,
+            } => f.write_str("stopped: the host restarted, which lost its frozen state"),
+            Self::AccessChanged => f.write_str("access changed"),
+            Self::ColumnAdded { column } => write!(f, "column {column} added"),
+            Self::ColumnRestarted { column } => write!(f, "column {column} restarted"),
+            Self::ColumnClosed { column } => write!(f, "column {column} closed"),
+            Self::UpdateAsked { environment } => {
+                write!(f, "asked to update to {environment}'s newest build")
+            }
+            Self::Updated => f.write_str("updated"),
+        }
+    }
 }
 
 /// A column with its session's state, from the workspace's host.
@@ -382,15 +581,308 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct ErrorBody {
-    pub error: ErrorKind,
-    /// Safe to show the user: a lowercase phrase such as `a project with
-    /// that name exists`.
-    pub message: String,
+    pub reason: Reason,
     /// The input the error is about, when it's about one.
     pub field: Option<Field>,
 }
 
-/// What kind of refusal an error is. Each kind has one HTTP status.
+/// Why iglu refused a request. It's data, not prose: the console says each
+/// in words, and `Display` says it in English for the CLI and iglud's own
+/// pages.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, tag = "kind", rename_all = "snake_case")
+)]
+pub enum Reason {
+    /// An input didn't parse, or isn't there; the error's field says which
+    /// when it's known.
+    Invalid,
+    /// The body isn't JSON at all.
+    NotJson,
+    /// The body couldn't be read, or took too long to arrive.
+    Unreadable,
+    /// The path takes only a WebSocket.
+    NotWebSocket,
+    /// The `Idempotency-Key` header isn't 1-200 characters.
+    IdempotencyKeyInvalid,
+    /// A project needs a name or a repository to be named after.
+    ProjectUnnamed,
+    /// Neither text to type nor Enter to press.
+    NothingToType,
+    /// A grant names a workspace the owner doesn't have.
+    NoWorkspaceToGrant {
+        workspace: WorkspaceId,
+    },
+    /// The workspace browser's debugging or display port: a preview of either
+    /// would let anyone with the link drive the browser.
+    BrowserPort {
+        port: GuestPort,
+    },
+    /// The identity provider sent the browser back without a code.
+    SignInIncomplete,
+    /// The sign-in was finished in another browser than started it.
+    OtherBrowser,
+    SignInExpired,
+    CliSignInMalformed,
+    /// A preview's sign-in was asked to return somewhere not a preview.
+    BadReturnAddress,
+
+    /// No session, or it ended.
+    Unauthorized,
+
+    AccountDisabled,
+    /// The workspace asking hasn't been granted this.
+    NotGranted,
+    /// Only a person can do this, never a workspace.
+    PersonOnly,
+    /// A workspace can't do this from inside; its owner can.
+    NotFromWorkspace,
+    /// A request from another site, which only a top-level navigation may be.
+    CrossOrigin,
+    SignInFailed,
+    /// The identity provider refused, with its own error code.
+    ProviderRefused {
+        error: String,
+    },
+    /// The sign-in policy doesn't admit the account.
+    AccountNotAllowed,
+
+    /// No such thing, or the caller may not know it exists.
+    NotFound,
+    /// The path exists, but not with this method.
+    MethodNotAllowed,
+
+    /// The workspace has no running instance to do it in.
+    NotRunning,
+    /// The `Idempotency-Key` was used for a different request.
+    IdempotencyKeyReused,
+    NoSuchProject,
+    NoEnvironment {
+        name: EnvName,
+    },
+    /// The environment hasn't finished a build yet.
+    NotBuilt {
+        environment: EnvName,
+    },
+    /// A branch was asked for in a project without a repository.
+    NoRepository,
+    WorkspaceNameTaken,
+    ProjectNameTaken,
+    EnvironmentNameTaken,
+    BeingDeleted,
+    FreezeNeedsRunning,
+    NoBuildToUpdateTo,
+    /// The newest build runs as another account, whose files would be
+    /// someone else's; the workspace has to be recreated to use it.
+    BuildForAnotherAccount,
+    /// Its image has no browser: the environment needs `iglu.browser.enable`.
+    NoBrowserInImage,
+    BrowserColumnExists {
+        column: SessionName,
+    },
+    ColumnNameTaken {
+        name: SessionName,
+    },
+    /// A layout has to name every column once.
+    LayoutMismatch,
+    /// Another secret already goes where this one would.
+    SecretTargetTaken {
+        by: SecretName,
+    },
+    /// The project changed since the caller loaded it.
+    ProjectChanged,
+    BuiltinProject,
+    ProjectInUse,
+
+    TooLarge,
+    JsonExpected,
+    FormExpected,
+
+    ProviderUnreachable,
+    NoHost,
+    /// The workspace's host isn't in iglud's configuration.
+    HostUnknown,
+    /// The host couldn't do it. `detail` is in the host's own words, shown as
+    /// it is, never translated.
+    HostFailed {
+        code: ErrorCode,
+        detail: String,
+    },
+
+    /// iglud's fault; its log says more.
+    Internal,
+}
+
+impl Reason {
+    #[must_use]
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Invalid
+            | Self::NotJson
+            | Self::Unreadable
+            | Self::NotWebSocket
+            | Self::IdempotencyKeyInvalid
+            | Self::ProjectUnnamed
+            | Self::NothingToType
+            | Self::NoWorkspaceToGrant { .. }
+            | Self::BrowserPort { .. }
+            | Self::SignInIncomplete
+            | Self::OtherBrowser
+            | Self::SignInExpired
+            | Self::CliSignInMalformed
+            | Self::BadReturnAddress => ErrorKind::BadRequest,
+            Self::Unauthorized => ErrorKind::Unauthorized,
+            Self::AccountDisabled
+            | Self::NotGranted
+            | Self::PersonOnly
+            | Self::NotFromWorkspace
+            | Self::CrossOrigin
+            | Self::SignInFailed
+            | Self::ProviderRefused { .. }
+            | Self::AccountNotAllowed => ErrorKind::Forbidden,
+            Self::NotFound => ErrorKind::NotFound,
+            Self::MethodNotAllowed => ErrorKind::MethodNotAllowed,
+            Self::NotRunning
+            | Self::IdempotencyKeyReused
+            | Self::NoSuchProject
+            | Self::NoEnvironment { .. }
+            | Self::NotBuilt { .. }
+            | Self::NoRepository
+            | Self::WorkspaceNameTaken
+            | Self::ProjectNameTaken
+            | Self::EnvironmentNameTaken
+            | Self::BeingDeleted
+            | Self::FreezeNeedsRunning
+            | Self::NoBuildToUpdateTo
+            | Self::BuildForAnotherAccount
+            | Self::NoBrowserInImage
+            | Self::BrowserColumnExists { .. }
+            | Self::ColumnNameTaken { .. }
+            | Self::LayoutMismatch
+            | Self::SecretTargetTaken { .. }
+            | Self::ProjectChanged
+            | Self::BuiltinProject
+            | Self::ProjectInUse => ErrorKind::Conflict,
+            Self::TooLarge => ErrorKind::TooLarge,
+            Self::JsonExpected | Self::FormExpected => ErrorKind::UnsupportedMediaType,
+            Self::ProviderUnreachable
+            | Self::NoHost
+            | Self::HostUnknown
+            | Self::HostFailed { .. } => ErrorKind::Unavailable,
+            Self::Internal => ErrorKind::Internal,
+        }
+    }
+}
+
+impl From<TransitionError> for Reason {
+    fn from(error: TransitionError) -> Self {
+        match error {
+            TransitionError::Deleting => Self::BeingDeleted,
+            TransitionError::FreezeNeedsRunning => Self::FreezeNeedsRunning,
+        }
+    }
+}
+
+impl std::fmt::Display for Reason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid => f.write_str("that isn't valid"),
+            Self::NotJson => f.write_str("the body isn't JSON"),
+            Self::Unreadable => f.write_str("the request body couldn't be read in time"),
+            Self::NotWebSocket => f.write_str("connect with a WebSocket"),
+            Self::IdempotencyKeyInvalid => f.write_str("Idempotency-Key must be 1-200 characters"),
+            Self::ProjectUnnamed => f.write_str("give the project a name or a repository"),
+            Self::NothingToType => f.write_str("say what to type, or to press Enter"),
+            Self::NoWorkspaceToGrant { workspace } => {
+                write!(f, "no workspace {workspace} to grant")
+            }
+            Self::BrowserPort { port } => write!(
+                f,
+                "port {port} is the workspace browser's DevTools port or its display, and a \
+                 preview of either would let anyone with the link drive the browser"
+            ),
+            Self::SignInIncomplete => f.write_str("the identity provider sent no code"),
+            Self::OtherBrowser => f.write_str("finish signing in in the browser that started it"),
+            Self::SignInExpired => f.write_str("this sign-in expired; try again"),
+            Self::CliSignInMalformed => f.write_str("malformed CLI sign-in request"),
+            Self::BadReturnAddress => f.write_str("bad return address"),
+            Self::Unauthorized => f.write_str("sign in first"),
+            Self::AccountDisabled => f.write_str("this account is disabled"),
+            Self::NotGranted => f.write_str("this workspace hasn't been granted that"),
+            Self::PersonOnly => f.write_str("only a person can do this"),
+            Self::NotFromWorkspace => f.write_str(
+                "a workspace can't do this from inside; its owner can, in the console or \
+                 with their own `iglu`",
+            ),
+            Self::CrossOrigin => f.write_str("refused a request from another site"),
+            Self::SignInFailed => f.write_str("sign-in failed"),
+            Self::ProviderRefused { error } => {
+                write!(f, "the identity provider refused: {error}")
+            }
+            Self::AccountNotAllowed => f.write_str("this account isn't allowed to use iglu"),
+            Self::NotFound => f.write_str("not found"),
+            Self::MethodNotAllowed => f.write_str("this path doesn't take that method"),
+            Self::NotRunning => f.write_str("the workspace isn't running"),
+            Self::IdempotencyKeyReused => {
+                f.write_str("Idempotency-Key reused with a different request")
+            }
+            Self::NoSuchProject => f.write_str("no such project"),
+            Self::NoEnvironment { name } => write!(f, "no environment called {name}"),
+            Self::NotBuilt { environment } => {
+                write!(f, "the environment {environment} has no built image yet")
+            }
+            Self::NoRepository => {
+                f.write_str("the project has no repository, so its workspaces have no branch")
+            }
+            Self::WorkspaceNameTaken => f.write_str("a workspace with that name exists"),
+            Self::ProjectNameTaken => f.write_str("a project with that name exists"),
+            Self::EnvironmentNameTaken => f.write_str("an environment with that name exists"),
+            Self::BeingDeleted => f.write_str("the workspace is being deleted"),
+            Self::FreezeNeedsRunning => f.write_str("only a running workspace can be frozen"),
+            Self::NoBuildToUpdateTo => {
+                f.write_str("its environment has no build ready to update to")
+            }
+            Self::BuildForAnotherAccount => f.write_str(
+                "the environment's newest build has another account than this workspace, \
+                 whose files would be someone else's; recreate it to use the build",
+            ),
+            Self::NoBrowserInImage => f.write_str(
+                "this workspace's image has no browser: rebuild its environment with \
+                 iglu.browser.enable, then update the workspace",
+            ),
+            Self::BrowserColumnExists { column } => {
+                write!(f, "this workspace has a browser already: {column}")
+            }
+            Self::ColumnNameTaken { name } => write!(f, "{name} is already a column"),
+            Self::LayoutMismatch => {
+                f.write_str("a layout names every column once, no more and no fewer")
+            }
+            Self::SecretTargetTaken { by } => write!(f, "{by} already goes there"),
+            Self::ProjectChanged => f.write_str("the project changed since you loaded it"),
+            Self::BuiltinProject => f.write_str("the built-in project can't be removed"),
+            Self::ProjectInUse => f.write_str("the project still has workspaces"),
+            Self::TooLarge => f.write_str("the request body is too large"),
+            Self::JsonExpected => {
+                f.write_str("send the body as JSON, with Content-Type: application/json")
+            }
+            Self::FormExpected => f.write_str("send the body as a form"),
+            Self::ProviderUnreachable => {
+                f.write_str("the identity provider isn't reachable; try again shortly")
+            }
+            Self::NoHost => f.write_str("no execution host configured"),
+            Self::HostUnknown => f.write_str("the workspace's host isn't configured"),
+            Self::HostFailed { detail, .. } => f.write_str(detail),
+            Self::Internal => f.write_str("internal error"),
+        }
+    }
+}
+
+/// Why iglud ended a terminal's or browser's WebSocket on purpose, sent as
+/// the close frame's reason: its name, which the console says in words and
+/// `Display` says in English.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(
@@ -398,6 +890,56 @@ pub struct ErrorBody {
     derive(ts_rs::TS),
     ts(export, rename_all = "snake_case")
 )]
+pub enum Closed {
+    /// The workspace isn't running, and didn't thaw in time.
+    NotRunning,
+    /// The person's access to the workspace ended while it was open.
+    AccessEnded,
+    /// The host couldn't attach to the session; iglud's log says why.
+    HostFailed,
+    /// The workspace browser's display didn't answer: it isn't running.
+    BrowserNotRunning,
+    /// The browser runs, but its display couldn't be reached.
+    BrowserUnreachable,
+}
+
+impl Closed {
+    /// Its name, as the close frame carries it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRunning => "not_running",
+            Self::AccessEnded => "access_ended",
+            Self::HostFailed => "host_failed",
+            Self::BrowserNotRunning => "browser_not_running",
+            Self::BrowserUnreachable => "browser_unreachable",
+        }
+    }
+}
+
+impl std::str::FromStr for Closed {
+    type Err = serde::de::value::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use serde::de::IntoDeserializer;
+        Self::deserialize(s.into_deserializer())
+    }
+}
+
+impl std::fmt::Display for Closed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotRunning => "the workspace isn't running",
+            Self::AccessEnded => "access to this workspace ended",
+            Self::HostFailed => "the workspace's host couldn't attach to it",
+            Self::BrowserNotRunning => "the browser isn't running; restart its column",
+            Self::BrowserUnreachable => "the browser's display isn't answering; restart its column",
+        })
+    }
+}
+
+/// What kind of refusal an error is. Each kind has one HTTP status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     /// 400: the request didn't parse, or asked for something impossible.
     BadRequest,
@@ -628,6 +1170,22 @@ mod tests {
             Condition::from_capacity(Capacity::Short { available, needed }),
             Some(Condition::Capacity { available: a, needed: n }) if a == available && n == needed
         ));
+    }
+
+    #[test]
+    fn a_close_reason_is_its_serde_name() {
+        for closed in [
+            Closed::NotRunning,
+            Closed::AccessEnded,
+            Closed::HostFailed,
+            Closed::BrowserNotRunning,
+            Closed::BrowserUnreachable,
+        ] {
+            let json = serde_json::to_string(&closed).expect("serializes");
+            assert_eq!(json, format!("\"{}\"", closed.as_str()));
+            assert_eq!(closed.as_str().parse::<Closed>().ok(), Some(closed));
+        }
+        assert!("the workspace isn't running".parse::<Closed>().is_err());
     }
 
     #[test]

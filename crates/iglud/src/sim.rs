@@ -29,6 +29,7 @@ use std::time::{Duration, Instant as WallClock};
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use hyper_util::rt::TokioIo;
+use iglu_api::Failure;
 use iglu_domain::auth::VerifiedIdentity;
 use iglu_domain::id::{InstanceName, PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::{DesiredState, Instance, Present, Runtime as Status};
@@ -1295,10 +1296,15 @@ impl Sim {
 /// times.
 fn described(condition: &Condition) -> String {
     match condition {
-        Condition::Error { code, message, .. } => {
-            let message = message.split(" (").next().unwrap_or(message);
-            format!("error {code:?}: {message}")
-        }
+        Condition::Error { step, failure, .. } => match failure {
+            Failure::Host { code, detail } => {
+                let detail = detail.split(" (").next().unwrap_or(detail);
+                format!("error while {step:?}, {code:?}: {detail}")
+            }
+            other @ (Failure::SecretsClash { .. } | Failure::Internal) => {
+                format!("error while {step:?}: {other:?}")
+            }
+        },
         other @ (Condition::Capacity { .. }
         | Condition::RuntimeFailed
         | Condition::HostOffline { .. }) => format!("{other:?}"),

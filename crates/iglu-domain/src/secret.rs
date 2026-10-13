@@ -366,14 +366,21 @@ impl FetchTokens {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+/// Two secrets that claim the same destination.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(tag = "kind", rename_all = "snake_case")
+)]
 pub enum BundleError {
-    #[error("two secrets set the environment variable {0}")]
-    DuplicateEnv(EnvVarName),
-    #[error("two secrets write the file ~/{0}, or one inside it")]
-    DuplicateFile(HomePath),
-    #[error("two secrets are Git credentials for {0}")]
-    DuplicateGitHost(GitHost),
+    #[error("two secrets set the environment variable {name}")]
+    DuplicateEnv { name: EnvVarName },
+    #[error("two secrets write the file ~/{path}, or one inside it")]
+    DuplicateFile { path: HomePath },
+    #[error("two secrets are Git credentials for {host}")]
+    DuplicateGitHost { host: GitHost },
 }
 
 /// Groups an owner's secrets for delivery, rejecting any two that claim the
@@ -396,19 +403,19 @@ pub fn bundle(
         match target {
             SecretTarget::Env { name } => {
                 if result.env.contains_key(&name) {
-                    return Err(BundleError::DuplicateEnv(name));
+                    return Err(BundleError::DuplicateEnv { name });
                 }
                 result.env.insert(name, value);
             }
             SecretTarget::File { path } => {
                 if result.files.keys().any(|kept| kept.overlaps(&path)) {
-                    return Err(BundleError::DuplicateFile(path));
+                    return Err(BundleError::DuplicateFile { path });
                 }
                 result.files.insert(path, value);
             }
             SecretTarget::GitCredential { host, username } => {
                 if result.git.iter().any(|existing| existing.host == host) {
-                    return Err(BundleError::DuplicateGitHost(host));
+                    return Err(BundleError::DuplicateGitHost { host });
                 }
                 result.git.push(GitCredential {
                     host,
@@ -561,7 +568,7 @@ mod tests {
                 SecretsGeneration::from_u64(1),
                 [(env(), value("a")), (env(), value("b"))]
             ),
-            Err(BundleError::DuplicateEnv(_))
+            Err(BundleError::DuplicateEnv { .. })
         ));
         let git = || SecretTarget::GitCredential {
             host: "github.com".parse().expect("valid"),
@@ -572,7 +579,7 @@ mod tests {
                 SecretsGeneration::from_u64(1),
                 [(git(), value("a")), (git(), value("b"))]
             ),
-            Err(BundleError::DuplicateGitHost(_))
+            Err(BundleError::DuplicateGitHost { .. })
         ));
     }
 }

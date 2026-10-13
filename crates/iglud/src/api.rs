@@ -14,25 +14,25 @@ use axum::routing::{any, delete, get, post, put};
 use futures_util::{Stream, StreamExt};
 use iglu_api::browser::BrowserQuery;
 use iglu_api::{
-    ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
-    CreateWorkspace, EnvironmentView, Identity, KeptFile, LabelColumn, LabelWorkspace,
-    ListenerView, LiveView, Me, PublishPort, PutAccess, PutLayout, PutSecret, RenameWorkspace,
-    RouteView, SecretView, SendInput, SetDesiredState, Snapshot, WorkspaceView,
+    Activity, ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus,
+    CreateEnvironment, CreateWorkspace, EnvironmentView, Identity, KeptFile, LabelColumn,
+    LabelWorkspace, ListenerView, LiveView, Me, PublishPort, PutAccess, PutLayout, PutSecret,
+    Reason, RenameWorkspace, RouteView, SecretView, SendInput, SetDesiredState, Snapshot,
+    WorkspaceView,
 };
-use iglu_domain::activity::ActivityKind;
 use iglu_domain::auth::{Action, Grant, Permission};
-use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth};
+use iglu_domain::column::{self, ColumnKind, ColumnSpec, ColumnWidth, LayoutMismatch};
 use iglu_domain::download::DownloadName;
 use iglu_domain::env::EnvName;
 use iglu_domain::git;
 use iglu_domain::id::{EnvRevisionId, PrincipalId, ProjectId, RouteId, SecretId, WorkspaceId};
 use iglu_domain::label::{DnsLabel, HostId, RouteName, WorkspaceName};
 use iglu_domain::lifecycle::{DesiredState, Revision, allow_transition};
-use iglu_domain::names::{self, WorkspaceLabel};
+use iglu_domain::names;
 use iglu_domain::pasted::{self, FileName};
 use iglu_domain::port::GuestPort;
 use iglu_domain::preferences::Preferences;
-use iglu_domain::project;
+use iglu_domain::project::{self, CheckoutError};
 use iglu_domain::secret::{FetchTokens, SecretName};
 use iglu_domain::terminal::{OutputLines, SessionName, TerminalInput, TerminalSize};
 use iglu_proto::{BuildOutcome, SessionSpec};
@@ -41,7 +41,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::app::{
-    Actor, ApiError, App, Caller, Problem, no_such_method, no_such_path, not_for_workspaces, now,
+    Actor, ApiError, App, Caller, no_such_method, no_such_path, not_for_workspaces, now,
     open_secrets,
 };
 use crate::crypto::{self, Binding};
@@ -220,7 +220,7 @@ async fn live_workspace(app: &App, id: WorkspaceId) -> Result<WorkspaceRecord, A
     app.db
         .call(move |tx| db::workspace(tx, id))
         .await?
-        .ok_or(ApiError::NotFound)
+        .ok_or(ApiError::from(Reason::NotFound))
 }
 
 async fn view(app: &Arc<App>, ws: WorkspaceRecord) -> Result<WorkspaceView, ApiError> {
@@ -316,16 +316,12 @@ async fn create_workspace(
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     if key.as_ref().is_some_and(|k| k.is_empty() || k.len() > 200) {
-        return Err(ApiError::BadRequest(
-            "Idempotency-Key must be 1-200 characters".into(),
-        ));
+        return Err(Reason::IdempotencyKeyInvalid.into());
     }
     let request_hash = hex::encode(Sha256::digest(
-        serde_json::to_vec(&request).map_err(|_| ApiError::Internal)?,
+        serde_json::to_vec(&request).map_err(|_| ApiError::from(Reason::Internal))?,
     ));
-    let host = app
-        .default_host()
-        .ok_or_else(|| ApiError::Unavailable("no execution host configured".into()))?;
+    let host = app.default_host().ok_or(Reason::NoHost)?;
     let fresh = Fresh {
         id: WorkspaceId::from_uuid(Uuid::new_v4()),
         host: host.id.clone(),
@@ -343,13 +339,13 @@ async fn create_workspace(
                 return Ok(if hash == fresh.request_hash {
                     Ok(existing)
                 } else {
-                    Err("Idempotency-Key reused with a different request".into())
+                    Err(Reason::IdempotencyKeyReused.into())
                 });
             }
             insert_requested(tx, owner, request, &fresh)
         })
         .await?;
-    let record = created.map_err(ApiError::Conflict)?;
+    let record = created?;
     tracing::info!(workspace = %record.id, name = %record.name, %owner, "workspace requested");
     app.usage.used(record.id);
     app.kick();
@@ -373,15 +369,14 @@ fn insert_requested(
     owner: PrincipalId,
     request: CreateWorkspace,
     fresh: &Fresh,
-) -> Result<Result<WorkspaceRecord, Problem>, db::DbError> {
+) -> Result<Result<WorkspaceRecord, ApiError>, db::DbError> {
     let Some(project) = db::project(tx, owner, request.project)? else {
-        return Ok(Err(Problem::at("project", "no such project")));
+        return Ok(Err(ApiError::at("project", Reason::NoSuchProject)));
     };
     let Some((revision, _)) = db::latest_ready_revision(tx, project.environment_id)? else {
-        return Ok(Err(format!(
-            "the environment {} has no built image yet",
-            project.environment
-        )
+        return Ok(Err(Reason::NotBuilt {
+            environment: project.environment,
+        }
         .into()));
     };
     let made = made_from(&request);
@@ -392,7 +387,9 @@ fn insert_requested(
     let checkout =
         match project::checkout(project.repo.as_ref(), &name, request.branch, request.base) {
             Ok(checkout) => checkout,
-            Err(refused) => return Ok(Err(refused.to_string().into())),
+            Err(CheckoutError::NoRepository) => {
+                return Ok(Err(ApiError::at("branch", Reason::NoRepository)));
+            }
         };
     // A label that says no more than the name isn't kept.
     let label = request
@@ -425,16 +422,14 @@ fn insert_requested(
         .collect();
     db::replace_grants(tx, fresh.id, &own)?;
     db::replace_columns(tx, fresh.id, &project.opening.columns())?;
-    let what = match &record.checkout {
-        Some(checkout) => format!("{} on {}", checkout.branch, checkout.repo),
-        None => format!("in {}", project.name),
-    };
     db::add_activity(
         tx,
         Some(fresh.id),
         Some(db::By::person(owner)),
-        ActivityKind::Requested,
-        &what,
+        &Activity::Requested {
+            project: project.name.clone(),
+            checkout: record.checkout.clone(),
+        },
         now(),
     )?;
     for (n, port) in (0u64..).zip(project.ports.ports()) {
@@ -478,8 +473,10 @@ fn publish_in(
                     tx,
                     Some(workspace),
                     actor,
-                    ActivityKind::Published,
-                    &format!("port {} as {}", route.port, route.name),
+                    &Activity::Published {
+                        port: route.port,
+                        route: route.name.clone(),
+                    },
                     now(),
                 )?;
                 return Ok(route);
@@ -526,7 +523,7 @@ fn choose_name(
     asked: Option<WorkspaceName>,
     made: &[Made],
     entropy: u64,
-) -> Result<Result<WorkspaceName, Problem>, db::DbError> {
+) -> Result<Result<WorkspaceName, ApiError>, db::DbError> {
     let free = |name: &WorkspaceName| -> Result<bool, db::DbError> {
         Ok(!db::workspace_name_taken(tx, owner, name.as_str())?)
     };
@@ -534,7 +531,7 @@ fn choose_name(
         return Ok(if free(&name)? {
             Ok(name)
         } else {
-            Err(Problem::at("name", "a workspace with that name exists"))
+            Err(ApiError::at("name", Reason::WorkspaceNameTaken))
         });
     }
     for source in made {
@@ -573,8 +570,7 @@ async fn set_desired_state(
         }
     };
     let ws = workspace_for(&app, &actor, id, action).await?;
-    allow_transition(ws.phase(), request.state)
-        .map_err(|e| ApiError::Conflict(e.to_string().into()))?;
+    allow_transition(ws.phase(), request.state).map_err(Reason::from)?;
     let by = actor.by();
     let (asked, updated) = app
         .db
@@ -585,15 +581,16 @@ async fn set_desired_state(
                     tx,
                     Some(id),
                     Some(by),
-                    ActivityKind::StateSet,
-                    &request.state.to_string(),
+                    &Activity::StateSet {
+                        state: request.state,
+                    },
                     now(),
                 )?;
             }
             Ok((asked, db::workspace(tx, id)?))
         })
         .await?;
-    let updated = updated.ok_or(ApiError::NotFound)?;
+    let updated = updated.ok_or(Reason::NotFound)?;
     app.usage.used(id);
     if asked == db::Asked::Changed {
         tracing::info!(workspace = %id, state = %request.state, by = %by.person, via = ?by.via, "workspace state requested");
@@ -617,16 +614,14 @@ async fn update_workspace(
         .db
         .call(move |tx| {
             let updated = db::update_to_newest(tx, id)?;
-            if let db::Updated::Moved(revision) = &updated {
-                let detail = db::environment_name_of_revision(tx, *revision)?
-                    .map(|name| format!("{name}'s newest build"))
-                    .unwrap_or_default();
+            if let db::Updated::Moved(revision) = &updated
+                && let Some(environment) = db::environment_name_of_revision(tx, *revision)?
+            {
                 db::add_activity(
                     tx,
                     Some(id),
                     Some(by),
-                    ActivityKind::UpdateAsked,
-                    &detail,
+                    &Activity::UpdateAsked { environment },
                     now(),
                 )?;
             }
@@ -641,18 +636,14 @@ async fn update_workspace(
         }
         db::Updated::Already => {}
         db::Updated::NoBuild => {
-            return Err(ApiError::Conflict(
-                "its environment has no build ready to update to".into(),
-            ));
+            return Err(Reason::NoBuildToUpdateTo.into());
         }
         db::Updated::OtherAccount => {
-            return Err(ApiError::Conflict(
-                "the environment's newest build has another account than this workspace, whose files would be someone else's; recreate it to use the build".into(),
-            ));
+            return Err(Reason::BuildForAnotherAccount.into());
         }
-        db::Updated::Gone => return Err(ApiError::NotFound),
+        db::Updated::Gone => return Err(Reason::NotFound.into()),
     }
-    let ws = ws.ok_or(ApiError::NotFound)?;
+    let ws = ws.ok_or(Reason::NotFound)?;
     Ok(Json(actor.shown(view(&app, ws).await?)))
 }
 
@@ -674,8 +665,10 @@ async fn rename_workspace(
                     tx,
                     Some(id),
                     Some(by),
-                    ActivityKind::Renamed,
-                    &format!("{} to {}", ws.name, request.name),
+                    &Activity::Renamed {
+                        from: ws.name.clone(),
+                        to: request.name.clone(),
+                    },
                     now(),
                 )?;
             }
@@ -685,12 +678,9 @@ async fn rename_workspace(
     let updated = match renamed {
         (RenameOutcome::Done, Some(updated)) => updated,
         (RenameOutcome::NameTaken, _) => {
-            return Err(ApiError::Conflict(Problem::at(
-                "name",
-                "another workspace already has that name",
-            )));
+            return Err(ApiError::at("name", Reason::WorkspaceNameTaken));
         }
-        (RenameOutcome::Missing | RenameOutcome::Done, _) => return Err(ApiError::NotFound),
+        (RenameOutcome::Missing | RenameOutcome::Done, _) => return Err(Reason::NotFound.into()),
     };
     app.changed();
     Ok(Json(actor.shown(view(&app, updated).await?)))
@@ -715,22 +705,18 @@ async fn label_workspace(
                 return Ok(None);
             }
             if label != ws.label {
-                let to = label
-                    .as_ref()
-                    .map_or(ws.name.as_str(), WorkspaceLabel::as_str);
                 db::add_activity(
                     tx,
                     Some(id),
                     Some(by),
-                    ActivityKind::Renamed,
-                    &format!("to {to}"),
+                    &Activity::Relabeled { to: label },
                     now(),
                 )?;
             }
             db::workspace(tx, id)
         })
         .await?
-        .ok_or(ApiError::NotFound)?;
+        .ok_or(Reason::NotFound)?;
     app.changed();
     Ok(Json(actor.shown(view(&app, updated).await?)))
 }
@@ -772,21 +758,24 @@ async fn activity(
 }
 
 fn host_for(app: &App, ws: &WorkspaceRecord) -> Result<Arc<crate::hosts::HostClient>, ApiError> {
-    app.host(&ws.host)
-        .ok_or_else(|| ApiError::Unavailable("the workspace's host isn't configured".into()))
+    app.host(&ws.host).ok_or_else(|| Reason::HostUnknown.into())
 }
 
 pub fn host_error(error: crate::hosts::HostError) -> ApiError {
     let error = error.into_command_error();
     match error.code {
         iglu_proto::ErrorCode::NotFound | iglu_proto::ErrorCode::InvalidState => {
-            ApiError::Conflict("the workspace isn't running".into())
+            Reason::NotRunning.into()
         }
-        iglu_proto::ErrorCode::Conflict
+        code @ (iglu_proto::ErrorCode::Conflict
         | iglu_proto::ErrorCode::ImageMissing
         | iglu_proto::ErrorCode::GuestFailed
         | iglu_proto::ErrorCode::Timeout
-        | iglu_proto::ErrorCode::Runtime => ApiError::Unavailable(error.message),
+        | iglu_proto::ErrorCode::Runtime) => Reason::HostFailed {
+            code,
+            detail: error.message,
+        }
+        .into(),
     }
 }
 
@@ -825,21 +814,19 @@ async fn list_columns(
 
 /// A change to a workspace's columns, for its history when a workspace made
 /// it: the owner sees what their workspaces did, not what they did themselves.
-struct Noted(Option<(db::By, ActivityKind, String)>);
+struct Noted(Option<(db::By, Activity)>);
 
-fn noted(actor: &Actor, kind: ActivityKind, detail: String) -> Noted {
+fn noted(actor: &Actor, what: Activity) -> Noted {
     Noted(match actor {
         Actor::Person(_) => None,
-        Actor::Workspace(_) => Some((actor.by(), kind, detail)),
+        Actor::Workspace(_) => Some((actor.by(), what)),
     })
 }
 
 impl Noted {
     fn add(&self, tx: &rusqlite::Connection, id: WorkspaceId) -> Result<(), db::DbError> {
         match &self.0 {
-            Some((by, kind, detail)) => {
-                db::add_activity(tx, Some(id), Some(*by), *kind, detail, now())
-            }
+            Some((by, what)) => db::add_activity(tx, Some(id), Some(*by), what, now()),
             None => Ok(()),
         }
     }
@@ -858,11 +845,7 @@ async fn session_for(
             .call(move |tx| db::revision_image(tx, revision))
             .await?;
         if !image.is_some_and(|image| image.browser) {
-            return Err(ApiError::Conflict(
-                "this workspace's image has no browser: rebuild its environment with \
-                 iglu.browser.enable, then update the workspace"
-                    .into(),
-            ));
+            return Err(Reason::NoBrowserInImage.into());
         }
     }
     Ok(SessionSpec {
@@ -882,7 +865,7 @@ async fn add_column(
     // never recorded would be left as a stranger's shell.
     let spec = tokio::spawn(adding(actor, app, id, request))
         .await
-        .map_err(|_| ApiError::Internal)??;
+        .map_err(|_| ApiError::from(Reason::Internal))??;
     Ok((StatusCode::CREATED, Json(spec)))
 }
 
@@ -900,9 +883,10 @@ async fn adding(
     if request.kind == ColumnKind::Browser
         && let Some(browser) = columns.iter().find(|c| c.kind == ColumnKind::Browser)
     {
-        return Err(ApiError::Conflict(
-            format!("this workspace has a browser already: {}", browser.name).into(),
-        ));
+        return Err(Reason::BrowserColumnExists {
+            column: browser.name.clone(),
+        }
+        .into());
     }
     let open = host.terminals(id).await.map_err(host_error)?;
     let taken: Vec<SessionName> = columns
@@ -912,10 +896,7 @@ async fn adding(
         .collect();
     let name = match request.name {
         Some(name) if taken.contains(&name) => {
-            return Err(ApiError::Conflict(Problem::at(
-                "name",
-                format!("{name} is already a column"),
-            )));
+            return Err(ApiError::at("name", Reason::ColumnNameTaken { name }));
         }
         Some(name) => name,
         None => column::free_name(request.kind.default_name(), &taken),
@@ -932,7 +913,12 @@ async fn adding(
     // Read again: other changes may have landed while the session opened.
     let added = spec.clone();
     let after = request.after;
-    let noted = noted(&actor, ActivityKind::ColumnAdded, spec.name.to_string());
+    let noted = noted(
+        &actor,
+        Activity::ColumnAdded {
+            column: spec.name.clone(),
+        },
+    );
     app.db
         .call(move |tx| {
             noted.add(tx, id)?;
@@ -973,7 +959,7 @@ async fn put_layout(
             })
         })
         .await?;
-    arranged.map_err(|e| ApiError::Conflict(e.to_string().into()))?;
+    arranged.map_err(|LayoutMismatch| Reason::LayoutMismatch)?;
     app.changed();
     Ok(StatusCode::NO_CONTENT)
 }
@@ -990,7 +976,7 @@ async fn label_column(
         .call(move |tx| db::label_column(tx, id, &name, request.label.as_ref()))
         .await?;
     if !found {
-        return Err(ApiError::NotFound);
+        return Err(Reason::NotFound.into());
     }
     app.changed();
     Ok(StatusCode::NO_CONTENT)
@@ -1012,13 +998,18 @@ async fn restart_column(
         .await?
         .into_iter()
         .find(|c| c.name == lookup)
-        .ok_or(ApiError::NotFound)?;
+        .ok_or(Reason::NotFound)?;
     let session = session_for(&app, &ws, &column).await?;
     host_for(&app, &ws)?
         .open_terminal(id, &session)
         .await
         .map_err(host_error)?;
-    let noted = noted(&actor, ActivityKind::ColumnRestarted, name.to_string());
+    let noted = noted(
+        &actor,
+        Activity::ColumnRestarted {
+            column: name.clone(),
+        },
+    );
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1036,7 +1027,12 @@ async fn close_column(
     if open.iter().any(|t| t.name == name) {
         host.close_terminal(id, &name).await.map_err(host_error)?;
     }
-    let noted = noted(&actor, ActivityKind::ColumnClosed, name.to_string());
+    let noted = noted(
+        &actor,
+        Activity::ColumnClosed {
+            column: name.clone(),
+        },
+    );
     app.db
         .call(move |tx| {
             noted.add(tx, id)?;
@@ -1079,10 +1075,7 @@ async fn send_input(
     Body(request): Body<SendInput>,
 ) -> Result<StatusCode, ApiError> {
     if request.text.is_none() && !request.enter {
-        return Err(ApiError::BadRequest(Problem::at(
-            "text",
-            "say what to type, or to press Enter",
-        )));
+        return Err(ApiError::at("text", Reason::NothingToType));
     }
     let ws = workspace_for(&app, &actor, id, Action::SendColumnInput).await?;
     let host = host_for(&app, &ws)?;
@@ -1095,13 +1088,18 @@ async fn send_input(
         if request.text.is_some() {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        let enter: TerminalInput = "\r".parse()?;
+        let enter: TerminalInput = "\r".parse().expect("a carriage return is terminal input");
         host.send_input(id, &session, &enter)
             .await
             .map_err(host_error)?;
     }
     app.usage.used(id);
-    let noted = noted(&actor, ActivityKind::Typed, format!("into {session}"));
+    let noted = noted(
+        &actor,
+        Activity::Typed {
+            column: session.clone(),
+        },
+    );
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1134,7 +1132,7 @@ async fn keep_file(
         .uploads
         .acquire()
         .await
-        .map_err(|_| ApiError::Internal)?;
+        .map_err(|_| ApiError::from(Reason::Internal))?;
     let bytes = read_within(body, pasted::MAX_BYTES, UPLOAD_TIME).await?;
     let name = FileName::from_browser(&query.name);
     let path = host_for(&app, &ws)?
@@ -1142,7 +1140,7 @@ async fn keep_file(
         .await
         .map_err(host_error)?;
     app.usage.used(id);
-    let noted = noted(&actor, ActivityKind::FileKept, path.to_string());
+    let noted = noted(&actor, Activity::FileKept { path: path.clone() });
     app.db.call(move |tx| noted.add(tx, id)).await?;
     Ok(Json(KeptFile { path }))
 }
@@ -1172,10 +1170,12 @@ async fn put_access(
         .call(move |tx| {
             for grant in &grants {
                 if db::workspace(tx, grant.workspace)?.is_none_or(|on| on.owner != owner) {
-                    return Ok(Err(ApiError::BadRequest(Problem::at(
+                    return Ok(Err(ApiError::at(
                         "grants",
-                        format!("no workspace {} to grant", grant.workspace),
-                    ))));
+                        Reason::NoWorkspaceToGrant {
+                            workspace: grant.workspace,
+                        },
+                    )));
                 }
             }
             db::replace_grants(tx, id, &grants)?;
@@ -1183,14 +1183,13 @@ async fn put_access(
                 tx,
                 Some(id),
                 Some(db::By::person(owner)),
-                ActivityKind::AccessChanged,
-                "",
+                &Activity::AccessChanged,
                 now(),
             )?;
             Ok(Ok(db::workspace(tx, id)?))
         })
         .await??
-        .ok_or(ApiError::NotFound)?;
+        .ok_or(Reason::NotFound)?;
     app.changed();
     Ok(Json(view(&app, updated).await?))
 }
@@ -1210,7 +1209,8 @@ async fn attach_column(
 ) -> Result<Response, ApiError> {
     let ws = owned_workspace(&app, &caller, id, Action::OperateWorkspace).await?;
     let host = host_for(&app, &ws)?;
-    let size = TerminalSize::new(query.cols, query.rows)?;
+    let size =
+        TerminalSize::new(query.cols, query.rows).map_err(|_| ApiError::from(Reason::Invalid))?;
     Ok(upgrade.on_upgrade(move |socket| {
         crate::terminal::relay(app, caller, ws, host, session, size, socket)
     }))
@@ -1243,7 +1243,7 @@ async fn download(
         .download(id, &name)
         .await
         .map_err(host_error)?
-        .ok_or(ApiError::NotFound)?;
+        .ok_or(Reason::NotFound)?;
     app.usage.used(id);
     let size = response.content_length();
     let mut headers = HeaderMap::new();
@@ -1324,10 +1324,10 @@ async fn publish_route(
     Body(request): Body<PublishPort>,
 ) -> Result<(StatusCode, Json<RouteView>), ApiError> {
     if column::browsers_port(request.port.get()) {
-        return Err(ApiError::BadRequest(Problem::at(
+        return Err(ApiError::at(
             "port",
-            format!("The port {}", column::BROWSER_PORT_PRIVATE),
-        )));
+            Reason::BrowserPort { port: request.port },
+        ));
     }
     let ws = workspace_for(&app, &actor, id, Action::PublishRoute).await?;
     let entropy = crypto::random_u64()?;
@@ -1357,8 +1357,10 @@ async fn unpublish_route(
                     tx,
                     Some(id),
                     Some(by),
-                    ActivityKind::Unpublished,
-                    &format!("port {} as {}", route.port, route.name),
+                    &Activity::Unpublished {
+                        port: route.port,
+                        route: route.name.clone(),
+                    },
                     now(),
                 )?;
             }
@@ -1369,7 +1371,7 @@ async fn unpublish_route(
     if removed {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::NotFound)
+        Err(Reason::NotFound.into())
     }
 }
 
@@ -1405,10 +1407,7 @@ async fn create_environment(
         app.changed();
     }
     if !created {
-        return Err(ApiError::Conflict(Problem::at(
-            "name",
-            "an environment with that name exists",
-        )));
+        return Err(ApiError::at("name", Reason::EnvironmentNameTaken));
     }
     let revision = start_build(&app, owner, name).await?;
     Ok((StatusCode::ACCEPTED, Json(BuildStarted { revision })))
@@ -1431,9 +1430,7 @@ async fn start_build(
     owner: PrincipalId,
     name: EnvName,
 ) -> Result<EnvRevisionId, ApiError> {
-    let host = app
-        .default_host()
-        .ok_or_else(|| ApiError::Unavailable("no execution host configured".into()))?;
+    let host = app.default_host().ok_or(Reason::NoHost)?;
     let revision = EnvRevisionId::from_uuid(Uuid::new_v4());
     let env = app
         .db
@@ -1445,7 +1442,7 @@ async fn start_build(
             Ok(Some(env))
         })
         .await?
-        .ok_or(ApiError::NotFound)?;
+        .ok_or(Reason::NotFound)?;
     let tokens = FetchTokens::from_secrets(open_secrets(app, owner).await?);
     let app = app.clone();
     tokio::spawn(async move {
@@ -1509,9 +1506,9 @@ async fn put_secret(
                 .iter()
                 .find(|(_, target)| target.conflicts_with(&sealed.target))
             {
-                return Ok(Err(Problem::at(
+                return Ok(Err(ApiError::at(
                     "target",
-                    format!("{other} already goes there"),
+                    Reason::SecretTargetTaken { by: other.clone() },
                 )));
             }
             db::put_secret(
@@ -1525,14 +1522,15 @@ async fn put_secret(
                 tx,
                 None,
                 Some(db::By::person(owner)),
-                ActivityKind::SecretUpdated,
-                sealed.name.as_str(),
+                &Activity::SecretUpdated {
+                    secret: sealed.name.clone(),
+                },
                 now(),
             )?;
             Ok(Ok(()))
         })
         .await?;
-    stored.map_err(ApiError::Conflict)?;
+    stored?;
     app.kick();
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1552,7 +1550,7 @@ async fn delete_secret(
     if removed {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::NotFound)
+        Err(Reason::NotFound.into())
     }
 }
 

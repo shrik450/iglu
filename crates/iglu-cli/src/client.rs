@@ -5,9 +5,9 @@
 use anyhow::{Context, anyhow, bail};
 use iglu_api::{
     ActivityEntry, AddColumn, BuildStarted, ColumnOutput, ColumnStatus, CreateEnvironment,
-    CreateProject, CreateWorkspace, EnvironmentView, ErrorBody, ErrorKind, Identity,
-    LabelWorkspace, LiveView, ProjectView, PublishPort, PutAccess, PutSecret, RenameWorkspace,
-    RouteView, SecretView, SendInput, SetDesiredState, WorkspaceView,
+    CreateProject, CreateWorkspace, EnvironmentView, ErrorBody, Identity, LabelWorkspace, LiveView,
+    ProjectView, PublishPort, PutAccess, PutSecret, Reason, RenameWorkspace, RouteView, SecretView,
+    SendInput, SetDesiredState, WorkspaceView,
 };
 use iglu_domain::column::ColumnSpec;
 use iglu_domain::env::EnvName;
@@ -378,16 +378,21 @@ pub fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
 pub fn refusal(status: StatusCode, body: &[u8], server: &url::Url) -> String {
     match serde_json::from_slice::<ErrorBody>(body) {
         Ok(ErrorBody {
-            error: ErrorKind::Unauthorized,
-            message,
+            reason: reason @ Reason::Unauthorized,
             ..
-        }) => format!("{message}; run `iglu login` again"),
+        }) => format!("{reason}; run `iglu login` again"),
         Ok(ErrorBody {
             field: Some(field),
-            message,
-            ..
-        }) => format!("{field}: {message}"),
-        Ok(ErrorBody { message, .. }) => message,
+            reason: Reason::Invalid,
+        }) => format!("{field} isn't valid"),
+        Ok(ErrorBody {
+            field: Some(field),
+            reason,
+        }) => format!("{field}: {reason}"),
+        Ok(ErrorBody {
+            field: None,
+            reason,
+        }) => reason.to_string(),
         Err(_) => format!("{server} answered {status}, which isn't an answer from iglu"),
     }
 }
@@ -402,16 +407,21 @@ mod tests {
 
     #[test]
     fn refusals_name_their_field() {
-        let body = br#"{"error":"bad_request","message":"invalid DNS label: may not start or end with '-'","field":"name"}"#;
+        let body = br#"{"reason":{"kind":"invalid"},"field":"name"}"#;
         assert_eq!(
             refusal(StatusCode::BAD_REQUEST, body, &server()),
-            "name: invalid DNS label: may not start or end with '-'"
+            "name isn't valid"
+        );
+        let body = br#"{"reason":{"kind":"workspace_name_taken"},"field":"name"}"#;
+        assert_eq!(
+            refusal(StatusCode::CONFLICT, body, &server()),
+            "name: a workspace with that name exists"
         );
     }
 
     #[test]
     fn an_ended_session_says_how_to_start_another() {
-        let body = br#"{"error":"unauthorized","message":"sign in first","field":null}"#;
+        let body = br#"{"reason":{"kind":"unauthorized"},"field":null}"#;
         assert_eq!(
             refusal(StatusCode::UNAUTHORIZED, body, &server()),
             "sign in first; run `iglu login` again"

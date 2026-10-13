@@ -9,8 +9,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use iglu_api::{ActivityEntry, RevisionStatus, RevisionView, SecretView};
-use iglu_domain::activity::ActivityKind;
+use iglu_api::{Activity, ActivityEntry, RevisionStatus, RevisionView, SecretView};
 use iglu_domain::attention::{Seen, SessionStatus};
 use iglu_domain::auth::{Grant, VerifiedIdentity};
 use iglu_domain::capacity::Bytes;
@@ -62,6 +61,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0012_activity_kinds.sql")),
     Migration::Sql(include_str!("migrations/0013_no_csrf.sql")),
     Migration::Sql(include_str!("migrations/0014_no_guest_interface.sql")),
+    Migration::Sql(include_str!("migrations/0015_typed_history.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -1855,19 +1855,17 @@ pub fn add_activity(
     tx: &Connection,
     workspace: Option<WorkspaceId>,
     by: Option<By>,
-    kind: ActivityKind,
-    detail: &str,
+    what: &Activity,
     now: Timestamp,
 ) -> Result<(), DbError> {
     tx.execute(
-        "INSERT INTO activity (workspace_id, actor_id, via_workspace_id, kind, detail, at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO activity (workspace_id, actor_id, via_workspace_id, what, at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             workspace.map(|w| w.to_string()),
             by.map(|b| b.person.to_string()),
             by.and_then(|b| b.via).map(|w| w.to_string()),
-            kind.to_string(),
-            detail,
+            to_json(what)?,
             now.unix_millis()
         ],
     )?;
@@ -1882,7 +1880,7 @@ pub fn activity(
     limit: u32,
 ) -> Result<Vec<(ActivityEntry, Option<WorkspaceId>)>, DbError> {
     let mut statement = tx.prepare(
-        "SELECT a.kind, a.detail, a.at, v.name, a.via_workspace_id FROM activity a
+        "SELECT a.what, a.at, v.name, a.via_workspace_id FROM activity a
          LEFT JOIN workspace v ON v.id = a.via_workspace_id
          WHERE a.workspace_id = ?1 ORDER BY a.at DESC, a.id DESC LIMIT ?2",
     )?;
@@ -1890,12 +1888,11 @@ pub fn activity(
         .query_map(params![workspace.to_string(), limit], |row| {
             Ok((
                 ActivityEntry {
-                    kind: text(row, 0)?,
-                    detail: row.get(1)?,
-                    at: timestamp(row, 2)?,
-                    via: opt_text(row, 3)?,
+                    what: json(row, 0)?,
+                    at: timestamp(row, 1)?,
+                    via: opt_text(row, 2)?,
                 },
-                opt_text(row, 4)?,
+                opt_text(row, 3)?,
             ))
         })?
         .collect::<Result<_, _>>()?)
@@ -2096,8 +2093,7 @@ mod tests {
             &conn,
             Some(one.id),
             Some(By::person(alice)),
-            ActivityKind::Renamed,
-            "",
+            &Activity::AccessChanged,
             at,
         )
         .expect("by the owner");
@@ -2108,8 +2104,9 @@ mod tests {
                 person: alice,
                 via: Some(two.id),
             }),
-            ActivityKind::Typed,
-            "into shell",
+            &Activity::Typed {
+                column: "shell".parse().expect("a session name"),
+            },
             Timestamp::from_unix_millis(2),
         )
         .expect("through a workspace");
@@ -2502,39 +2499,38 @@ mod tests {
     }
 
     #[test]
-    fn asking_for_a_state_becomes_its_own_kind_of_history() {
+    fn history_from_before_typed_entries_keeps_what_needs_no_words() {
         let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
         conn.pragma_update(None, "foreign_keys", "ON")
             .expect("foreign keys switch on");
-        migrate_until(&mut conn, 11).expect("the schema before");
+        migrate_until(&mut conn, 14).expect("the schema before");
         let owner = principal(&conn, "alice");
         let ws = new_workspace(&conn, owner, "demo");
-        for (at, detail) in [
-            (1, "main on https://example.test/app.git"),
-            (2, "set to frozen"),
+        for (at, kind, detail) in [
+            (1, "requested", "main on https://example.test/app.git"),
+            (2, "created", ""),
+            (3, "error", "starting it: boom"),
         ] {
             conn.execute(
-                "INSERT INTO activity (workspace_id, kind, detail, at) VALUES (?1, 'requested', ?2, ?3)",
-                params![ws.id.to_string(), detail, at],
+                "INSERT INTO activity (workspace_id, kind, detail, at) VALUES (?1, ?2, ?3, ?4)",
+                params![ws.id.to_string(), kind, detail, at],
             )
             .expect("an entry");
         }
+        conn.execute(
+            r#"UPDATE workspace SET condition = '{"kind":"error","code":"runtime","message":"boom","at":3}' WHERE id = ?1"#,
+            [ws.id.to_string()],
+        )
+        .expect("a condition");
         migrate(&mut conn).expect("the rest apply");
-        let log: Vec<(ActivityKind, String)> = activity(&conn, ws.id, 10)
+        let log: Vec<Activity> = activity(&conn, ws.id, 10)
             .expect("read")
             .into_iter()
-            .map(|(entry, _)| (entry.kind, entry.detail))
+            .map(|(entry, _)| entry.what)
             .collect();
-        assert_eq!(
-            log,
-            [
-                (ActivityKind::StateSet, "frozen".into()),
-                (
-                    ActivityKind::Requested,
-                    "main on https://example.test/app.git".into()
-                ),
-            ]
-        );
+        assert_eq!(log, [Activity::Created]);
+        let ws = workspace(&conn, ws.id).expect("read").expect("there");
+        assert_eq!(ws.condition, None);
     }
 
     #[test]
