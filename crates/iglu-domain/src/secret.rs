@@ -360,12 +360,8 @@ impl FetchTokens {
 
 /// Two secrets that claim the same destination.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(tag = "kind"))]
 pub enum BundleError {
     #[error("two secrets set the environment variable {name}")]
     DuplicateEnv { name: EnvVarName },

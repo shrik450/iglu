@@ -23,8 +23,7 @@ pub struct Preferences {
 
 /// The console's colours: the system's choice, or one of the two looks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Look {
     #[default]
     Auto,
@@ -107,8 +106,7 @@ impl fmt::Display for KeyCode {
 text_type!(KeyCode);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum OptionAsMeta {
     Left,
     Both,
@@ -275,7 +273,7 @@ mod tests {
     #[test]
     fn what_is_missing_reads_as_its_default() {
         let stored: Preferences =
-            serde_json::from_str(r#"{"look": "dark", "terminal": {"size": 16}}"#)
+            serde_json::from_str(r#"{"look": "Dark", "terminal": {"size": 16}}"#)
                 .expect("a partial document reads");
         assert_eq!(stored.look, Look::Dark);
         assert_eq!(stored.keyboard, Keyboard::default());

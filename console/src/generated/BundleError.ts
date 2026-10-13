@@ -6,4 +6,4 @@ import type { HomePath } from "./HomePath";
 /**
  * Two secrets that claim the same destination.
  */
-export type BundleError = { "kind": "duplicate_env", name: EnvVarName, } | { "kind": "duplicate_file", path: HomePath, } | { "kind": "duplicate_git_host", host: GitHost, };
+export type BundleError = { "kind": "DuplicateEnv", name: EnvVarName, } | { "kind": "DuplicateFile", path: HomePath, } | { "kind": "DuplicateGitHost", host: GitHost, };

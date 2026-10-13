@@ -35,8 +35,8 @@
   --ui: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --mono: 'JetBrains Mono', 'Symbols Nerd Font Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-:root[data-look="dark"] { color-scheme: dark; }
-:root[data-look="light"] { color-scheme: light; }
+:root[data-look="Dark"] { color-scheme: dark; }
+:root[data-look="Light"] { color-scheme: light; }
 
 [hidden] { display: none !important; }
 * { box-sizing: border-box; }

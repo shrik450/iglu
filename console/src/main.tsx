@@ -21,7 +21,7 @@ Object.assign(globalThis, { iglu: { screen: activeScreen } });
 paintFrost();
 effect(() => {
   const value = look.value;
-  if (value === "auto") delete document.documentElement.dataset["look"];
+  if (value === "Auto") delete document.documentElement.dataset["look"];
   else document.documentElement.dataset["look"] = value;
 });
 // Terminals paint their own colours, so they follow a change of look: the

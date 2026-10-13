@@ -45,6 +45,11 @@ import { m } from "../messages.tsx";
 
 /** Why something iglu was asked to do didn't happen: iglu refused it, or
  * the request never got a reply that was iglu's. */
+/** The path's parameter iglu names when it can't take a secret's name. */
+export interface SecretPath {
+  name: SecretName;
+}
+
 export type Refusal =
   | { from: "iglu"; reason: Reason }
   /** iglu couldn't be reached. */
@@ -85,7 +90,7 @@ async function request<T>(method: string, path: string, body?: unknown, headers:
   }
   if (response.status === 401) {
     location.assign(`/auth/login?return=${encodeURIComponent(location.pathname)}`);
-    throw new ApiError({ from: "iglu", reason: { kind: "unauthorized" } });
+    throw new ApiError({ from: "iglu", reason: { kind: "Unauthorized" } });
   }
   if (!response.ok) {
     const error = await errorBody(response);

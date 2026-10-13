@@ -89,7 +89,7 @@ export function WorkspaceLink({ ws, class: className, label, children }: { ws: W
 }
 
 export function inTrouble(condition: Condition | null): boolean {
-  return condition?.kind === "error" || condition?.kind === "runtime_failed";
+  return condition?.kind === "Error" || condition?.kind === "RuntimeFailed";
 }
 
 export function attentionGlyph(attention: AttentionView | null): GlyphKind {
@@ -150,7 +150,7 @@ export function attentionText(attention: AttentionView): { tone: string; text: s
     case "waiting":
       return { tone: "s-waiting", text: m.attention.waiting };
     case "done":
-      return { tone: "s-done", text: m.attention.done(attention.seen === "unseen") };
+      return { tone: "s-done", text: m.attention.done(attention.seen === "Unseen") };
     case "working":
       return { tone: "s-working", text: m.attention.working };
     case "idle":

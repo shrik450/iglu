@@ -9,7 +9,7 @@ import { DialogHead, Modal } from "./Modal.tsx";
 
 export function NewProject() {
   const close = () => (overlay.value = null);
-  const add = useForm(async (data) => {
+  const add = useForm<CreateProject>(async (data) => {
     const text = textOf(data);
     const environment = text("environment");
     if (!environment) return;

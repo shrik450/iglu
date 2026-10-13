@@ -52,7 +52,7 @@ function columnItems(ws: WorkspaceView): Item[] {
   const column = columns[here];
   if (!column) return list;
   const title = titleOf(column);
-  if (column.state === "adopted") {
+  if (column.state === "Adopted") {
     list.push({ label: m.palette.end(title), hint: keysFor("close-column"), run: () => ask(ws, { kind: "end", column: column.name }) });
     return list;
   }
@@ -66,8 +66,8 @@ function columnItems(ws: WorkspaceView): Item[] {
   if (here > 0) list.push({ label: m.palette.moveLeft(title), hint: keysFor({ kind: "move-column", step: -1 }), run: () => void moveColumn(ws, -1) });
   if (here < columns.length - 1) list.push({ label: m.palette.moveRight(title), hint: keysFor({ kind: "move-column", step: 1 }), run: () => void moveColumn(ws, 1) });
   list.push({ label: m.palette.renameColumn(title), sub: column.label ? m.palette.session(column.name) : undefined, hint: keysFor("label-column"), run: () => labelOrSay(ws, column.name) });
-  if (column.state !== "ended" && column.state !== null) list.push({ label: m.palette.find(title), sub: m.palette.findAbout, hint: keysFor("find"), run: () => ask(ws, { kind: "find", column: column.name }) });
-  if (column.state === "ended") list.push({ label: m.palette.restart(title), run: () => void restartColumn(ws, column.name) });
+  if (column.state !== "Ended" && column.state !== null) list.push({ label: m.palette.find(title), sub: m.palette.findAbout, hint: keysFor("find"), run: () => ask(ws, { kind: "find", column: column.name }) });
+  if (column.state === "Ended") list.push({ label: m.palette.restart(title), run: () => void restartColumn(ws, column.name) });
   list.push({ label: m.palette.end(title), hint: keysFor("close-column"), run: () => ask(ws, { kind: "end", column: column.name }) });
   return list;
 }
@@ -94,8 +94,8 @@ function items(): Item[] {
     list.push(...columnItems(ws));
     for (const r of ws.routes) list.push({ label: m.palette.copyLink(r.name), sub: m.preview.onlyYou, run: () => copyLink(r.url) });
     if (ws.phase === "running") {
-      list.push({ label: m.palette.shell(called(ws)), run: () => void addColumn(ws, { kind: "shell" }) });
-      if (ws.browser && !ws.columns.some((c) => c.kind.kind === "browser")) list.push({ label: m.palette.browser(called(ws)), run: () => void addColumn(ws, { kind: "browser" }) });
+      list.push({ label: m.palette.shell(called(ws)), run: () => void addColumn(ws, { kind: "Shell" }) });
+      if (ws.browser && !ws.columns.some((c) => c.kind.kind === "Browser")) list.push({ label: m.palette.browser(called(ws)), run: () => void addColumn(ws, { kind: "Browser" }) });
       list.push({ label: m.palette.publish(called(ws)), sub: m.preview.onlyYou, run: () => ask(ws, { kind: "port" }) });
       list.push({ label: m.palette.freeze(called(ws)), hint: keysFor("freeze"), run: () => void toggleFreeze(ws) });
     }
@@ -119,7 +119,7 @@ function items(): Item[] {
   }
   for (const w of listed.value) for (const r of w.routes) list.push({ label: m.palette.openPreview(r.name), sub: m.palette.previewAbout(called(w), r.port), run: () => window.open(r.url, "_blank", "noopener") });
   list.push(
-    ...(["auto", "dark", "light"] as const).map((look) => ({ label: m.palette.look(look), run: () => setLook(look) })),
+    ...(["Auto", "Dark", "Light"] as const).map((look) => ({ label: m.palette.look(look), run: () => setLook(look) })),
     {
       label: m.notifications.turnOn,
       run: () => void enableNotifications().then((p) => say(m.notifications.answer(p))),

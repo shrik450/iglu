@@ -3,4 +3,4 @@
 /**
  * A project's say over how its workspaces idle.
  */
-export type IdleRule = { "kind": "default" } | { "kind": "never" } | { "kind": "after", minutes: number, };
+export type IdleRule = { "kind": "Default" } | { "kind": "Never" } | { "kind": "After", minutes: number, };

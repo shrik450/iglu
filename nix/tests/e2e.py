@@ -212,7 +212,7 @@ try:
     with subtest("every refused request says why, as JSON naming the input"):
         json_body = ("-H", "Content-Type: application/json")
         status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":"broken","source":"github:a/b"}')
-        assert status == 400 and body["reason"] == {"kind": "invalid"} and body["field"] == "source", body
+        assert status == 400 and body["reason"] == {"kind": "Invalid"} and body["field"] == "source", body
         # Why is data, for whoever shows it to say; iglud sends no prose.
         assert set(body) == {"reason", "field"}, body
         # A path parameter's own parser doesn't know its name; the route's only one is it.
@@ -224,14 +224,14 @@ try:
         assert status == 400 and body["field"] == "id", body
         # Not the console's page, which every other path gets.
         status, body, _ = api_refusal("GET", "/v1/no-such-thing")
-        assert status == 404 and body["reason"]["kind"] == "not_found", body
+        assert status == 404 and body["reason"]["kind"] == "NotFound", body
         status, body, headers = api_refusal("DELETE", "/v1/me")
-        assert status == 405 and body["reason"]["kind"] == "method_not_allowed", body
+        assert status == 405 and body["reason"]["kind"] == "MethodNotAllowed", body
         assert "allow: get" in headers, headers
         status, body, _ = api_refusal("POST", "/v1/environments", "-d", "name=broken")
-        assert status == 415 and body["reason"]["kind"] == "json_expected", body
+        assert status == 415 and body["reason"]["kind"] == "JsonExpected", body
         status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":')
-        assert status == 400 and body["field"] is None and body["reason"]["kind"] == "not_json", body
+        assert status == 400 and body["field"] is None and body["reason"]["kind"] == "NotJson", body
         # The CLI says the server's reason, and the input it's about.
         code, said = client.execute(f"{IGLU} env add example 'path:{SELF}#example' 2>&1")
         assert code != 0 and "name: an environment with that name exists" in said, said
@@ -390,9 +390,9 @@ try:
         assert "token=hunter2" in output, f"the terminal should see the secret: {output!r}"
         columns = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/columns"))
         assert [(c["name"], c["state"]) for c in columns] == [
-            ("shell", "open"),
-            ("shell-2", "open"),
-            (terminal, "open"),
+            ("shell", "Open"),
+            ("shell-2", "Open"),
+            (terminal, "Open"),
         ], columns
         git_state = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/live"))["git"]
         assert git_state["branch"] == "demo" and git_state["conflicted"] == 0, git_state
@@ -476,7 +476,7 @@ try:
         iglu("freeze demo --wait")
         browser("visit", published["url"])
         phase_is("demo", "running")
-        assert "thawed-on-open" in [entry["kind"] for entry in iglu("log demo")]
+        assert "ThawedOnOpen" in [entry["kind"] for entry in iglu("log demo")]
 
     with subtest("a workspace clones over HTTPS with the Git credential secret"):
         project = iglu(f"project add app-https --repo https://{GIT_ADDRESS}/app.git --env example")
@@ -496,8 +496,8 @@ try:
         route = https["routes"][0]
         client.succeed(f"{api} -X DELETE {CONSOLE}/v1/workspaces/{https['id']}/routes/{route['id']}")
         history = [(entry["kind"], entry.get("port"), entry.get("route")) for entry in iglu("log over-https")]
-        assert ("published", 3000, route["name"]) in history, history
-        assert ("unpublished", 3000, route["name"]) in history, history
+        assert ("Published", 3000, route["name"]) in history, history
+        assert ("Unpublished", 3000, route["name"]) in history, history
 
     with subtest("a workspace without a repository opens a shell, named for what it's called"):
         scratch = iglu("new general --label 'Fix the login bug' --wait")
@@ -505,7 +505,7 @@ try:
         assert scratch["phase"] == "running" and scratch["checkout"] is None, scratch
         guest_of("iglu-" + scratch["id"].replace("-", ""))("test ! -e ~/app")
         columns = json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/columns"))
-        assert [(c["name"], c["state"]) for c in columns] == [("shell", "open")], columns
+        assert [(c["name"], c["state"]) for c in columns] == [("shell", "Open")], columns
         assert json.loads(client.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/live"))["git"] is None
         client.fail(f"{IGLU} new general --name branchy --branch main")
         client.fail(f"{IGLU} project rm general")
@@ -543,7 +543,7 @@ try:
         # The old system is gone from its store.
         inside(f"test ! -e {before['user.iglu.system']}")
         history = [entry["kind"] for entry in iglu("log updating")]
-        assert "update-asked" in history and "updated" in history, history
+        assert "UpdateAsked" in history and "Updated" in history, history
         iglu("rm updating --wait --force")
         iglu("project rm changing")
 
@@ -585,7 +585,7 @@ try:
         iglu("access set demo --on over-https --allow")
         guest("! iglu column ls -w over-https")
         history = [(entry["kind"], entry["via"]) for entry in iglu("log demo")]
-        assert ("column-added", "demo") in history, history
+        assert ("ColumnAdded", "demo") in history, history
 
     with subtest("freezing reclaims memory and thawing resumes"):
 
@@ -612,7 +612,7 @@ try:
         assert guest("cat /proc/sys/kernel/random/boot_id").strip() != boot
         assert iglu("show over-https")["desired"] == "stopped"
         history = [entry["kind"] for entry in iglu("log over-https")]
-        assert "adopted" in history, history
+        assert "Adopted" in history, history
         assert "init" in guest("git -C ~/app log --oneline")
         # hostd listens for each workspace's channel again.
         guest("for i in $(seq 30); do iglu whoami && exit 0; sleep 1; done; exit 1")

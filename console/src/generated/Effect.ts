@@ -3,4 +3,4 @@
 /**
  * One step the host can take. The shell attaches the payload each step needs.
  */
-export type Effect = "create" | "start" | "deliver_secrets" | "provision" | "open_columns" | "freeze" | "thaw" | "stop" | "delete" | "upgrade";
+export type Effect = "Create" | "Start" | "DeliverSecrets" | "Provision" | "OpenColumns" | "Freeze" | "Thaw" | "Stop" | "Delete" | "Upgrade";

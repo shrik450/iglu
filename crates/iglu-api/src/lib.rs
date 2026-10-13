@@ -100,12 +100,8 @@ pub struct PutAccess {
 
 /// Who's asking: a person, or a workspace through its channel.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "kind"))]
 pub enum Identity {
     Person {
         id: PrincipalId,
@@ -198,12 +194,8 @@ pub struct RouteView {
 
 /// Something about a workspace the owner should know, beyond its phase.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "kind"))]
 pub enum Condition {
     /// The last step failed; the reconciler retries with backoff.
     Error {
@@ -247,12 +239,8 @@ impl std::fmt::Display for Condition {
 
 /// Why a step on a workspace failed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "kind"))]
 pub enum Failure {
     /// The host or the guest failed. `detail` is in its own words, such as
     /// `git clone`'s, so it's shown as it is, never translated.
@@ -329,12 +317,8 @@ pub struct RevisionView {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "status", rename_all = "snake_case")
-)]
+#[serde(tag = "status")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "status"))]
 pub enum RevisionStatus {
     Building,
     Ready { image: BuiltImage },
@@ -366,12 +350,8 @@ pub struct ActivityEntry {
 /// What a workspace's history records, with what each entry needs to be
 /// said: stored and sent as data, so the console says each in words.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "kind", rename_all = "kebab-case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "kind"))]
 pub enum Activity {
     /// Asked for, in `project`, working on `checkout` when it has a repository.
     Requested {
@@ -590,12 +570,8 @@ pub struct ErrorBody {
 /// in words, and `Display` says it in English for the CLI and iglud's own
 /// pages.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, tag = "kind"))]
 pub enum Reason {
     /// An input didn't parse, or isn't there; the error's field says which
     /// when it's known.
@@ -884,12 +860,7 @@ impl std::fmt::Display for Reason {
 /// the close frame's reason: its name, which the console says in words and
 /// `Display` says in English.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, rename_all = "snake_case")
-)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub enum Closed {
     /// The workspace isn't running, and didn't thaw in time.
     NotRunning,
@@ -908,11 +879,11 @@ impl Closed {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::NotRunning => "not_running",
-            Self::AccessEnded => "access_ended",
-            Self::HostFailed => "host_failed",
-            Self::BrowserNotRunning => "browser_not_running",
-            Self::BrowserUnreachable => "browser_unreachable",
+            Self::NotRunning => "NotRunning",
+            Self::AccessEnded => "AccessEnded",
+            Self::HostFailed => "HostFailed",
+            Self::BrowserNotRunning => "BrowserNotRunning",
+            Self::BrowserUnreachable => "BrowserUnreachable",
         }
     }
 }
@@ -1136,7 +1107,7 @@ mod tests {
 
     #[test]
     fn a_whole_project_change_names_every_field() {
-        let whole = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"ports":[],"idle":{"kind":"default"}}"#;
+        let whole = r#"{"expected_revision":1,"name":"app","repo":null,"environment":"default","opening":[],"ports":[],"idle":{"kind":"Default"}}"#;
         assert!(serde_json::from_str::<ChangeProject>(whole).is_ok());
         let without_repo = whole.replace(r#""repo":null,"#, "");
         assert!(serde_json::from_str::<ChangeProject>(&without_repo).is_err());
@@ -1144,7 +1115,7 @@ mod tests {
 
     #[test]
     fn a_revision_flattens_its_status() {
-        let json = r#"{"id":"6f2c3c7e-2f7b-4a8e-9c0a-1c9f4f2b1d11","status":"failed","log_tail":"boom","created_at":5}"#;
+        let json = r#"{"id":"6f2c3c7e-2f7b-4a8e-9c0a-1c9f4f2b1d11","status":"Failed","log_tail":"boom","created_at":5}"#;
         let revision: RevisionView = serde_json::from_str(json).expect("parses");
         assert!(
             matches!(revision.status, RevisionStatus::Failed { ref log_tail } if log_tail == "boom")

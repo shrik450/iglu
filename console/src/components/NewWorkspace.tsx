@@ -27,7 +27,7 @@ export function NewWorkspace() {
     overlay.value = null;
     newIn.value = null;
   };
-  const start = useForm(async (data) => {
+  const start = useForm<CreateWorkspace>(async (data) => {
     if (!project) return;
     const text = textOf(data);
     const body: CreateWorkspace = { project: project.id };

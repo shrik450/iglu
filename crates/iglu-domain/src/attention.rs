@@ -180,8 +180,7 @@ pub struct SessionStatus {
 
 /// Whether the user has looked at a status since it last changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Seen {
     Seen,
     Unseen,

@@ -5,4 +5,4 @@ import type { ErrorCode } from "./ErrorCode";
 /**
  * Why a step on a workspace failed.
  */
-export type Failure = { "kind": "host", code: ErrorCode, detail: string, } | { "kind": "secrets_clash", clash: BundleError, } | { "kind": "internal" };
+export type Failure = { "kind": "Host", code: ErrorCode, detail: string, } | { "kind": "SecretsClash", clash: BundleError, } | { "kind": "Internal" };

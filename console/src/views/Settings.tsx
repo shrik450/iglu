@@ -3,7 +3,7 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { attempt, signOut } from "../actions.ts";
-import { api } from "../api/client.ts";
+import { api, type SecretPath } from "../api/client.ts";
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
 import { mac } from "../keyboard.ts";
@@ -12,6 +12,7 @@ import { keyboard, look, setKeyboard, setLook, setTermStyle, termStyle } from ".
 import { enableNotifications } from "../notify.ts";
 import type { EnvironmentView } from "../generated/EnvironmentView.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
+import type { PutSecret } from "../generated/PutSecret.ts";
 import type { SecretTarget } from "../generated/SecretTarget.ts";
 import type { SecretView } from "../generated/SecretView.ts";
 import { repoLabel } from "../state/groups.ts";
@@ -44,11 +45,11 @@ function buildText(env: EnvironmentView): string {
   const latest = env.latest;
   if (!latest) return m.settings.build(null);
   switch (latest.status) {
-    case "building":
-    case "failed":
+    case "Building":
+    case "Failed":
       return m.settings.build({ status: latest.status });
-    case "ready":
-      return m.settings.build({ status: "ready", at: when.format(latest.created_at) });
+    case "Ready":
+      return m.settings.build({ status: "Ready", at: when.format(latest.created_at) });
     default:
       return unreachable(latest);
   }
@@ -64,12 +65,12 @@ function Environments() {
             <div class="set-row">
               <b translate={false}>{env.name}</b>
               <code translate={false}>{env.source}</code>
-              <span class={`state${env.latest?.status === "failed" ? " s-trouble" : ""}`}>{buildText(env)}</span>
-              <button type="button" class="btn" disabled={env.latest?.status === "building"} onClick={() => void attempt(() => api.buildEnvironment(env.name))}>
+              <span class={`state${env.latest?.status === "Failed" ? " s-trouble" : ""}`}>{buildText(env)}</span>
+              <button type="button" class="btn" disabled={env.latest?.status === "Building"} onClick={() => void attempt(() => api.buildEnvironment(env.name))}>
                 {m.settings.rebuild}
               </button>
             </div>
-            {env.latest?.status === "failed" ? (
+            {env.latest?.status === "Failed" ? (
               <details class="log">
                 <summary>{m.settings.log}</summary>
                 <pre translate={false}>{env.latest.log_tail}</pre>
@@ -155,7 +156,7 @@ function targetOf(kind: TargetKind, text: (key: string) => string | undefined): 
 
 /** The inputs for where a secret goes. iglu names them all `target`, and so
  * does the form's kind select; the error shows by the last of them. */
-function TargetFields({ kind, form }: { kind: TargetKind; form: Form }) {
+function TargetFields({ kind, form }: { kind: TargetKind; form: Form<PutSecret & SecretPath> }) {
   switch (kind) {
     case "env":
       return (
@@ -201,7 +202,7 @@ function Secrets() {
     if (got) setSecrets(got.value);
   };
   useEffect(() => void load(), []);
-  const add = useForm(async (data, form) => {
+  const add = useForm<PutSecret & SecretPath>(async (data, form) => {
     const text = textOf(data);
     const name = text("name");
     const value = data.get("value");
@@ -344,7 +345,7 @@ function Keyboard() {
         <label class="set-row">
           <span>{m.settings.optionAsMeta}</span>
           <select value={prefs.option_as_meta} onChange={(e) => setKeyboard({ ...prefs, option_as_meta: e.currentTarget.value as OptionAsMeta })}>
-            {(["left", "both", "off"] as const).map((o) => (
+            {(["Left", "Both", "Off"] as const).map((o) => (
               <option key={o} value={o}>
                 {m.settings.meta(o)}
               </option>
@@ -495,7 +496,7 @@ function Account() {
       <div class="set-row">
         <span translate={false}>{me.value?.email ?? me.value?.name ?? ""}</span>
         <div class="seg" role="group" aria-label={m.settings.look}>
-          {(["auto", "dark", "light"] as const).map((l) => (
+          {(["Auto", "Dark", "Light"] as const).map((l) => (
             <button key={l} type="button" aria-pressed={look.value === l} onClick={() => setLook(l)}>
               {m.settings.lookName(l)}
             </button>

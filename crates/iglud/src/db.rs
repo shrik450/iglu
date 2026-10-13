@@ -62,6 +62,7 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Sql(include_str!("migrations/0013_no_csrf.sql")),
     Migration::Sql(include_str!("migrations/0014_no_guest_interface.sql")),
     Migration::Sql(include_str!("migrations/0015_typed_history.sql")),
+    Migration::Sql(include_str!("migrations/0016_rust_names.sql")),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -698,7 +699,7 @@ pub fn update_to_newest(tx: &Connection, id: WorkspaceId) -> Result<Updated, DbE
     tx.execute(
         "UPDATE workspace SET env_revision_id = ?2, revision = ?3,
              desired = CASE desired WHEN 'frozen' THEN 'running' ELSE desired END,
-             condition = CASE WHEN json_extract(condition, '$.kind') = 'host_offline' THEN condition END
+             condition = CASE WHEN json_extract(condition, '$.kind') = 'HostOffline' THEN condition END
          WHERE id = ?1",
         params![id.to_string(), newest.to_string(), revision.saturating_add(1)],
     )?;
@@ -1028,8 +1029,8 @@ pub fn add_project(tx: &Connection, new: &NewProject) -> Result<AddOutcome, DbEr
         (None, None) => project::unique(&project::general(), &taken),
     };
     tx.execute(
-        "INSERT INTO project (id, owner_id, name, origin, repo, environment_id, opening, revision, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO project (id, owner_id, name, origin, repo, environment_id, opening, idle, revision, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             new.id.to_string(),
             new.owner.to_string(),
@@ -1038,6 +1039,7 @@ pub fn add_project(tx: &Connection, new: &NewProject) -> Result<AddOutcome, DbEr
             new.repo.as_ref().map(RepoUrl::as_str),
             uuid_text(new.environment_id),
             to_json(&Opening::shell())?,
+            to_json(&IdleRule::Default)?,
             i64_of(Revision::INITIAL.get()),
             new.created_at.unix_millis(),
         ],
@@ -1341,7 +1343,7 @@ fn write_desired(
 ) -> Result<(), DbError> {
     tx.execute(
         "UPDATE workspace SET desired = ?2, revision = ?3,
-             condition = CASE WHEN json_extract(condition, '$.kind') = 'host_offline' THEN condition END
+             condition = CASE WHEN json_extract(condition, '$.kind') = 'HostOffline' THEN condition END
          WHERE id = ?1",
         params![id.to_string(), desired.to_string(), i64_of(next.get())],
     )?;
@@ -2534,6 +2536,50 @@ mod tests {
     }
 
     #[test]
+    fn names_stored_before_read_as_the_rust_names() {
+        use iglu_domain::preferences::{Look, OptionAsMeta};
+
+        let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys switch on");
+        migrate_until(&mut conn, 15).expect("the schema before");
+        let owner = principal(&conn, "alice");
+        let ws = new_workspace(&conn, owner, "demo");
+        conn.execute(
+            r#"UPDATE workspace SET condition = '{"kind":"host_offline","last_seen":null}' WHERE id = ?1"#,
+            [ws.id.to_string()],
+        )
+        .expect("a condition");
+        conn.execute(
+            r#"UPDATE project SET idle = '{"kind":"after","minutes":5}' WHERE id = ?1"#,
+            [ws.project.to_string()],
+        )
+        .expect("an idle rule");
+        conn.execute(
+            r#"INSERT INTO preferences (principal_id, document) VALUES (?1, '{"look":"dark","keyboard":{"option_as_meta":"both"}}')"#,
+            [owner.to_string()],
+        )
+        .expect("preferences");
+        migrate(&mut conn).expect("the rest apply");
+        let ws = workspace(&conn, ws.id).expect("read").expect("there");
+        assert_eq!(
+            ws.condition,
+            Some(Condition::HostOffline { last_seen: None })
+        );
+        assert_eq!(
+            project_idle(&conn, ws.project).expect("read"),
+            Some(IdleRule::After {
+                minutes: 5.try_into().expect("not zero")
+            })
+        );
+        let preferences = preferences(&conn, owner).expect("read");
+        assert_eq!(
+            (preferences.look, preferences.keyboard.option_as_meta),
+            (Look::Dark, OptionAsMeta::Both)
+        );
+    }
+
+    #[test]
     fn agent_and_command_columns_become_shells() {
         let mut conn = Connection::open_in_memory().expect("in-memory SQLite opens");
         conn.pragma_update(None, "foreign_keys", "ON")
@@ -2707,7 +2753,7 @@ mod tests {
 
         // A frozen workspace that failed is asked to run, and its failure is over.
         conn.execute(
-            r#"UPDATE workspace SET desired = 'frozen', condition = '{"kind":"runtime_failed"}' WHERE id = ?1"#,
+            r#"UPDATE workspace SET desired = 'frozen', condition = '{"kind":"RuntimeFailed"}' WHERE id = ?1"#,
             [ws.id.to_string()],
         )
         .expect("frozen and failed");

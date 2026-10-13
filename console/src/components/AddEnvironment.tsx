@@ -1,6 +1,7 @@
 // Adding an environment: in Settings, and as the first thing anyone does.
 
 import { api } from "../api/client.ts";
+import type { CreateEnvironment } from "../generated/CreateEnvironment.ts";
 import { m } from "../messages.tsx";
 import { say } from "../state/store.ts";
 import { FieldError, FormError, invalid, textOf, useForm, useGrab } from "./forms.tsx";
@@ -8,7 +9,7 @@ import { FieldError, FormError, invalid, textOf, useForm, useGrab } from "./form
 /** `first` suggests a name, since a first environment needs no other. */
 export function AddEnvironment({ first = false }: { first?: boolean }) {
   const source = useGrab<HTMLInputElement>(false, first);
-  const add = useForm(async (data, form) => {
+  const add = useForm<CreateEnvironment>(async (data, form) => {
     const text = textOf(data);
     const name = text("name");
     const source = text("source");

@@ -7,6 +7,7 @@ import { api } from "../api/client.ts";
 import { Icon } from "../components/bits.tsx";
 import { Card } from "../components/Card.tsx";
 import { FieldError, FormError, InputError, invalid, textOf, useForm } from "../components/forms.tsx";
+import type { ChangeProject } from "../generated/ChangeProject.ts";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnTemplate } from "../generated/ColumnTemplate.ts";
 import type { IdleRule } from "../generated/IdleRule.ts";
@@ -20,10 +21,13 @@ import { oneOf, unreachable } from "../state/unsaved.ts";
 
 const SETTINGS = "project-settings";
 
+/** The settings form's inputs: the request's fields, and the minutes an idle rule is read from. */
+type SettingsInputs = ChangeProject & { minutes: string };
+
 const IDLE: Readonly<Record<IdleRule["kind"], string>> = {
-  default: m.project.idle("default"),
-  never: m.project.idle("never"),
-  after: m.project.idle("after"),
+  Default: m.project.idle("Default"),
+  Never: m.project.idle("Never"),
+  After: m.project.idle("After"),
 };
 
 export function ProjectPage() {
@@ -117,7 +121,7 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
   const [envName, setEnvName] = useState(project.environment);
   const latest = environments.value.find((env) => env.name === envName)?.latest;
   // A workspace has one browser, and only from an image that has one.
-  const browser = latest?.status === "ready" && latest.image.browser && !opening.some((t) => t.kind.kind === "browser");
+  const browser = latest?.status === "Ready" && latest.image.browser && !opening.some((t) => t.kind.kind === "Browser");
   const move = (index: number, step: -1 | 1) => {
     const next = [...opening];
     const [item] = next.splice(index, 1);
@@ -125,7 +129,7 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
     setOpening(next);
   };
   const add = (kind: ColumnKind) => setOpening([...opening, { kind, width: "half" }]);
-  const save = useForm(async (data) => {
+  const save = useForm<SettingsInputs>(async (data) => {
     const text = textOf(data);
     const name = text("name");
     if (!name) return;
@@ -133,16 +137,16 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
     if ("notANumber" in ports) throw new InputError("ports", m.project.notAPort(ports.notANumber));
     let rule: IdleRule;
     switch (idle) {
-      case "default":
-        rule = { kind: "default" };
+      case "Default":
+        rule = { kind: "Default" };
         break;
-      case "never":
-        rule = { kind: "never" };
+      case "Never":
+        rule = { kind: "Never" };
         break;
-      case "after": {
+      case "After": {
         const minutes = text("minutes") ?? "";
         if (!/^\d+$/.test(minutes)) throw new InputError("minutes", m.project.wholeMinutes);
-        rule = { kind: "after", minutes: Number(minutes) };
+        rule = { kind: "After", minutes: Number(minutes) };
         break;
       }
       default:
@@ -210,14 +214,14 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
         </select>
         <FieldError form={save} input="idle" />
       </label>
-      {idle === "after" ? (
+      {idle === "After" ? (
         <label>
           {m.project.minutes}
           <input
             name="minutes"
             inputMode="numeric"
             required
-            defaultValue={project.idle.kind === "after" ? String(project.idle.minutes) : "60"}
+            defaultValue={project.idle.kind === "After" ? String(project.idle.minutes) : "60"}
             autocomplete="off"
             {...invalid(save, "minutes")}
           />
@@ -257,14 +261,14 @@ function Settings(props: { project: ProjectView; onEdit: () => void; onSaved: ()
           ))}
         </ol>
         <div class="opening-add">
-          <button type="button" class="btn" onClick={() => add({ kind: "shell" })}>
+          <button type="button" class="btn" onClick={() => add({ kind: "Shell" })}>
             <Icon name="plus" size={12} />
-            {m.columnKind({ kind: "shell" })}
+            {m.columnKind({ kind: "Shell" })}
           </button>
           {browser ? (
-            <button type="button" class="btn" onClick={() => add({ kind: "browser" })}>
+            <button type="button" class="btn" onClick={() => add({ kind: "Browser" })}>
               <Icon name="plus" size={12} />
-              {m.columnKind({ kind: "browser" })}
+              {m.columnKind({ kind: "Browser" })}
             </button>
           ) : null}
         </div>

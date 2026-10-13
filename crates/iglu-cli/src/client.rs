@@ -406,12 +406,12 @@ mod tests {
 
     #[test]
     fn refusals_name_their_field() {
-        let body = br#"{"reason":{"kind":"invalid"},"field":"name"}"#;
+        let body = br#"{"reason":{"kind":"Invalid"},"field":"name"}"#;
         assert_eq!(
             refusal(StatusCode::BAD_REQUEST, body, &server()),
             "name isn't valid"
         );
-        let body = br#"{"reason":{"kind":"workspace_name_taken"},"field":"name"}"#;
+        let body = br#"{"reason":{"kind":"WorkspaceNameTaken"},"field":"name"}"#;
         assert_eq!(
             refusal(StatusCode::CONFLICT, body, &server()),
             "name: a workspace with that name exists"
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn an_ended_session_says_how_to_start_another() {
-        let body = br#"{"reason":{"kind":"unauthorized"},"field":null}"#;
+        let body = br#"{"reason":{"kind":"Unauthorized"},"field":null}"#;
         assert_eq!(
             refusal(StatusCode::UNAUTHORIZED, body, &server()),
             "sign in first; run `iglu login` again"

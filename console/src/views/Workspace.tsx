@@ -53,6 +53,10 @@ import type { ActivityEntry } from "../generated/ActivityEntry.ts";
 import type { AttentionView } from "../generated/AttentionView.ts";
 import type { ColumnKind } from "../generated/ColumnKind.ts";
 import type { ColumnState } from "../generated/ColumnState.ts";
+import type { LabelColumn } from "../generated/LabelColumn.ts";
+import type { LabelWorkspace } from "../generated/LabelWorkspace.ts";
+import type { PublishPort } from "../generated/PublishPort.ts";
+import type { RenameWorkspace } from "../generated/RenameWorkspace.ts";
 import type { RouteView } from "../generated/RouteView.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { keysFor, mac, terminalKey, touchOnly } from "../keyboard.ts";
@@ -165,7 +169,7 @@ function Main({ ws }: { ws: WorkspaceView }) {
     return () => window.clearInterval(timer);
   }, [ws.id, running]);
   useEffect(() => {
-    if (ws.attention?.seen === "unseen" && document.visibilityState === "visible") void api.seen(ws.id).catch(() => undefined);
+    if (ws.attention?.seen === "Unseen" && document.visibilityState === "visible") void api.seen(ws.id).catch(() => undefined);
   }, [ws.id, ws.attention?.updated_at]);
   return (
     <div class="main">
@@ -212,11 +216,11 @@ function KeyRow({ ws }: { ws: WorkspaceView }) {
 
 function Header({ ws }: { ws: WorkspaceView }) {
   const phase = phaseText(ws.phase);
-  const naming = useForm(async (data) => {
+  const naming = useForm<RenameWorkspace & LabelWorkspace>(async (data) => {
     const text = textOf(data);
     await rename(ws, text("label") ?? "", text("name") ?? ws.name);
   }, m.workspace.renameRules);
-  const publishing = useForm(async (data) => {
+  const publishing = useForm<PublishPort>(async (data) => {
     const text = String(data.get("port") ?? "").trim();
     const port = Number(text);
     if (!/^\d+$/.test(text)) throw new InputError("port", m.workspace.notAPort(text));
@@ -400,7 +404,7 @@ function Strip({ ws }: { ws: WorkspaceView }) {
             type="button"
             aria-current={c.name === active ? "true" : undefined}
             key={c.name}
-            class={`sc${c.state === "ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}${dragging === c.name ? " dragging" : ""}${rang.value.has(`${ws.id}/${c.name}`) ? " rang" : ""}`}
+            class={`sc${c.state === "Ended" ? " ended" : ""}${onScreen.value.has(c.name) ? " vis" : ""}${dragging === c.name ? " dragging" : ""}${rang.value.has(`${ws.id}/${c.name}`) ? " rang" : ""}`}
             data-drop={drop?.name === c.name ? (drop.after ? "after" : "before") : undefined}
             draggable={arrangeable(c.state)}
             onDragStart={(e) => {
@@ -457,9 +461,9 @@ function Strip({ ws }: { ws: WorkspaceView }) {
 function AddMenu({ ws }: { ws: WorkspaceView }) {
   // What's opening: the menu stays, says so, and takes no second click until
   // the column is there (which puts the menu away) or iglu refuses it.
-  const [opening, setOpening] = useState<string | null>(null);
+  const [opening, setOpening] = useState<ColumnKind["kind"] | null>(null);
   // A workspace has one browser; asking for it again goes to it.
-  const browser = columnsOf(ws).find((c) => c.kind.kind === "browser");
+  const browser = columnsOf(ws).find((c) => c.kind.kind === "Browser");
   const add = (kind: ColumnKind) => {
     setOpening(kind.kind);
     void addColumn(ws, kind).finally(() => setOpening(null));
@@ -474,28 +478,28 @@ function AddMenu({ ws }: { ws: WorkspaceView }) {
   }, []);
   return (
     <div class="add-menu" role="group" aria-label={m.workspace.addColumn} aria-busy={opening !== null} onKeyDown={(e) => e.key === "Escape" && settle(ws)}>
-      <button type="button" ref={first} disabled={opening !== null} onClick={() => add({ kind: "shell" })}>
-        {opening === "shell" ? m.workspace.openingShell : m.workspace.shell}
+      <button type="button" ref={first} disabled={opening !== null} onClick={() => add({ kind: "Shell" })}>
+        {opening === "Shell" ? m.workspace.openingShell : m.workspace.shell}
       </button>
       {browser ? (
         <button type="button" disabled={opening !== null} onClick={() => (settle(ws, "add-column"), focusColumn(ws, browser.name))}>
           {m.workspace.browser} <span class="about">{m.workspace.browserOpen}</span>
         </button>
       ) : ws.browser ? (
-        <button type="button" disabled={opening !== null} onClick={() => add({ kind: "browser" })}>
-          {opening === "browser" ? m.workspace.openingBrowser : m.workspace.browser}
+        <button type="button" disabled={opening !== null} onClick={() => add({ kind: "Browser" })}>
+          {opening === "Browser" ? m.workspace.openingBrowser : m.workspace.browser}
         </button>
       ) : null}
     </div>
   );
 }
 
-function RenameInput({ ws, form }: { ws: WorkspaceView; form: Form }) {
+function RenameInput({ ws, form }: { ws: WorkspaceView; form: Form<RenameWorkspace & LabelWorkspace> }) {
   const ref = useGrab<HTMLInputElement>(true);
   return <input ref={ref} name="label" aria-label={m.workspace.label} defaultValue={ws.label ?? ""} placeholder={ws.name} autocomplete="off" {...invalid(form, "label")} />;
 }
 
-function PortInput({ form }: { form: Form }) {
+function PortInput({ form }: { form: Form<PublishPort> }) {
   const ref = useGrab<HTMLInputElement>();
   return <input ref={ref} name="port" inputMode="numeric" placeholder="3000…" aria-label={m.workspace.portLabel} autocomplete="off" {...invalid(form, "port")} />;
 }
@@ -505,7 +509,7 @@ function PortInput({ form }: { form: Form }) {
  * leaves it as it was. Leaving matters on a phone, which has no Enter to see. */
 function Naming({ ws, column }: { ws: WorkspaceView; column: Shown }) {
   const ref = useGrab<HTMLInputElement>(true);
-  const naming = useForm(async (data) => labelColumn(ws, column.name, textOf(data)("label") ?? ""), m.workspace.columnRules);
+  const naming = useForm<LabelColumn>(async (data) => labelColumn(ws, column.name, textOf(data)("label") ?? ""), m.workspace.columnRules);
   // Once kept or given up, leaving the field mustn't keep it again.
   const done = useRef(false);
   return (
@@ -719,7 +723,7 @@ function Columns({ ws }: { ws: WorkspaceView }) {
   if (columns.length === 0) {
     return (
       <div class="cols-note">
-        <button type="button" class="btn" onClick={() => void addColumn(ws, { kind: "shell" })}>
+        <button type="button" class="btn" onClick={() => void addColumn(ws, { kind: "Shell" })}>
           {m.workspace.openShell}
         </button>
       </div>
@@ -767,7 +771,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
         ) : (
           <b
             translate={false}
-            title={column.state === "adopted" ? undefined : m.workspace.renameColumnTitle(column.label ? name : null, keysFor("label-column"))}
+            title={column.state === "Adopted" ? undefined : m.workspace.renameColumnTitle(column.label ? name : null, keysFor("label-column"))}
             onDblClick={() => labelOrSay(ws, name)}
           >
             {title}
@@ -786,7 +790,7 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
             {m.workspace.threads(threads.length)}
           </button>
         ) : null}
-        {status && column.state !== "ended" ? <span class="status">{status}</span> : null}
+        {status && column.state !== "Ended" ? <span class="status">{status}</span> : null}
         {ending ? (
           <Ending ws={ws} name={name} title={title} />
         ) : (
@@ -844,10 +848,10 @@ function Column(props: { ws: WorkspaceView; column: Shown; on: boolean; zoomed: 
 function arrangeable(state: ColumnState | null): boolean {
   switch (state) {
     case null:
-    case "open":
-    case "ended":
+    case "Open":
+    case "Ended":
       return true;
-    case "adopted":
+    case "Adopted":
       return false;
     default:
       return unreachable(state);
@@ -859,7 +863,7 @@ function ColumnBody(props: { ws: WorkspaceView; column: Shown; on: boolean; onSt
   switch (column.state) {
     case null:
       return <div class="col-ended" />;
-    case "ended":
+    case "Ended":
       return (
         <div class="col-ended">
           <span>{m.workspace.ended}</span>
@@ -868,9 +872,9 @@ function ColumnBody(props: { ws: WorkspaceView; column: Shown; on: boolean; onSt
           </button>
         </div>
       );
-    case "open":
-    case "adopted":
-      return column.kind.kind === "browser" ? (
+    case "Open":
+    case "Adopted":
+      return column.kind.kind === "Browser" ? (
         <Browser ws={ws} name={column.name} title={titleOf(column)} on={props.on} />
       ) : (
         <Pane ws={ws} name={column.name} title={titleOf(column)} on={props.on} onStatus={props.onStatus} />

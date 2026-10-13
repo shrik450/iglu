@@ -18,12 +18,13 @@ import { say } from "./state/store.ts";
 
 /** What iglud starts everyone with, as iglu-domain's preferences.rs has it. */
 const DEFAULTS: Preferences = {
-  look: "auto",
-  keyboard: { prefix: DEFAULT_PREFIX, alt_moves: true, option_as_meta: "left" },
+  look: "Auto",
+  keyboard: { prefix: DEFAULT_PREFIX, alt_moves: true, option_as_meta: "Left" },
   terminal: { font: null, size: 13, theme: "iglu", pasted: "" },
 };
 
-const CACHE = "iglu.preferences";
+// Named anew when what it holds is spelled differently, so a cache from before goes unread.
+const CACHE = "iglu.preferences.2";
 
 function cached(): Preferences | null {
   try {

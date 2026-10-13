@@ -3,4 +3,4 @@
 /**
  * Whether the user has looked at a status since it last changed.
  */
-export type Seen = "seen" | "unseen";
+export type Seen = "Seen" | "Unseen";

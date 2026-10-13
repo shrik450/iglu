@@ -10,19 +10,29 @@
 
 import type { ComponentChildren } from "preact";
 
-import type { Refusal } from "./api/client.ts";
+import type { Refusal, SecretPath } from "./api/client.ts";
+import type { Rules } from "./components/forms.tsx";
 import type { Activity } from "./generated/Activity.ts";
+import type { ChangeProject } from "./generated/ChangeProject.ts";
 import type { Closed } from "./generated/Closed.ts";
 import type { ColumnKind } from "./generated/ColumnKind.ts";
+import type { CreateEnvironment } from "./generated/CreateEnvironment.ts";
+import type { CreateProject } from "./generated/CreateProject.ts";
+import type { CreateWorkspace } from "./generated/CreateWorkspace.ts";
 import type { DesiredState } from "./generated/DesiredState.ts";
 import type { Effect } from "./generated/Effect.ts";
 import type { Failure } from "./generated/Failure.ts";
 import type { IdleRule } from "./generated/IdleRule.ts";
+import type { LabelColumn } from "./generated/LabelColumn.ts";
+import type { LabelWorkspace } from "./generated/LabelWorkspace.ts";
 import type { Look } from "./generated/Look.ts";
 import type { OptionAsMeta } from "./generated/OptionAsMeta.ts";
 import type { Permission } from "./generated/Permission.ts";
 import type { Phase } from "./generated/Phase.ts";
+import type { PublishPort } from "./generated/PublishPort.ts";
+import type { PutSecret } from "./generated/PutSecret.ts";
 import type { Reason } from "./generated/Reason.ts";
+import type { RenameWorkspace } from "./generated/RenameWorkspace.ts";
 import type { SecretTarget } from "./generated/SecretTarget.ts";
 import type { Unsaved } from "./generated/Unsaved.ts";
 import type { Action, Group } from "./state/keys.ts";
@@ -51,109 +61,109 @@ function gibibytes(bytes: number): string {
 /** Why iglu refused a request, as the console says it. */
 function reason(reason: Reason): string {
   switch (reason.kind) {
-    case "invalid":
+    case "Invalid":
       return "That isn't something iglu can take.";
-    case "not_json":
-    case "json_expected":
-    case "form_expected":
-    case "method_not_allowed":
-    case "idempotency_key_invalid":
+    case "NotJson":
+    case "JsonExpected":
+    case "FormExpected":
+    case "MethodNotAllowed":
+    case "IdempotencyKeyInvalid":
       return "iglu couldn't read what this page sent. Reload the page.";
-    case "unreadable":
+    case "Unreadable":
       return "That didn't reach iglu whole. Try again.";
-    case "not_web_socket":
+    case "NotWebSocket":
       return "That needs a live connection, which this page didn't open. Reload the page.";
-    case "project_unnamed":
+    case "ProjectUnnamed":
       return "Give the project a name or a repository.";
-    case "nothing_to_type":
+    case "NothingToType":
       return "Say what to type, or to press Enter.";
-    case "no_workspace_to_grant":
+    case "NoWorkspaceToGrant":
       return "There's no such workspace to give that access to.";
-    case "browser_port":
+    case "BrowserPort":
       return `Port ${reason.port} can't be published: it's the workspace browser's debugging port or its display, and a preview of either would let anyone with the link drive the browser.`;
-    case "sign_in_incomplete":
+    case "SignInIncomplete":
       return "The sign-in came back without what iglu needs. Try again.";
-    case "other_browser":
+    case "OtherBrowser":
       return "Finish signing in in the browser that started it.";
-    case "sign_in_expired":
+    case "SignInExpired":
       return "This sign-in expired. Try again.";
-    case "cli_sign_in_malformed":
+    case "CliSignInMalformed":
       return "That request to sign in the iglu CLI isn't one iglu reads.";
-    case "bad_return_address":
+    case "BadReturnAddress":
       return "That sign-in was asked to return somewhere other than a preview.";
-    case "unauthorized":
+    case "Unauthorized":
       return "Your session ended. Signing in again…";
-    case "account_disabled":
+    case "AccountDisabled":
       return "This account is disabled.";
-    case "not_granted":
+    case "NotGranted":
       return "This workspace hasn't been given that.";
-    case "person_only":
+    case "PersonOnly":
       return "Only a person can do that, not a workspace.";
-    case "not_from_workspace":
+    case "NotFromWorkspace":
       return "A workspace can't do that from inside; its owner can.";
-    case "cross_origin":
+    case "CrossOrigin":
       return "iglu refused a request from another site.";
-    case "sign_in_failed":
+    case "SignInFailed":
       return "Signing in failed.";
-    case "provider_refused":
+    case "ProviderRefused":
       return `The identity provider refused, saying ${reason.error}.`;
-    case "account_not_allowed":
+    case "AccountNotAllowed":
       return "This account isn't allowed to use iglu.";
-    case "not_found":
+    case "NotFound":
       return "That isn't there any more.";
-    case "not_running":
+    case "NotRunning":
       return "The workspace isn't running.";
-    case "idempotency_key_reused":
+    case "IdempotencyKeyReused":
       return "iglu took that for a repeat of another request. Try again.";
-    case "no_such_project":
+    case "NoSuchProject":
       return "That project isn't there any more.";
-    case "no_environment":
+    case "NoEnvironment":
       return `There's no environment called ${reason.name}.`;
-    case "not_built":
+    case "NotBuilt":
       return `${reason.environment} hasn't finished a build yet. Wait for it, or rebuild it in Settings.`;
-    case "no_repository":
+    case "NoRepository":
       return "The project has no repository, so its workspaces have no branch.";
-    case "workspace_name_taken":
+    case "WorkspaceNameTaken":
       return "Another workspace has that name.";
-    case "project_name_taken":
+    case "ProjectNameTaken":
       return "Another project has that name.";
-    case "environment_name_taken":
+    case "EnvironmentNameTaken":
       return "Another environment has that name.";
-    case "being_deleted":
+    case "BeingDeleted":
       return "The workspace is being deleted.";
-    case "freeze_needs_running":
+    case "FreezeNeedsRunning":
       return "Only a running workspace can be frozen.";
-    case "no_build_to_update_to":
+    case "NoBuildToUpdateTo":
       return "Its environment has no build ready to update to.";
-    case "build_for_another_account":
+    case "BuildForAnotherAccount":
       return "The newest build runs as another account, whose files would be someone else's. Make a new workspace to use it.";
-    case "no_browser_in_image":
+    case "NoBrowserInImage":
       return "This workspace's environment has no browser. Turn on iglu.browser.enable, rebuild the environment, then update the workspace.";
-    case "browser_column_exists":
+    case "BrowserColumnExists":
       return `This workspace has a browser already, in ${reason.column}.`;
-    case "column_name_taken":
+    case "ColumnNameTaken":
       return `There's a column called ${reason.name} already.`;
-    case "layout_mismatch":
+    case "LayoutMismatch":
       return "The columns changed meanwhile. Try again.";
-    case "secret_target_taken":
+    case "SecretTargetTaken":
       return `${reason.by} already goes there.`;
-    case "project_changed":
+    case "ProjectChanged":
       return "The project changed since you loaded it.";
-    case "builtin_project":
+    case "BuiltinProject":
       return "The built-in project can't be removed.";
-    case "project_in_use":
+    case "ProjectInUse":
       return "The project still has workspaces.";
-    case "too_large":
+    case "TooLarge":
       return "That's too large for iglu to take.";
-    case "provider_unreachable":
+    case "ProviderUnreachable":
       return "The identity provider isn't answering. Try again shortly.";
-    case "no_host":
+    case "NoHost":
       return "iglu has no host to run workspaces on.";
-    case "host_unknown":
+    case "HostUnknown":
       return "This workspace's host isn't in iglu's configuration.";
-    case "host_failed":
+    case "HostFailed":
       return `The workspace's host couldn't do that. It said: ${reason.detail}`;
-    case "internal":
+    case "Internal":
       return "Something went wrong in iglu. Its log says more.";
     default:
       return unreachable(reason);
@@ -163,22 +173,22 @@ function reason(reason: Reason): string {
 /** Why a step on a workspace failed, as a sentence. */
 function failure(failure: Failure): string {
   switch (failure.kind) {
-    case "host":
+    case "Host":
       return `Its host said: ${failure.detail}`;
-    case "secrets_clash": {
+    case "SecretsClash": {
       const clash = failure.clash;
       switch (clash.kind) {
-        case "duplicate_env":
+        case "DuplicateEnv":
           return `Two of your secrets set the environment variable ${clash.name}. Change one in Settings.`;
-        case "duplicate_file":
+        case "DuplicateFile":
           return `Two of your secrets write ~/${clash.path}. Change one in Settings.`;
-        case "duplicate_git_host":
+        case "DuplicateGitHost":
           return `Two of your secrets are Git credentials for ${clash.host}. Change one in Settings.`;
         default:
           return unreachable(clash);
       }
     }
-    case "internal":
+    case "Internal":
       return "Something went wrong in iglu. Its log says more.";
     default:
       return unreachable(failure);
@@ -188,25 +198,25 @@ function failure(failure: Failure): string {
 /** A step that failed, in a workspace's history. */
 function couldnt(step: Effect): string {
   switch (step) {
-    case "create":
+    case "Create":
       return "Couldn't create it";
-    case "start":
+    case "Start":
       return "Couldn't start it";
-    case "deliver_secrets":
+    case "DeliverSecrets":
       return "Couldn't deliver its secrets";
-    case "provision":
+    case "Provision":
       return "Couldn't set it up";
-    case "open_columns":
+    case "OpenColumns":
       return "Couldn't open its columns";
-    case "freeze":
+    case "Freeze":
       return "Couldn't freeze it";
-    case "thaw":
+    case "Thaw":
       return "Couldn't thaw it";
-    case "stop":
+    case "Stop":
       return "Couldn't stop it";
-    case "delete":
+    case "Delete":
       return "Couldn't remove it from its host";
-    case "upgrade":
+    case "Upgrade":
       return "Couldn't upgrade it to the newest build";
     default:
       return unreachable(step);
@@ -233,70 +243,70 @@ function asked(state: DesiredState): string {
 function happened(what: Activity): { what: string; detail: string | null } {
   const only = (text: string) => ({ what: text, detail: null });
   switch (what.kind) {
-    case "requested":
+    case "Requested":
       return { what: "Asked for", detail: what.checkout ? `${what.checkout.branch} on ${what.checkout.repo}` : `in ${what.project}` };
-    case "state-set":
+    case "StateSet":
       return only(asked(what.state));
-    case "created":
+    case "Created":
       return only("Created");
-    case "started":
+    case "Started":
       return only("Started");
-    case "secrets-delivered":
+    case "SecretsDelivered":
       return only("Secrets delivered");
-    case "provisioned":
+    case "Provisioned":
       return only("Set up");
-    case "columns-opened":
+    case "ColumnsOpened":
       return only("Columns opened");
-    case "frozen":
+    case "Frozen":
       return only("Frozen");
-    case "thawed":
+    case "Thawed":
       return only("Thawed");
-    case "stopped":
+    case "Stopped":
       return only("Stopped");
-    case "removed":
+    case "Removed":
       return only("Removed from its host");
-    case "deleted":
+    case "Deleted":
       return only("Deleted");
-    case "error":
+    case "Error":
       return { what: couldnt(what.step), detail: failure(what.failure) };
-    case "renamed":
+    case "Renamed":
       return { what: "Renamed", detail: `${what.from} to ${what.to}` };
-    case "relabeled":
+    case "Relabeled":
       return what.to === null ? only("Called by its name again") : { what: "Called", detail: what.to };
-    case "typed":
+    case "Typed":
       return { what: "Typed", detail: `into ${what.column}` };
-    case "thawed-on-open":
+    case "ThawedOnOpen":
       return only("Thawed when opened");
-    case "idle-froze":
+    case "IdleFroze":
       return only("Frozen while idle");
-    case "idle-stopped":
+    case "IdleStopped":
       return only("Stopped while idle");
-    case "secret-updated":
+    case "SecretUpdated":
       return { what: "Secret updated", detail: what.secret };
-    case "published":
+    case "Published":
       return { what: "Published", detail: `port ${what.port} as ${what.route}` };
-    case "unpublished":
+    case "Unpublished":
       return { what: "Unpublished", detail: `port ${what.port} as ${what.route}` };
-    case "file-kept":
+    case "FileKept":
       return { what: "Kept a file", detail: what.path };
-    case "adopted":
+    case "Adopted":
       switch (what.reason) {
-        case "frozen_state_lost":
+        case "FrozenStateLost":
           return { what: "Changed by its host", detail: "The host restarted, so the frozen workspace is now stopped." };
         default:
           return unreachable(what.reason);
       }
-    case "access-changed":
+    case "AccessChanged":
       return only("Access changed");
-    case "column-added":
+    case "ColumnAdded":
       return { what: "Added a column", detail: what.column };
-    case "column-restarted":
+    case "ColumnRestarted":
       return { what: "Restarted a column", detail: what.column };
-    case "column-closed":
+    case "ColumnClosed":
       return { what: "Closed a column", detail: what.column };
-    case "update-asked":
+    case "UpdateAsked":
       return { what: "Asked to update", detail: `to ${what.environment}'s newest build` };
-    case "updated":
+    case "Updated":
       return only("Updated to the newest build");
     default:
       return unreachable(what);
@@ -335,9 +345,9 @@ function trouble(now: Extract<Situation, { kind: "stuck" | "broken" | "held" }>)
       return { title: "It's broken", detail: "The host can't run it any more. Stop it to try again, or delete it." };
     case "held":
       switch (now.condition.kind) {
-        case "host_offline":
+        case "HostOffline":
           return { title: "The host isn't answering", detail: "It carries on when the host is back." };
-        case "capacity":
+        case "Capacity":
           return {
             title: "Waiting for room",
             detail: `It needs ${gibibytes(now.condition.needed)} and the host has ${gibibytes(now.condition.available)} free. It starts when another workspace frees some.`,
@@ -398,11 +408,11 @@ function unsaved(unsaved: Unsaved): string {
   const commits = (() => {
     const unpushed = unsaved.unpushed;
     switch (unpushed.kind) {
-      case "none":
+      case "None":
         return null;
-      case "commits":
+      case "Commits":
         return plural(unpushed.count, { one: "1 unpushed commit", other: `${numbers.format(unpushed.count)} unpushed commits` });
-      case "no_upstream":
+      case "NoUpstream":
         return "a branch that was never pushed";
       default:
         return unreachable(unpushed);
@@ -414,9 +424,9 @@ function unsaved(unsaved: Unsaved): string {
 /** What a kind of column is called before it has a name. */
 function columnKind(kind: ColumnKind): string {
   switch (kind.kind) {
-    case "shell":
+    case "Shell":
       return "Shell";
-    case "browser":
+    case "Browser":
       return "Browser";
     default:
       return unreachable(kind);
@@ -528,15 +538,15 @@ function themeProblem(problem: ThemeProblem): string {
 /** Why iglud ended a terminal or the workspace's browser. */
 function closed(why: Closed): string {
   switch (why) {
-    case "not_running":
+    case "NotRunning":
       return "The workspace isn't running";
-    case "access_ended":
+    case "AccessEnded":
       return "Access to this workspace ended";
-    case "host_failed":
+    case "HostFailed":
       return "The workspace's host couldn't attach to it";
-    case "browser_not_running":
+    case "BrowserNotRunning":
       return "The browser isn't running; restart its column";
-    case "browser_unreachable":
+    case "BrowserUnreachable":
       return "The browser's display isn't answering; restart its column";
     default:
       return unreachable(why);
@@ -709,7 +719,7 @@ export const m = {
       base: "A branch name is up to 100 characters Git accepts in one, such as main.",
       label: "What you call it is one line of up to 80 characters, with no space at either end.",
       name: "A name is up to 63 lowercase letters, digits and dashes, starting with a letter and not ending with a dash.",
-    },
+    } satisfies Rules<CreateWorkspace>,
     made: (ws: string) => `${ws} is being made; it's in the list.`,
   },
 
@@ -727,7 +737,7 @@ export const m = {
       repo: "A repository is https://host/path, ssh://host/path or user@host:path.",
       name: "A name is up to 63 lowercase letters, digits and dashes, starting with a letter and not ending with a dash.",
       environment: "Choose one of your environments.",
-    },
+    } satisfies Rules<CreateProject>,
   },
 
   environment: {
@@ -741,7 +751,7 @@ export const m = {
     rules: {
       name: "A name is up to 63 lowercase letters, digits and dashes, not starting or ending with a dash.",
       source: "A flake and one of its NixOS configurations, as flake#name, such as github:you/iglu-env#default.",
-    },
+    } satisfies Rules<CreateEnvironment>,
   },
 
   workspace: {
@@ -760,13 +770,13 @@ export const m = {
     renameRules: {
       label: "What you call it is one line of up to 80 characters, with no space at either end.",
       name: "A name is up to 63 lowercase letters, digits and dashes, starting with a letter and not ending with a dash.",
-    },
+    } satisfies Rules<RenameWorkspace & LabelWorkspace>,
     publish: "Publish",
     publishPort: "Publish a port",
     port: "port",
     portLabel: "Port to publish",
     notAPort: (text: string) => (text ? `${text} isn't a port number.` : "That isn't a port number."),
-    portRules: { port: "A port is a number from 1 to 65535." },
+    portRules: { port: "A port is a number from 1 to 65535." } satisfies Rules<PublishPort>,
     freeze: "Freeze",
     freezeTitle: (keys: string | undefined) => keyed("Freeze", keys),
     thaw: "Thaw",
@@ -805,7 +815,7 @@ export const m = {
     browserOpen: "(open)",
     openingBrowser: "Opening the browser…",
     columnName: (title: string) => `Name of ${title}`,
-    columnRules: { label: "A column's name is one line of up to 40 characters, with no space at either end." },
+    columnRules: { label: "A column's name is one line of up to 40 characters, with no space at either end." } satisfies Rules<LabelColumn>,
     find: {
       label: (title: string) => `Find in ${title}`,
       placeholder: "Find",
@@ -923,11 +933,11 @@ export const m = {
     empty: "No workspaces yet.",
     idle: (kind: IdleRule["kind"]) => {
       switch (kind) {
-        case "default":
+        case "Default":
           return "Freeze as usual";
-        case "never":
+        case "Never":
           return "Stay awake";
-        case "after":
+        case "After":
           return "Freeze after…";
         default:
           return unreachable(kind);
@@ -959,9 +969,8 @@ export const m = {
       environment: "Choose one of your environments.",
       ports: "Previews are up to 16 ports from 1 to 65535, except the browser's 5900 and 9222.",
       idle: "Choose when its workspaces freeze.",
-      minutes: "Freeze after a whole number of minutes, at least 1.",
       opening: "New workspaces open with at most 16 columns, and one browser.",
-    },
+    } satisfies Rules<ChangeProject>,
     deleteFirst: (project: string) => `Delete its workspaces to remove ${project}.`,
     confirmRemove: (project: string) => `Remove ${project}? Its settings go; nothing else does.`,
     removeSure: "Remove",
@@ -972,14 +981,14 @@ export const m = {
   settings: {
     heading: "Settings",
     environments: "Environments",
-    build: (latest: { status: "building" } | { status: "ready"; at: string } | { status: "failed" } | null) => {
+    build: (latest: { status: "Building" } | { status: "Ready"; at: string } | { status: "Failed" } | null) => {
       if (latest === null) return "never built";
       switch (latest.status) {
-        case "building":
+        case "Building":
           return "building…";
-        case "ready":
+        case "Ready":
           return `built ${latest.at}`;
-        case "failed":
+        case "Failed":
           return "build failed";
         default:
           return unreachable(latest);
@@ -1025,7 +1034,7 @@ export const m = {
       name: "A secret's name is up to 64 lowercase letters, digits, dashes, underscores and dots.",
       target: "Where it goes: a variable is capital letters, digits and underscores, not one iglu sets; a path stays inside your home; a host is a name such as github.com.",
       value: "A value is up to 64 KiB.",
-    },
+    } satisfies Rules<PutSecret & SecretPath>,
     keyboard: "Keyboard",
     prefix: "Prefix, to reach iglu from a terminal",
     prefixRecording: "Press a Ctrl chord for the prefix",
@@ -1036,11 +1045,11 @@ export const m = {
     optionAsMeta: "Option as Meta in terminals",
     meta: (meta: OptionAsMeta) => {
       switch (meta) {
-        case "left":
+        case "Left":
           return "Left Option";
-        case "both":
+        case "Both":
           return "Both Options";
-        case "off":
+        case "Off":
           return "Neither";
         default:
           return unreachable(meta);
@@ -1068,11 +1077,11 @@ export const m = {
     look: "Look",
     lookName: (look: Look) => {
       switch (look) {
-        case "auto":
+        case "Auto":
           return "System";
-        case "dark":
+        case "Dark":
           return "Polar night";
-        case "light":
+        case "Light":
           return "Snowfield";
         default:
           return unreachable(look);
@@ -1123,11 +1132,11 @@ export const m = {
     previewAbout: (ws: string, port: number) => `${ws} :${port}`,
     look: (look: Look) => {
       switch (look) {
-        case "auto":
+        case "Auto":
           return "Look: match the system";
-        case "dark":
+        case "Dark":
           return "Look: Polar night";
-        case "light":
+        case "Light":
           return "Look: Snowfield";
         default:
           return unreachable(look);
@@ -1184,6 +1193,8 @@ export const m = {
   },
 
   browser: {
+    label: (title: string) => `Browser, ${title}`,
+    description: (prefix: string) => `${prefix}, then Tab leaves the browser; ${prefix}, then ? lists shortcuts.`,
     opening: "Opening the browser…",
     retrying: (why: Closed | null) => (why ? `${closed(why)}. Trying again…` : "Reconnecting…"),
     copyRefused: "The browser's selection couldn't be copied here.",

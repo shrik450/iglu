@@ -5,4 +5,4 @@
  * the close frame's reason: its name, which the console says in words and
  * `Display` says in English.
  */
-export type Closed = "not_running" | "access_ended" | "host_failed" | "browser_not_running" | "browser_unreachable";
+export type Closed = "NotRunning" | "AccessEnded" | "HostFailed" | "BrowserNotRunning" | "BrowserUnreachable";

@@ -214,8 +214,8 @@ export class BrowserPane {
   }
 
   describe(title: string, prefix: string): void {
-    this.input.setAttribute("aria-label", `Browser, ${title}`);
-    this.input.setAttribute("aria-description", `${prefix}, then Tab leaves the browser; ${prefix}, then ? lists shortcuts.`);
+    this.input.setAttribute("aria-label", m.browser.label(title));
+    this.input.setAttribute("aria-description", m.browser.description(prefix));
   }
 
   focus(): void {
@@ -297,10 +297,10 @@ export class BrowserPane {
 
   private event(event: BrowserEvent): void {
     switch (event.type) {
-      case "display":
+      case "Display":
         this.show(event.hardware);
         break;
-      case "downloaded":
+      case "Downloaded":
         this.downloaded.value = {
           name: event.name,
           path: event.path,
@@ -331,7 +331,7 @@ export class BrowserPane {
 
   private openWanted(): void {
     if (this.wanted === null || this.waiting.value !== null) return;
-    this.send({ type: "open", address: this.wanted });
+    this.send({ type: "Open", address: this.wanted });
     this.wanted = null;
   }
 
@@ -348,7 +348,7 @@ export class BrowserPane {
 
   private readonly ratioChanged = () => {
     this.watchRatio();
-    this.send({ type: "scale", scale: scaleOf(devicePixelRatio) });
+    this.send({ type: "Scale", scale: scaleOf(devicePixelRatio) });
     this.screen?.resized();
   };
 
