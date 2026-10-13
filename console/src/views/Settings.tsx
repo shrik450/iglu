@@ -7,7 +7,7 @@ import { api } from "../api/client.ts";
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
 import { mac } from "../keyboard.ts";
-import { keyboard, look, setKeyboard, setLook, setTermStyle, termStyle } from "../preferences.ts";
+import { type ShownLook, keyboard, look, setKeyboard, setLook, setTermStyle, termStyle } from "../preferences.ts";
 import { enableNotifications } from "../notify.ts";
 import type { EnvironmentView } from "../generated/EnvironmentView.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
@@ -16,6 +16,7 @@ import type { SecretView } from "../generated/SecretView.ts";
 import { repoLabel } from "../state/groups.ts";
 import { type Chord, chordLabel, usablePrefix } from "../state/keys.ts";
 import type { OptionAsMeta } from "../generated/OptionAsMeta.ts";
+import type { TerminalColours } from "../generated/TerminalColours.ts";
 import type { TerminalStyle } from "../generated/TerminalStyle.ts";
 import { environments, me, projects, say, workspaces } from "../state/store.ts";
 import { type CellSize, THEMES, XTERM, cellSize, cellSizes, colorsOf, fontName, formatTheme, isLight, parseTheme } from "../state/themes.ts";
@@ -365,62 +366,15 @@ function Terminal() {
     setFontRefused(Boolean(font.trim()) && !name);
     if (!font.trim() || name) set({ font: name });
   };
-  const names = Object.keys(THEMES);
   const size = cellSize(advance.value, prefs.size);
   // A size kept from another font may fall outside this one's.
   const sizes = cellSizes(advance.value);
   if (!sizes.some((s) => s.width === size.width)) sizes.push(size), sizes.sort((a, b) => a.width - b.width);
-  const pasted = prefs.theme === "pasted" ? parseTheme(prefs.pasted) : null;
-  const choose = (theme: string) => {
-    // A theme of one's own starts from the one it takes over from.
-    if (theme === "pasted" && !prefs.pasted.trim()) set({ theme, pasted: formatTheme(colorsOf(prefs.theme, "") ?? pageColors()) });
-    else set({ theme });
-  };
   return (
     <section class="set" aria-labelledby="terminal-h">
       <h2 id="terminal-h">Terminal</h2>
-      <label class="set-row">
-        <span>Colours</span>
-        <select value={prefs.theme} onChange={(e) => choose(e.currentTarget.value)}>
-          <option value="iglu">iglu's own</option>
-          {[false, true].map((light) => (
-            <optgroup key={String(light)} label={light ? "Light" : "Dark"}>
-              {names
-                .filter((name) => isLight(THEMES[name]!) === light)
-                .map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-            </optgroup>
-          ))}
-          <option value="pasted">Pasted from Ghostty</option>
-        </select>
-      </label>
-      {pasted ? (
-        <div class="set-form">
-          <label class="grow">
-            <span>
-              A theme in Ghostty's format: a theme file, or <code>ghostty +show-config</code>
-            </span>
-            <textarea
-              class="theme-paste"
-              rows={8}
-              value={prefs.pasted}
-              spellcheck={false}
-              autocomplete="off"
-              aria-invalid={"error" in pasted}
-              aria-describedby={"error" in pasted ? "theme-err" : undefined}
-              onInput={(e) => set({ pasted: e.currentTarget.value }, true)}
-            />
-          </label>
-          {"error" in pasted ? (
-            <span id="theme-err" class="field-err">
-              {pasted.error} Until it reads, terminals keep iglu's own colours.
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      <Colours look="dark" />
+      <Colours look="light" />
       <label class="set-row">
         <span>Font</span>
         <input
@@ -455,6 +409,67 @@ function Terminal() {
       </label>
       <Sample />
     </section>
+  );
+}
+
+/** The terminal's colours in one look. */
+function Colours({ look }: { look: ShownLook }) {
+  const prefs = termStyle.value;
+  const colours = prefs[look];
+  const set = (change: Partial<TerminalColours>, typing = false) => setTermStyle({ ...prefs, [look]: { ...colours, ...change } }, typing);
+  const names = Object.keys(THEMES);
+  const pasted = colours.theme === "pasted" ? parseTheme(colours.pasted) : null;
+  const choose = (theme: string) => {
+    // A theme of one's own starts from the one it takes over from.
+    if (theme === "pasted" && !colours.pasted.trim()) set({ theme, pasted: formatTheme(colorsOf(colours.theme, "") ?? pageColors()) });
+    else set({ theme });
+  };
+  const error = `theme-err-${look}`;
+  return (
+    <>
+      <label class="set-row">
+        <span>{look === "dark" ? "Dark colours" : "Light colours"}</span>
+        <select value={colours.theme} onChange={(e) => choose(e.currentTarget.value)}>
+          <option value="iglu">iglu's own</option>
+          {[false, true].map((light) => (
+            <optgroup key={String(light)} label={light ? "Light" : "Dark"}>
+              {names
+                .filter((name) => isLight(THEMES[name]!) === light)
+                .map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+            </optgroup>
+          ))}
+          <option value="pasted">Pasted from Ghostty</option>
+        </select>
+      </label>
+      {pasted ? (
+        <div class="set-form">
+          <label class="grow">
+            <span>
+              A {look} theme in Ghostty's format: a theme file, or <code>ghostty +show-config</code>
+            </span>
+            <textarea
+              class="theme-paste"
+              rows={8}
+              value={colours.pasted}
+              spellcheck={false}
+              autocomplete="off"
+              aria-invalid={"error" in pasted}
+              aria-describedby={"error" in pasted ? error : undefined}
+              onInput={(e) => set({ pasted: e.currentTarget.value }, true)}
+            />
+          </label>
+          {"error" in pasted ? (
+            <span id={error} class="field-err">
+              {pasted.error} Until it reads, terminals keep iglu's own colours.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </>
   );
 }
 

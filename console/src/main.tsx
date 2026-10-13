@@ -9,7 +9,7 @@ import { App } from "./app.tsx";
 import { paintFrost } from "./components/bits.tsx";
 import { onPageKey } from "./keyboard.ts";
 import "./notify.ts";
-import { look, termStyle } from "./preferences.ts";
+import { look, shownLook, termStyle } from "./preferences.ts";
 import { me, say } from "./state/store.ts";
 import { activeScreen, loadTerminals, restyleTerminals } from "./terminal.ts";
 import { applyTermStyle } from "./termstyle.ts";
@@ -23,15 +23,9 @@ effect(() => {
   if (value === "auto") delete document.documentElement.dataset["look"];
   else document.documentElement.dataset["look"] = value;
 });
-// Terminals paint their own colours, so they follow a change of look: the
-// one chosen in Settings, once it's applied, or the system's.
-effect(() => {
-  void look.value;
-  queueMicrotask(restyleTerminals);
-});
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", restyleTerminals);
-// And the type and colours chosen for them, once those are on the page.
-effect(() => void applyTermStyle(termStyle.value).then(restyleTerminals));
+// Terminals paint their own colours, so they follow the type and colours
+// chosen for them, and the look the page is in, once those are on the page.
+effect(() => void applyTermStyle(termStyle.value, shownLook.value).then(restyleTerminals));
 document.addEventListener("keydown", onPageKey);
 const root = document.getElementById("app");
 if (root) render(<App />, root);

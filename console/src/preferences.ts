@@ -19,10 +19,11 @@ import { say } from "./state/store.ts";
 const DEFAULTS: Preferences = {
   look: "auto",
   keyboard: { prefix: DEFAULT_PREFIX, alt_moves: true, option_as_meta: "left" },
-  terminal: { font: null, size: 13, theme: "iglu", pasted: "" },
+  terminal: { font: null, size: 13, dark: { theme: "iglu", pasted: "" }, light: { theme: "iglu", pasted: "" } },
 };
 
-const CACHE = "iglu.preferences";
+// Named for the shape it holds, so one kept in an older shape isn't read.
+const CACHE = "iglu.preferences.2";
 
 function cached(): Preferences | null {
   try {
@@ -112,6 +113,16 @@ addEventListener("pagehide", () => {
 
 export const look = computed<Look>(() => preferences.value.look);
 export const setLook = (value: Look) => setPreferences({ ...preferences.peek(), look: value });
+
+/** One of the two looks, as against the system's choice of one. */
+export type ShownLook = Exclude<Look, "auto">;
+
+const systemDark = matchMedia("(prefers-color-scheme: dark)");
+const systemLook = signal<ShownLook>(systemDark.matches ? "dark" : "light");
+systemDark.addEventListener("change", () => (systemLook.value = systemDark.matches ? "dark" : "light"));
+
+/** The look the page is in: the one chosen, or the system's. */
+export const shownLook = computed<ShownLook>(() => (look.value === "auto" ? systemLook.value : look.value));
 
 /** The keyboard, with a prefix the console can use whatever was stored. */
 export const keyboard = computed<Keyboard>(() => {
