@@ -340,6 +340,11 @@ try:
         page_titled("confirmed hello")
         browser("browser-keeps", "demo")
         page_titled("typed pasted")
+        # Its VNC server ending, as the display ends it for a size it
+        # refuses, leaves the browser as it was: shown again, its page open.
+        guest("pkill -x wayvnc")
+        browser("browser-hides", "demo")
+        page_titled("typed pasted")
         # Its port is iglu's own, and never published.
         refused = client.fail(f"{IGLU} port demo 9222 2>&1")
         assert "DevTools" in refused, refused

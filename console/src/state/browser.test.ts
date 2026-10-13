@@ -62,6 +62,13 @@ test("the display is drawn in the screen's device pixels, at a scale it takes", 
   assert.deepEqual(displaySize({ w: 640.5, h: 400 }, 2), { w: 1281, h: 800 });
 });
 
+test("a screen without a pixel each way, as a hidden one, has no size for the display", () => {
+  assert.equal(displaySize({ w: 0, h: 0 }, 2), null);
+  assert.equal(displaySize({ w: 640, h: 0 }, 2), null);
+  assert.equal(displaySize({ w: 0.2, h: 400 }, 1), null);
+  assert.deepEqual(displaySize({ w: 0.5, h: 400 }, 1), { w: 1, h: 400 });
+});
+
 test("the display is asked for H.264 when it encodes on a GPU, and ZRLE otherwise", () => {
   const offered = [1, 50, 7, 16, 0, -256];
   assert.deepEqual(preferred(offered, false), [16, 1, 50, 7, 0, -256]);

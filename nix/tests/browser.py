@@ -745,6 +745,30 @@ def browser_keeps(page: Page, name: str) -> Any:
     return {}
 
 
+def browser_hides(page: Page, name: str) -> Any:
+    """A browser column hidden, as a layout squeezes it to nothing, leaves
+    the browser's display as it was: shown again, it's there without
+    reconnecting."""
+    closed: list[str] = []
+
+    def watch(socket: Any) -> None:
+        if "/browser?" in socket.url:
+            socket.on("close", lambda s: closed.append(s.url))
+
+    page.on("websocket", watch)
+    screen = browser_screen(page, name)
+    stage = column(page, "browser").locator(".browser-stage")
+    stage.evaluate("s => s.style.display = 'none'")
+    # Long enough for noVNC to ask for the hidden screen's size, past its
+    # wait between resizes, and for a VNC server ended by it to drop us.
+    time.sleep(2)
+    stage.evaluate("s => s.style.display = ''")
+    filled(screen)
+    assert not closed, f"the browser's connection closed: {closed}"
+    expect(column(page, "browser").locator(".browser-wait")).to_have_count(0)
+    return {}
+
+
 # A query's answer, read back raw from the terminal, then printed quoted on
 # one line that the command as typed can't be mistaken for.
 ANSWER = (
@@ -1713,6 +1737,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "browses": browses,
     "browser-answers": browser_answers,
     "browser-keeps": browser_keeps,
+    "browser-hides": browser_hides,
     "palette-from-terminal": palette_from_terminal,
     "palette-ranks": palette_ranks,
     "recording-cancels": recording_cancels,

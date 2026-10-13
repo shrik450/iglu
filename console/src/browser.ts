@@ -87,7 +87,8 @@ class Channel implements RawChannel {
  * a phone's own browser does. */
 class Screen extends RFB {
   private readonly hardware: boolean;
-  private sizing = false;
+  /** The display's size for the screen, while asking the display for it. */
+  private sizing: { w: number; h: number } | null = null;
   /** Where a finger that's scrolling last was. */
   private finger: { x: number; y: number } | null = null;
 
@@ -112,17 +113,20 @@ class Screen extends RFB {
   }
 
   protected override _requestRemoteResize(): void {
-    this.sizing = true;
+    // A screen with no size, as while it's hidden, leaves the display at
+    // the one it has; the display would end its VNC server for a size of
+    // nothing. noVNC asks again when the screen next resizes.
+    this.sizing = displaySize(super._screenSize(), scaleOf(devicePixelRatio));
+    if (!this.sizing) return;
     try {
       super._requestRemoteResize();
     } finally {
-      this.sizing = false;
+      this.sizing = null;
     }
   }
 
   protected override _screenSize(): { w: number; h: number } {
-    const box = super._screenSize();
-    return this.sizing ? displaySize(box, scaleOf(devicePixelRatio)) : box;
+    return this.sizing ?? super._screenSize();
   }
 
   protected override _handleGesture(event: CustomEvent<Gesture>): void {
