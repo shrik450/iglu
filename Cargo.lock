@@ -1248,7 +1248,7 @@ dependencies = [
 
 [[package]]
 name = "iglu-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "iglu-domain",
  "iglu-proto",
@@ -1260,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "iglu-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "iglu-devhost"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1309,7 +1309,7 @@ dependencies = [
 
 [[package]]
 name = "iglu-domain"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "iglu-guest"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "iglu-domain",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "iglu-hostd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "iglu-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "iglu-domain",
  "serde",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "iglud"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
