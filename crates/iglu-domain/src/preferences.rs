@@ -124,11 +124,11 @@ pub struct TerminalStyle {
     /// The text's size, in pixels, before the console nudges it so cells
     /// are whole pixels.
     pub size: FontSize,
-    /// `iglu`, a theme the console has by name, or `pasted`. A name the
-    /// console doesn't know reads as iglu's own.
-    pub theme: ThemeName,
-    /// A theme pasted in Ghostty's format, kept while another is tried.
-    pub pasted: PastedTheme,
+    /// The colours in the dark look. Each look has its own, so terminals
+    /// follow the look as the page does.
+    pub dark: TerminalColours,
+    /// The colours in the light look.
+    pub light: TerminalColours,
 }
 
 impl Default for TerminalStyle {
@@ -136,6 +136,27 @@ impl Default for TerminalStyle {
         Self {
             font: None,
             size: FontSize(13),
+            dark: TerminalColours::default(),
+            light: TerminalColours::default(),
+        }
+    }
+}
+
+/// A terminal's colours in one look.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TerminalColours {
+    /// `iglu`, a theme the console has by name, or `pasted`. A name the
+    /// console doesn't know reads as iglu's own.
+    pub theme: ThemeName,
+    /// A theme pasted in Ghostty's format, kept while another is tried.
+    pub pasted: PastedTheme,
+}
+
+impl Default for TerminalColours {
+    fn default() -> Self {
+        Self {
             theme: ThemeName("iglu".to_owned()),
             pasted: PastedTheme(String::new()),
         }
@@ -280,7 +301,8 @@ mod tests {
         assert_eq!(stored.look, Look::Dark);
         assert_eq!(stored.keyboard, Keyboard::default());
         assert_eq!(u8::from(stored.terminal.size), 16);
-        assert_eq!(stored.terminal.theme.to_string(), "iglu");
+        assert_eq!(stored.terminal.dark.theme.to_string(), "iglu");
+        assert_eq!(stored.terminal.light.theme.to_string(), "iglu");
     }
 
     #[test]
@@ -293,9 +315,16 @@ mod tests {
             },
             terminal: TerminalStyle {
                 font: Some("Berkeley Mono".parse().expect("a font name")),
-                pasted: "background = #000000\nforeground = #ffffff\n"
-                    .parse()
-                    .expect("a theme"),
+                dark: TerminalColours {
+                    theme: "Dracula".parse().expect("a theme name"),
+                    ..TerminalColours::default()
+                },
+                light: TerminalColours {
+                    theme: "pasted".parse().expect("a theme name"),
+                    pasted: "background = #ffffff\nforeground = #000000\n"
+                        .parse()
+                        .expect("a theme"),
+                },
                 ..TerminalStyle::default()
             },
         };

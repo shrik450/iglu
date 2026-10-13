@@ -5,6 +5,7 @@
 import { signal } from "@preact/signals";
 
 import type { TerminalStyle } from "./generated/TerminalStyle.ts";
+import type { ShownLook } from "./preferences.ts";
 import { XTERM, cellSize, colorsOf, isLight } from "./state/themes.ts";
 
 /** The terminal font's character width as a fraction of its size, as last
@@ -29,7 +30,8 @@ export async function styleApplied(): Promise<void> {
   } while (awaited !== applying);
 }
 
-export function applyTermStyle(prefs: TerminalStyle): Promise<void> {
+/** Applies `prefs`, in the colours chosen for `look`. */
+export function applyTermStyle(prefs: TerminalStyle, look: ShownLook): Promise<void> {
   const turn = ++latest;
   applying = (async () => {
     await document.fonts.load(`16px ${prefs.font ? `"${prefs.font}", ` : ""}'JetBrains Mono'`).catch(() => []);
@@ -40,7 +42,8 @@ export function applyTermStyle(prefs: TerminalStyle): Promise<void> {
 
     // iglu's own colours are the stylesheet's, which follow the look; a
     // theme's take over the terminal and its column alike.
-    const colors = colorsOf(prefs.theme, prefs.pasted);
+    const chosen = prefs[look];
+    const colors = colorsOf(chosen.theme, chosen.pasted);
     set("--term-bg", colors?.background ?? null);
     set("--term-ink", colors?.foreground ?? null);
     set("--term-dim", colors ? `color-mix(in srgb, ${colors.foreground} 55%, ${colors.background})` : null);

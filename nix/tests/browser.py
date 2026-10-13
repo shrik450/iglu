@@ -548,8 +548,9 @@ def styles_terminal(page: Page, name: str) -> Any:
     """The terminal's type and colours are the person's: chosen in Settings
     in one browser, they reach a terminal open in another as they're chosen.
     Its cells grow whole pixels at a time, the shell learns its new size,
-    and a program asking for the background gets the theme's. A theme
-    pasted in Ghostty's format works the same."""
+    and a program asking for the background gets the theme's. Each look keeps
+    its own theme, which terminals take as the look changes, back and forth.
+    A theme pasted in Ghostty's format works the same."""
     open_workspace(page, name)
     first = columns(page)[0]
     term = column(page, first).locator(".term-host > .wterm")
@@ -579,20 +580,27 @@ def styles_terminal(page: Page, name: str) -> Any:
         sign_in(settings)
         settings.goto(f"{CONSOLE}/settings")
         section = settings.locator("section", has=settings.get_by_role("heading", name="Terminal"))
-        section.get_by_label("Colours").select_option("Dracula")
+        settings.get_by_role("button", name="Polar night").click()
+        section.get_by_label("Dark colours").select_option("Dracula")
         section.get_by_label("Size").select_option(label="17px")
         expect(term).to_have_css("background-color", "rgb(40, 42, 54)")
         cell_is(10, 21)
         background, after = style("]11;rgb:2828/2a2a/3636")
         assert after < before, {"before": before, "after": after}
-        section.get_by_label("Colours").select_option("pasted")
-        section.get_by_label("A theme in Ghostty's format").fill("background = #102030\nforeground = #e0e0e0\n")
+        section.get_by_label("Light colours").select_option("GitHub Light")
+        settings.get_by_role("button", name="Snowfield").click()
+        expect(term).to_have_css("background-color", "rgb(255, 255, 255)")
+        light, _ = style("]11;rgb:ffff/ffff/ffff")
+        settings.get_by_role("button", name="Polar night").click()
+        expect(term).to_have_css("background-color", "rgb(40, 42, 54)")
+        section.get_by_label("Dark colours").select_option("pasted")
+        section.get_by_label("A dark theme in Ghostty's format").fill("background = #102030\nforeground = #e0e0e0\n")
         expect(term).to_have_css("background-color", "rgb(16, 32, 48)")
     finally:
         keep_preferences(page, kept)
         elsewhere.close()
     cell_is(8, 17)
-    return {"background": background, "cols": [before, after]}
+    return {"background": background, "light": light, "cols": [before, after]}
 
 
 def pastes_files(page: Page, name: str) -> Any:
