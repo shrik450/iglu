@@ -62,33 +62,32 @@ function gibibytes(bytes: number): string {
 function reason(reason: Reason): string {
   switch (reason.kind) {
     case "Invalid":
-      return "That isn't something iglu can take.";
     case "NotJson":
     case "JsonExpected":
     case "FormExpected":
     case "MethodNotAllowed":
     case "IdempotencyKeyInvalid":
-      return "iglu couldn't read what this page sent. Reload the page.";
+      return "iglu couldn't read what this page sent. Try again, or reload the page.";
     case "Unreadable":
-      return "That didn't reach iglu whole. Try again.";
+      return "iglu couldn't parse that request. Try again.";
     case "NotWebSocket":
       return "That needs a live connection, which this page didn't open. Reload the page.";
     case "ProjectUnnamed":
-      return "Give the project a name or a repository.";
+      return "This project needs a name or a repository.";
     case "NothingToType":
-      return "Say what to type, or to press Enter.";
+      return "Provide text to type, or press Enter.";
     case "NoWorkspaceToGrant":
-      return "There's no such workspace to give that access to.";
+      return "That workspace doesn't exist.";
     case "BrowserPort":
-      return `Port ${reason.port} can't be published: it's the workspace browser's debugging port or its display, and a preview of either would let anyone with the link drive the browser.`;
+      return `Port ${reason.port} is reserved for browser debugging and can't be published.`;
     case "SignInIncomplete":
-      return "The sign-in came back without what iglu needs. Try again.";
+      return "The sign-in response from your identity provider was incomplete. Try again.";
     case "OtherBrowser":
-      return "Finish signing in in the browser that started it.";
+      return "Finish signing in using the same browser you started in.";
     case "SignInExpired":
       return "This sign-in expired. Try again.";
     case "CliSignInMalformed":
-      return "That request to sign in the iglu CLI isn't one iglu reads.";
+      return "This request to sign in the iglu CLI was malformed. Try again.";
     case "BadReturnAddress":
       return "That sign-in was asked to return somewhere other than a preview.";
     case "Unauthorized":
@@ -96,33 +95,33 @@ function reason(reason: Reason): string {
     case "AccountDisabled":
       return "This account is disabled.";
     case "NotGranted":
-      return "This workspace hasn't been given that.";
+      return "This workspace hasn't been given permission to do that.";
     case "PersonOnly":
       return "Only a person can do that, not a workspace.";
     case "NotFromWorkspace":
-      return "A workspace can't do that from inside; its owner can.";
+      return "A workspace can't do that from inside.";
     case "CrossOrigin":
       return "iglu refused a request from another site.";
     case "SignInFailed":
       return "Signing in failed.";
     case "ProviderRefused":
-      return `The identity provider refused, saying ${reason.error}.`;
+      return `The identity provider refused. The upstream error was: '${reason.error}'.`;
     case "AccountNotAllowed":
       return "This account isn't allowed to use iglu.";
     case "NotFound":
-      return "That isn't there any more.";
+      return "Not found.";
     case "NotRunning":
       return "The workspace isn't running.";
     case "IdempotencyKeyReused":
-      return "iglu took that for a repeat of another request. Try again.";
+      return "The idempotency key of this request has already been used, so iglu didn't do anything. Your request may already have been processed. If not, try again.";
     case "NoSuchProject":
       return "That project isn't there any more.";
     case "NoEnvironment":
-      return `There's no environment called ${reason.name}.`;
+      return `There isn't an environment called ${reason.name}.`;
     case "NotBuilt":
-      return `${reason.environment} hasn't finished a build yet. Wait for it, or rebuild it in Settings.`;
+      return `${reason.environment} isn't done building yet. Wait for the build to finish, or rebuild from Settings.`;
     case "NoRepository":
-      return "The project has no repository, so its workspaces have no branch.";
+      return "The project doesn't have a repository, so workspaces don't have branches.";
     case "WorkspaceNameTaken":
       return "Another workspace has that name.";
     case "ProjectNameTaken":
@@ -134,11 +133,11 @@ function reason(reason: Reason): string {
     case "FreezeNeedsRunning":
       return "Only a running workspace can be frozen.";
     case "NoBuildToUpdateTo":
-      return "Its environment has no build ready to update to.";
+      return "The environment doesn't have a build ready to update to.";
     case "BuildForAnotherAccount":
-      return "The newest build runs as another account, whose files would be someone else's. Make a new workspace to use it.";
+      return "The newest build runs as another account, whose files would be someone else's. Create a new workspace to use that build.";
     case "NoBrowserInImage":
-      return "This workspace's environment has no browser. Turn on iglu.browser.enable, rebuild the environment, then update the workspace.";
+      return "This workspace's environment doesn't have a browser. Turn on iglu.browser.enable, rebuild the environment, then update the workspace.";
     case "BrowserColumnExists":
       return `This workspace has a browser already, in ${reason.column}.`;
     case "ColumnNameTaken":
@@ -148,7 +147,7 @@ function reason(reason: Reason): string {
     case "SecretTargetTaken":
       return `${reason.by} already goes there.`;
     case "ProjectChanged":
-      return "The project changed since you loaded it.";
+      return "The project has changed since this page loaded.";
     case "BuiltinProject":
       return "The built-in project can't be removed.";
     case "ProjectInUse":
@@ -158,13 +157,13 @@ function reason(reason: Reason): string {
     case "ProviderUnreachable":
       return "The identity provider isn't answering. Try again shortly.";
     case "NoHost":
-      return "iglu has no host to run workspaces on.";
+      return "iglu doesn't have a host to run workspaces on.";
     case "HostUnknown":
       return "This workspace's host isn't in iglu's configuration.";
     case "HostFailed":
-      return `The workspace's host couldn't do that. It said: ${reason.detail}`;
+      return `The workspace's host couldn't do that. The host said: ${reason.detail}`;
     case "Internal":
-      return "Something went wrong in iglu. Its log says more.";
+      return "Something went wrong in iglu. Check iglu's log for details.";
     default:
       return unreachable(reason);
   }
@@ -174,7 +173,7 @@ function reason(reason: Reason): string {
 function failure(failure: Failure): string {
   switch (failure.kind) {
     case "Host":
-      return `Its host said: ${failure.detail}`;
+      return `The host said: ${failure.detail}`;
     case "SecretsClash": {
       const clash = failure.clash;
       switch (clash.kind) {
@@ -189,7 +188,7 @@ function failure(failure: Failure): string {
       }
     }
     case "Internal":
-      return "Something went wrong in iglu. Its log says more.";
+      return "Something went wrong in iglu. Check iglu's log for details.";
     default:
       return unreachable(failure);
   }
@@ -199,25 +198,25 @@ function failure(failure: Failure): string {
 function couldnt(step: Effect): string {
   switch (step) {
     case "Create":
-      return "Couldn't create it";
+      return "Couldn't create";
     case "Start":
-      return "Couldn't start it";
+      return "Couldn't start";
     case "DeliverSecrets":
-      return "Couldn't deliver its secrets";
+      return "Couldn't deliver secrets";
     case "Provision":
-      return "Couldn't set it up";
+      return "Couldn't set up";
     case "OpenColumns":
-      return "Couldn't open its columns";
+      return "Couldn't open columns";
     case "Freeze":
-      return "Couldn't freeze it";
+      return "Couldn't freeze";
     case "Thaw":
-      return "Couldn't thaw it";
+      return "Couldn't thaw";
     case "Stop":
-      return "Couldn't stop it";
+      return "Couldn't stop";
     case "Delete":
-      return "Couldn't remove it from its host";
+      return "Couldn't remove from the host";
     case "Upgrade":
-      return "Couldn't upgrade it to the newest build";
+      return "Couldn't upgrade to the newest build";
     default:
       return unreachable(step);
   }
@@ -264,7 +263,7 @@ function happened(what: Activity): { what: string; detail: string | null } {
     case "Stopped":
       return only("Stopped");
     case "Removed":
-      return only("Removed from its host");
+      return only("Removed from the host");
     case "Deleted":
       return only("Deleted");
     case "Error":
@@ -272,7 +271,7 @@ function happened(what: Activity): { what: string; detail: string | null } {
     case "Renamed":
       return { what: "Renamed", detail: `${what.from} to ${what.to}` };
     case "Relabeled":
-      return what.to === null ? only("Called by its name again") : { what: "Called", detail: what.to };
+      return what.to === null ? only("Label cleared") : { what: "Labeled", detail: what.to };
     case "Typed":
       return { what: "Typed", detail: `into ${what.column}` };
     case "ThawedOnOpen":
@@ -292,7 +291,7 @@ function happened(what: Activity): { what: string; detail: string | null } {
     case "Adopted":
       switch (what.reason) {
         case "FrozenStateLost":
-          return { what: "Changed by its host", detail: "The host restarted, so the frozen workspace is now stopped." };
+          return { what: "Changed by the host", detail: "The host restarted, so the frozen workspace is now stopped." };
         default:
           return unreachable(what.reason);
       }
@@ -317,16 +316,16 @@ function happened(what: Activity): { what: string; detail: string | null } {
 function failing(phase: Phase): string {
   switch (phase) {
     case "creating":
-      return "Can't create it yet";
+      return "Creating keeps failing";
     case "starting":
-      return "Can't start it yet";
+      return "Starting keeps failing";
     case "freezing":
-      return "Can't freeze it yet";
+      return "Freezing keeps failing";
     case "stopping":
-      return "Can't stop it yet";
+      return "Stopping keeps failing";
     case "deleting":
     case "deleted":
-      return "Can't delete it yet";
+      return "Deleting keeps failing";
     case "running":
     case "frozen":
     case "stopped":
@@ -342,15 +341,15 @@ function trouble(now: Extract<Situation, { kind: "stuck" | "broken" | "held" }>)
     case "stuck":
       return { title: failing(now.phase), detail: `${failure(now.failure)} iglu keeps trying.` };
     case "broken":
-      return { title: "It's broken", detail: "The host can't run it any more. Stop it to try again, or delete it." };
+      return { title: "Broken", detail: "The host can't run this workspace any more. Stop and start again, or delete." };
     case "held":
       switch (now.condition.kind) {
         case "HostOffline":
-          return { title: "The host isn't answering", detail: "It carries on when the host is back." };
+          return { title: "The host isn't answering", detail: "Continues when the host is back." };
         case "Capacity":
           return {
             title: "Waiting for room",
-            detail: `It needs ${gibibytes(now.condition.needed)} and the host has ${gibibytes(now.condition.available)} free. It starts when another workspace frees some.`,
+            detail: `Needs ${gibibytes(now.condition.needed)}; the host has ${gibibytes(now.condition.available)} free. Starts when another workspace frees memory.`,
           };
         default:
           return unreachable(now.condition);
@@ -368,7 +367,7 @@ function resting(now: Extract<Situation, { kind: "building" | "frozen" | "stoppe
     case "frozen":
       return now.freezing ? "Freezing…" : "Frozen";
     case "stopped":
-      return "Stopped. Its files are kept; its processes ended.";
+      return "Stopped. Files are kept; processes have ended.";
     case "leaving":
       return now.deleting ? "Deleting…" : "Stopping…";
     default:
@@ -437,17 +436,17 @@ function columnKind(kind: ColumnKind): string {
 function permission(permission: Permission): { label: string; title: string } {
   switch (permission) {
     case "view":
-      return { label: "See", title: "See the workspace, its columns and what they're doing; every other permission includes this" };
+      return { label: "See", title: "See the workspace, columns and activity; every other permission includes this" };
     case "read_output":
-      return { label: "Read", title: "Read what its terminals show" };
+      return { label: "Read", title: "Read terminal output" };
     case "send_input":
-      return { label: "Type", title: "Type into its terminals: as much as running commands there" };
+      return { label: "Type", title: "Type into terminals, which is as good as running any command" };
     case "manage_columns":
-      return { label: "Columns", title: "Open, close and restart its columns" };
+      return { label: "Columns", title: "Open, close and restart columns" };
     case "publish_routes":
-      return { label: "Publish", title: "Publish its ports as previews" };
+      return { label: "Publish", title: "Publish ports as previews" };
     case "operate":
-      return { label: "Start/stop", title: "Start, freeze, stop and rename it" };
+      return { label: "Start/stop", title: "Start, freeze, stop and rename" };
     default:
       return unreachable(permission);
   }
@@ -487,11 +486,11 @@ function does(action: Action): string {
     case "move-column":
       return action.step === 1 ? "Move the column right" : "Move the column left";
     case "width":
-      return "Change its width";
+      return "Change width";
     case "zoom":
-      return "Zoom it to fill the page, or put it back";
+      return "Zoom to fill the page, or unzoom";
     case "find":
-      return "Find in its output";
+      return "Find in output";
     case "leave":
       return "Leave the terminal for the page (⇧ goes back)";
     case "add-column":
@@ -543,17 +542,17 @@ function closed(why: Closed): string {
     case "AccessEnded":
       return "Access to this workspace ended";
     case "HostFailed":
-      return "The workspace's host couldn't attach to it";
+      return "The workspace's host couldn't attach to the session";
     case "BrowserNotRunning":
-      return "The browser isn't running; restart its column";
+      return "The browser isn't running. Restart the column";
     case "BrowserUnreachable":
-      return "The browser's display isn't answering; restart its column";
+      return "The browser's display isn't answering. Restart the column";
     default:
       return unreachable(why);
   }
 }
 
-const ONLY_YOU = "Only you can open it, signed in to iglu.";
+const ONLY_YOU = "Only you can open this link, signed in to iglu.";
 
 /** A control's name with the keys that do the same, when there are any. */
 const keyed = (text: string, keys: string | undefined) => (keys ? `${text} (${keys})` : text);
@@ -644,7 +643,7 @@ export const m = {
     environment: "Add an environment",
     environmentAbout: "The NixOS system your workspaces run, from a flake that uses iglu's workspace module.",
     project: "Add a project",
-    projectAbout: "A repository to work on, and how its workspaces start. You can skip this: general has no repository.",
+    projectAbout: "A repository to work on, and how workspaces start. You can skip this: general doesn't have a repository.",
     workspace: "Start a workspace",
     workspaceAbout: "A branch to work on, with terminals to run your agents in.",
   },
@@ -654,7 +653,7 @@ export const m = {
     waiting: "Waiting on you",
     ready: (
       <>
-        <b>Ready.</b> Start a workspace: a branch to work on, with terminals and the agents you start in it.
+        <b>Ready.</b> Start a workspace: a branch to work on, with terminals for your agents.
       </>
     ),
     newWorkspace: "New workspace",
@@ -671,8 +670,8 @@ export const m = {
     runs: (columns: readonly string[]) => columns.join(" · "),
     inSession: (session: string) => `in ${session}`,
     more: (count: number) => `+${numbers.format(count)} more`,
-    stopped: "Its files are kept; its processes ended.",
-    thaws: "Opening it thaws it",
+    stopped: "Files are kept; processes have ended.",
+    thaws: "Open to thaw",
   },
 
   preview: {
@@ -702,8 +701,8 @@ export const m = {
     project: "Project",
     branch: "Branch",
     branchHint: "A new branch, or one the remote has…",
-    label: "Call it",
-    labelHint: (repo: boolean) => (repo ? "Anything; the branch names it otherwise…" : "Anything, such as Tidy my notes…"),
+    label: "Label",
+    labelHint: (repo: boolean) => (repo ? "Optional; the branch name otherwise…" : "Anything, such as Tidy my notes…"),
     more: "More",
     name: "Name, in URLs and the CLI",
     nameHint: (made: string | null) => (made ? `${made}…` : "Picked for you…"),
@@ -717,10 +716,10 @@ export const m = {
       project: "Choose one of your projects.",
       branch: "A branch name is up to 100 characters Git accepts in one, such as fix/login.",
       base: "A branch name is up to 100 characters Git accepts in one, such as main.",
-      label: "What you call it is one line of up to 80 characters, with no space at either end.",
+      label: "A label is one line of up to 80 characters, without a space at either end.",
       name: "A name is up to 63 lowercase letters, digits and dashes, starting with a letter and not ending with a dash.",
     } satisfies Rules<CreateWorkspace>,
-    made: (ws: string) => `${ws} is being made; it's in the list.`,
+    made: (ws: string) => `Creating ${ws}. See the list for progress.`,
   },
 
   newProject: {
@@ -750,12 +749,12 @@ export const m = {
     building: (name: string) => `Building ${name}.`,
     rules: {
       name: "A name is up to 63 lowercase letters, digits and dashes, not starting or ending with a dash.",
-      source: "A flake and one of its NixOS configurations, as flake#name, such as github:you/iglu-env#default.",
+      source: "A flake and the name of a NixOS configuration, as flake#name, such as github:you/iglu-env#default.",
     } satisfies Rules<CreateEnvironment>,
   },
 
   workspace: {
-    missing: (name: string | null) => (name ? `No workspace called ${name}.` : "No workspace called that."),
+    missing: (name: string | null) => (name ? `There isn't a workspace called ${name}.` : "That workspace doesn't exist."),
     overview: "Overview",
     list: "Workspaces",
     /** Keys a phone's keyboard lacks, by what each sends. */
@@ -766,9 +765,9 @@ export const m = {
     renameSubmit: "Rename",
     cancel: "Cancel",
     renameTitle: (keys: string | undefined) => keyed("Rename", keys),
-    label: "What to call it",
+    label: "Label",
     renameRules: {
-      label: "What you call it is one line of up to 80 characters, with no space at either end.",
+      label: "A label is one line of up to 80 characters, without a space at either end.",
       name: "A name is up to 63 lowercase letters, digits and dashes, starting with a letter and not ending with a dash.",
     } satisfies Rules<RenameWorkspace & LabelWorkspace>,
     publish: "Publish",
@@ -799,13 +798,13 @@ export const m = {
     listening: {
       label: (port: number, process: string | null) => (process ? `Publish :${port} (${process})` : `Publish :${port}`),
       title: (process: string | null, column: string | null) =>
-        `${process || "Something"} is listening${column ? ` in ${column}` : ""}. Publish it.`,
+        `${process || "Something"} is listening${column ? ` in ${column}` : ""}. Publish as a preview.`,
       unreachable: (process: string | null, port: number) =>
-        `${process || "Something"} listens on :${port} only where previews can't reach. Bind 0.0.0.0 or 127.0.0.1 to publish it.`,
+        `${process || "Something"} listens on :${port} only where previews can't reach. Bind 0.0.0.0 or 127.0.0.1 to publish.`,
     },
     columns: "Columns",
     sessionTitle: (label: string, session: string) => `${label} (session ${session})`,
-    rang: "It rang the bell",
+    rang: "Rang the bell",
     rangLabel: "(rang the bell)",
     addColumn: "Add a column",
     addColumnTitle: (keys: string | undefined) => keyed("Add a column", keys),
@@ -815,12 +814,12 @@ export const m = {
     browserOpen: "(open)",
     openingBrowser: "Opening the browser…",
     columnName: (title: string) => `Name of ${title}`,
-    columnRules: { label: "A column's name is one line of up to 40 characters, with no space at either end." } satisfies Rules<LabelColumn>,
+    columnRules: { label: "A column's name is one line of up to 40 characters, without a space at either end." } satisfies Rules<LabelColumn>,
     find: {
       label: (title: string) => `Find in ${title}`,
       placeholder: "Find",
       finding: "Finding…",
-      none: "No matches",
+      none: "Nothing matches",
       /** Which match of how many, counted from the oldest; `limited` when there are more than were counted. */
       count: (count: number, limited: boolean) => `${numbers.format(count)}${limited ? "+" : ""}`,
       at: (index: number, count: number, limited: boolean) => `${numbers.format(index)} of ${numbers.format(count)}${limited ? "+" : ""}`,
@@ -835,8 +834,8 @@ export const m = {
       label: "A program asks to open an address",
       open: "Open",
       inWorkspace: "Open in the workspace's browser",
-      nowhere: "Only the workspace's browser reaches this, and its environment has none.",
-      dismiss: "Don't open it",
+      nowhere: "Only the workspace's browser can reach this, and the environment doesn't have one.",
+      dismiss: "Don't open",
     },
     end: (title: string) => `End ${title}`,
     keep: "Keep",
@@ -850,7 +849,7 @@ export const m = {
     zoom: (title: string) => `Zoom ${title}`,
     unzoom: (title: string) => `Unzoom ${title}`,
     zoomTitle: (keys: string | undefined) => keyed("Zoom to fill the page", keys),
-    unzoomTitle: (keys: string | undefined) => keyed("Unzoom: put it back", keys),
+    unzoomTitle: (keys: string | undefined) => keyed("Unzoom", keys),
     widthTitle: (keys: string | undefined) => keyed("Width", keys),
     widthLabel: (title: string, width: string) => `Width of ${title}: ${width}`,
     moveLeft: (title: string) => `Move ${title} left`,
@@ -860,7 +859,7 @@ export const m = {
     restart: "Restart",
     cloning: (repo: ComponentChildren, project: string) => (
       <>
-        It clones {repo}, as {project} had it when this workspace was made. If that's wrong, fix the project's repository, then delete this workspace and make a new one.
+        This workspace clones {repo}, the repository {project} had when the workspace was created. If that's wrong, fix the project's repository, then delete this workspace and create a new one.
       </>
     ),
     updateNewest: "Update to the newest build",
@@ -869,10 +868,10 @@ export const m = {
     deleteAsk: "Delete…",
     thawHint: (keys: string | undefined) => (keys ? `${keys} to thaw` : undefined),
     loss: {
-      noCheckout: "Its files are lost.",
-      unchecked: (phase: string) => `It's ${phase}, so unpushed work can't be checked. Its files are lost.`,
-      unknown: "Its files are lost; push your work first.",
-      unsaved: (what: string) => `It has ${what}, which would be lost.`,
+      noCheckout: "All files will be lost.",
+      unchecked: (phase: string) => `Unpushed work can't be checked while ${phase}. All files will be lost.`,
+      unknown: "All files will be lost. Push your work first.",
+      unsaved: (what: string) => `Unsaved work would be lost: ${what}.`,
       none: "Everything is committed and pushed.",
     },
     info: {
@@ -889,48 +888,48 @@ export const m = {
       memoryAmount: gibibytes,
       saveOpening: "Open new workspaces like this",
       newer: (environment: string) => `A newer build of ${environment}`,
-      newerAbout: "Updating upgrades this workspace to it and restarts it. Its files stay; what's running ends.",
+      newerAbout: "Updating restarts this workspace on the newer build. Files stay; running processes end.",
       update: "Update",
       previews: "Previews",
     },
     confirmDelete: (ws: string, loss: string) => `Delete ${ws}? ${loss}`,
     delete: "Delete",
-    keepIt: "Keep it",
+    keepIt: "Keep",
     access: {
       heading: "Access from inside",
       about: (
         <>
-          What <code>iglu</code> can do when run in this workspace. Any program here can use it.
+          What <code>iglu</code> can do when run in this workspace. Any program here can run <code>iglu</code>.
         </>
       ),
       self: "This workspace",
       gone: "A deleted workspace",
-      may: (ws: string) => `What it may do to ${ws}`,
-      add: "Let it see another workspace",
-      addHint: "Let it see another workspace…",
+      may: (ws: string) => `Permissions on ${ws}`,
+      add: "Grant access to another workspace",
+      addHint: "Grant access to another workspace…",
       refused: (why: string) => `That access couldn't be changed. ${why}`,
     },
     unpublish: "Unpublish",
     unpublishSure: "Unpublish for good",
-    unpublishTitle: "Its name is never reused",
-    updating: (ws: string, environment: string) => `Updating ${ws} to the newest build of ${environment}. It restarts once it's ready.`,
+    unpublishTitle: "The name is never reused",
+    updating: (ws: string, environment: string) => `Updating ${ws} to the newest build of ${environment}. The workspace restarts when the build is ready.`,
     nothingWaiting: "Nothing needs you.",
-    noLast: "There's no other workspace to go back to yet.",
-    notOurs: (column: string) => `${column} was opened inside the workspace, not by iglu, so it can't be renamed.`,
+    noLast: "There isn't another workspace to go back to yet.",
+    notOurs: (column: string) => `${column} was opened inside the workspace, not by iglu, and can't be renamed.`,
     published: (port: number, route: string, listening: boolean) =>
       listening
-        ? `Published :${port} as ${route}; its link is beside the name.`
-        : `Published :${port} as ${route}. Nothing listens there yet; it opens once something does.`,
+        ? `Published :${port} as ${route}. The link is beside the name.`
+        : `Published :${port} as ${route}. Nothing is listening there yet; the preview opens once something does.`,
     openingSaved: (project: string) => `New workspaces in ${project} open like this.`,
   },
 
   project: {
-    missing: (name: string | null) => (name ? `No project called ${name}.` : "No project called that."),
+    missing: (name: string | null) => (name ? `There isn't a project called ${name}.` : "That project doesn't exist."),
     /** Where a project's workspaces come from: its repository, and its environment. */
-    source: (repo: string | null, environment: string) => `${repo ?? "no repository"} · ${environment}`,
+    source: (repo: string | null, environment: string) => `${repo ?? "without a repository"} · ${environment}`,
     settings: "Settings",
     newWorkspace: "New workspace",
-    empty: "No workspaces yet.",
+    empty: "There aren't any workspaces yet.",
     idle: (kind: IdleRule["kind"]) => {
       switch (kind) {
         case "Default":
@@ -951,7 +950,7 @@ export const m = {
     showSaved: "Show the saved settings",
     name: "Name",
     repo: "Repository",
-    repoHint: "None…",
+    repoHint: "Optional…",
     environment: "Environment",
     ports: "Previews",
     portsHint: "3000, 5173…",
@@ -968,13 +967,13 @@ export const m = {
       repo: "A repository is https://host/path, ssh://host/path or user@host:path.",
       environment: "Choose one of your environments.",
       ports: "Previews are up to 16 ports from 1 to 65535, except the browser's 5900 and 9222.",
-      idle: "Choose when its workspaces freeze.",
+      idle: "Choose when workspaces freeze.",
       opening: "New workspaces open with at most 16 columns, and one browser.",
     } satisfies Rules<ChangeProject>,
-    deleteFirst: (project: string) => `Delete its workspaces to remove ${project}.`,
-    confirmRemove: (project: string) => `Remove ${project}? Its settings go; nothing else does.`,
+    deleteFirst: (project: string) => `Delete every workspace in ${project} before removing the project.`,
+    confirmRemove: (project: string) => `Remove ${project}? Only the project's settings are deleted.`,
     removeSure: "Remove",
-    keepIt: "Keep it",
+    keepIt: "Keep",
     removeProject: "Remove project",
   },
 
@@ -982,7 +981,7 @@ export const m = {
     heading: "Settings",
     environments: "Environments",
     build: (latest: { status: "Building" } | { status: "Ready"; at: string } | { status: "Failed" } | null) => {
-      if (latest === null) return "never built";
+      if (latest === null) return "not built yet";
       switch (latest.status) {
         case "Building":
           return "building…";
@@ -1029,16 +1028,16 @@ export const m = {
     goesTo: "Goes to",
     value: "Value",
     save: (busy: boolean) => (busy ? "Saving…" : "Save"),
-    secretSaved: (name: string) => `Saved ${name}. New terminals get it.`,
+    secretSaved: (name: string) => `Saved ${name}. New terminals get the new value.`,
     secretRules: {
       name: "A secret's name is up to 64 lowercase letters, digits, dashes, underscores and dots.",
-      target: "Where it goes: a variable is capital letters, digits and underscores, not one iglu sets; a path stays inside your home; a host is a name such as github.com.",
+      target: "Where the secret goes: a variable is capital letters, digits and underscores, not one iglu sets; a path stays inside your home; a host is a name such as github.com.",
       value: "A value is up to 64 KiB.",
     } satisfies Rules<PutSecret & SecretPath>,
     keyboard: "Keyboard",
     prefix: "Prefix, to reach iglu from a terminal",
     prefixRecording: "Press a Ctrl chord for the prefix",
-    prefixLabel: (chord: string) => `Prefix: ${chord}. Change it`,
+    prefixLabel: (chord: string) => `Prefix: ${chord}. Press to change`,
     prefixPress: "Press a Ctrl chord…",
     prefixRefused: "Use Ctrl with a letter, Space, [, ] or \\.",
     altMoves: (keys: string) => `${keys} move between columns and workspaces, even in a terminal`,
@@ -1066,7 +1065,7 @@ export const m = {
         A theme in Ghostty's format: a theme file, or <code>ghostty +show-config</code>
       </>
     ),
-    themeProblem: (problem: ThemeProblem) => `${themeProblem(problem)} Until it reads, terminals keep iglu's own colours.`,
+    themeProblem: (problem: ThemeProblem) => `${themeProblem(problem)} Until the theme is fixed, terminals keep iglu's own colours.`,
     font: "Font",
     fontRefused: "A font's name is letters, digits, spaces, dots, dashes and underscores.",
     fontTrouble: (font: string, missing: boolean) =>
@@ -1096,7 +1095,7 @@ export const m = {
     search: "Search",
     placeholder: "Workspaces, previews, commands…",
     results: "Results",
-    none: "No matches.",
+    none: "Nothing matches.",
     newWorkspace: "New workspace",
     newProject: "New project",
     nextWaiting: "Next workspace that needs you",
@@ -1110,7 +1109,7 @@ export const m = {
     rename: (ws: string) => `Rename ${ws}`,
     details: (ws: string) => `Details of ${ws}`,
     project: (project: string) => `Go to project ${project}`,
-    projectAbout: (ws: string) => `Where ${ws} came from, and its settings`,
+    projectAbout: (ws: string) => `Where ${ws} came from, and the project's settings`,
     copyLink: (route: string) => `Copy the link to ${route}`,
     shell: (ws: string) => `Shell in ${ws}`,
     browser: (ws: string) => `Browser in ${ws}`,
@@ -1118,10 +1117,10 @@ export const m = {
     freeze: (ws: string) => `Freeze ${ws}`,
     thaw: (ws: string) => `Thaw ${ws}`,
     stop: (ws: string) => `Stop ${ws}`,
-    stopAbout: "Its files stay; starting it runs it again",
+    stopAbout: "Files stay. Start again any time",
     start: (ws: string) => `Start ${ws}`,
     update: (ws: string) => `Update ${ws}`,
-    updateAbout: (environment: string) => `To the newest build of ${environment}, restarting it`,
+    updateAbout: (environment: string) => `Restarts on the newest build of ${environment}`,
     delete: (ws: string) => `Delete ${ws}…`,
     deleteAbout: "Asks first",
     branch: (branch: string) => `⎇ ${branch}`,
@@ -1147,16 +1146,16 @@ export const m = {
     session: (session: string) => `session ${session}`,
     end: (column: string) => `End ${column}`,
     zoom: (column: string) => `Zoom ${column}`,
-    zoomAbout: "Fill the page with it",
+    zoomAbout: "Fill the page",
     unzoom: (column: string) => `Unzoom ${column}`,
-    unzoomAbout: "Put it back as it was",
+    unzoomAbout: "Restore the original size",
     width: (column: string) => `Change ${column}'s width`,
-    widthAbout: (width: string) => `It's ${width} of the strip`,
+    widthAbout: (width: string) => `Currently ${width} of the strip`,
     moveLeft: (column: string) => `Move ${column} left`,
     moveRight: (column: string) => `Move ${column} right`,
     renameColumn: (column: string) => `Rename column ${column}`,
     find: (column: string) => `Find in ${column}`,
-    findAbout: "Search its output",
+    findAbout: "Search the output",
     restart: (column: string) => `Restart ${column}`,
   },
 
@@ -1172,11 +1171,11 @@ export const m = {
         ) : (
           "Terminals keep every key. "
         )}
-        To reach iglu from one, press {prefix}, then a key. Pressing it twice sends {prefix} to the terminal. On the overview, the keys work without it.
+        To reach iglu from a terminal, press {prefix}, then a key. Press {prefix} twice to send the prefix to the terminal. On the overview, the keys work without it.
       </>
     ),
     toColumn: "Go to a column",
-    openLink: "Open a link in its output",
+    openLink: "Open a link in the output",
     waiting: "iglu is waiting for a key",
     sendPrefix: (prefix: string) => `Send ${prefix} to the terminal`,
     cancel: "Cancel",
@@ -1187,7 +1186,7 @@ export const m = {
     description: (prefix: string) => `${prefix}, then Tab leaves the terminal; ${prefix}, then ? lists shortcuts.`,
     reconnecting: (why: Closed | null) => (why ? `Reconnecting… (${closed(why)})` : "Reconnecting…"),
     copyRefused: "What a program copied couldn't reach your clipboard.",
-    tooLarge: (file: string) => (file ? `${file} is larger than 16 MB, so it can't be pasted.` : "That file is larger than 16 MB, so it can't be pasted."),
+    tooLarge: (file: string) => (file ? `${file} is larger than 16 MB and can't be pasted.` : "That file is larger than 16 MB and can't be pasted."),
     sending: (files: readonly string[]) => (files.length === 1 ? `Sending ${files[0]}…` : `Sending ${numbers.format(files.length)} files…`),
     notPasted: (why: string) => `That couldn't be pasted. ${why}`,
   },

@@ -224,14 +224,16 @@ impl Condition {
 impl std::fmt::Display for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Error { step, failure, .. } => write!(f, "{}: {failure}", doing(*step)),
+            Self::Error { step, failure, .. } => {
+                write!(f, "failed while {}: {failure}", doing(*step))
+            }
             Self::Capacity { available, needed } => write!(
                 f,
                 "waiting for the host to have room: {needed} needed, {available} free"
             ),
-            Self::RuntimeFailed => {
-                f.write_str("the runtime reports the workspace as broken; stop or delete it")
-            }
+            Self::RuntimeFailed => f.write_str(
+                "the runtime reports the workspace as broken; stop or delete the workspace",
+            ),
             Self::HostOffline { .. } => f.write_str("the host isn't answering"),
         }
     }
@@ -256,24 +258,24 @@ impl std::fmt::Display for Failure {
         match self {
             Self::Host { detail, .. } => f.write_str(detail),
             Self::SecretsClash { clash } => write!(f, "{clash}"),
-            Self::Internal => f.write_str("iglu failed; its log says more"),
+            Self::Internal => f.write_str("iglu failed; check iglu's log for details"),
         }
     }
 }
 
-/// A step, as a phrase that follows "while": `creating it`.
+/// A step, as a phrase that follows "while": `creating`.
 const fn doing(step: Effect) -> &'static str {
     match step {
-        Effect::Create => "creating it",
-        Effect::Start => "starting it",
-        Effect::DeliverSecrets => "delivering its secrets",
-        Effect::Provision => "setting it up",
-        Effect::OpenColumns => "opening its columns",
-        Effect::Freeze => "freezing it",
-        Effect::Thaw => "thawing it",
-        Effect::Stop => "stopping it",
-        Effect::Delete => "removing it from its host",
-        Effect::Upgrade => "upgrading its system to the newest build",
+        Effect::Create => "creating",
+        Effect::Start => "starting",
+        Effect::DeliverSecrets => "delivering secrets",
+        Effect::Provision => "setting up",
+        Effect::OpenColumns => "opening columns",
+        Effect::Freeze => "freezing",
+        Effect::Thaw => "thawing",
+        Effect::Stop => "stopping",
+        Effect::Delete => "removing from the host",
+        Effect::Upgrade => "upgrading to the newest build",
     }
 }
 
@@ -451,12 +453,12 @@ impl std::fmt::Display for Activity {
             Self::Frozen => f.write_str("frozen"),
             Self::Thawed => f.write_str("thawed"),
             Self::Stopped => f.write_str("stopped"),
-            Self::Removed => f.write_str("removed from its host"),
+            Self::Removed => f.write_str("removed from the host"),
             Self::Deleted => f.write_str("deleted"),
-            Self::Error { step, failure } => write!(f, "failed {}: {failure}", doing(*step)),
+            Self::Error { step, failure } => write!(f, "failed while {}: {failure}", doing(*step)),
             Self::Renamed { from, to } => write!(f, "renamed from {from} to {to}"),
-            Self::Relabeled { to: Some(label) } => write!(f, "called {label}"),
-            Self::Relabeled { to: None } => f.write_str("called by its name"),
+            Self::Relabeled { to: Some(label) } => write!(f, "labeled {label}"),
+            Self::Relabeled { to: None } => f.write_str("label cleared"),
             Self::Typed { column } => write!(f, "typed into {column}"),
             Self::ThawedOnOpen => f.write_str("thawed when opened"),
             Self::IdleFroze => f.write_str("frozen when idle"),
@@ -464,12 +466,12 @@ impl std::fmt::Display for Activity {
             Self::SecretUpdated { secret } => write!(f, "secret {secret} updated"),
             Self::Published { port, route } => write!(f, "port {port} published as {route}"),
             Self::Unpublished { port, route } => {
-                write!(f, "port {port} no longer published as {route}")
+                write!(f, "port {port} unpublished from {route}")
             }
             Self::FileKept { path } => write!(f, "kept {path}"),
             Self::Adopted {
                 reason: AdoptReason::FrozenStateLost,
-            } => f.write_str("stopped: the host restarted, which lost its frozen state"),
+            } => f.write_str("stopped: the host restarted and lost the frozen state"),
             Self::AccessChanged => f.write_str("access changed"),
             Self::ColumnAdded { column } => write!(f, "column {column} added"),
             Self::ColumnRestarted { column } => write!(f, "column {column} restarted"),
@@ -773,15 +775,17 @@ impl std::fmt::Display for Reason {
             Self::ProjectUnnamed => f.write_str("give the project a name or a repository"),
             Self::NothingToType => f.write_str("say what to type, or to press Enter"),
             Self::NoWorkspaceToGrant { workspace } => {
-                write!(f, "no workspace {workspace} to grant")
+                write!(f, "workspace {workspace} doesn't exist")
             }
             Self::BrowserPort { port } => write!(
                 f,
-                "port {port} is the workspace browser's DevTools port or its display, and a \
+                "port {port} is the workspace browser's DevTools or display port, and a \
                  preview of either would let anyone with the link drive the browser"
             ),
-            Self::SignInIncomplete => f.write_str("the identity provider sent no code"),
-            Self::OtherBrowser => f.write_str("finish signing in in the browser that started it"),
+            Self::SignInIncomplete => f.write_str("the identity provider didn't send a code"),
+            Self::OtherBrowser => {
+                f.write_str("finish signing in in the browser that started the sign-in")
+            }
             Self::SignInExpired => f.write_str("this sign-in expired; try again"),
             Self::CliSignInMalformed => f.write_str("malformed CLI sign-in request"),
             Self::BadReturnAddress => f.write_str("bad return address"),
@@ -790,7 +794,7 @@ impl std::fmt::Display for Reason {
             Self::NotGranted => f.write_str("this workspace hasn't been granted that"),
             Self::PersonOnly => f.write_str("only a person can do this"),
             Self::NotFromWorkspace => f.write_str(
-                "a workspace can't do this from inside; its owner can, in the console or \
+                "a workspace can't do this from inside; the owner can, in the console or \
                  with their own `iglu`",
             ),
             Self::CrossOrigin => f.write_str("refused a request from another site"),
@@ -805,39 +809,39 @@ impl std::fmt::Display for Reason {
             Self::IdempotencyKeyReused => {
                 f.write_str("Idempotency-Key reused with a different request")
             }
-            Self::NoSuchProject => f.write_str("no such project"),
-            Self::NoEnvironment { name } => write!(f, "no environment called {name}"),
+            Self::NoSuchProject => f.write_str("that project doesn't exist"),
+            Self::NoEnvironment { name } => write!(f, "there isn't an environment called {name}"),
             Self::NotBuilt { environment } => {
-                write!(f, "the environment {environment} has no built image yet")
+                write!(f, "the environment {environment} hasn't been built yet")
             }
-            Self::NoRepository => {
-                f.write_str("the project has no repository, so its workspaces have no branch")
-            }
+            Self::NoRepository => f.write_str(
+                "the project doesn't have a repository, so workspaces don't have branches",
+            ),
             Self::WorkspaceNameTaken => f.write_str("a workspace with that name exists"),
             Self::ProjectNameTaken => f.write_str("a project with that name exists"),
             Self::EnvironmentNameTaken => f.write_str("an environment with that name exists"),
             Self::BeingDeleted => f.write_str("the workspace is being deleted"),
             Self::FreezeNeedsRunning => f.write_str("only a running workspace can be frozen"),
             Self::NoBuildToUpdateTo => {
-                f.write_str("its environment has no build ready to update to")
+                f.write_str("the environment doesn't have a build ready to update to")
             }
             Self::BuildForAnotherAccount => f.write_str(
                 "the environment's newest build has another account than this workspace, \
-                 whose files would be someone else's; recreate it to use the build",
+                 whose files would be someone else's; create a new workspace to use the build",
             ),
             Self::NoBrowserInImage => f.write_str(
-                "this workspace's image has no browser: rebuild its environment with \
-                 iglu.browser.enable, then update the workspace",
+                "this workspace's image doesn't have a browser: rebuild the environment \
+                 with iglu.browser.enable, then update the workspace",
             ),
             Self::BrowserColumnExists { column } => {
                 write!(f, "this workspace has a browser already: {column}")
             }
             Self::ColumnNameTaken { name } => write!(f, "{name} is already a column"),
-            Self::LayoutMismatch => {
-                f.write_str("a layout names every column once, no more and no fewer")
-            }
+            Self::LayoutMismatch => f.write_str("a layout must name every column exactly once"),
             Self::SecretTargetTaken { by } => write!(f, "{by} already goes there"),
-            Self::ProjectChanged => f.write_str("the project changed since you loaded it"),
+            Self::ProjectChanged => {
+                f.write_str("the project has changed; fetch the latest version and try again")
+            }
             Self::BuiltinProject => f.write_str("the built-in project can't be removed"),
             Self::ProjectInUse => f.write_str("the project still has workspaces"),
             Self::TooLarge => f.write_str("the request body is too large"),
@@ -848,7 +852,7 @@ impl std::fmt::Display for Reason {
             Self::ProviderUnreachable => {
                 f.write_str("the identity provider isn't reachable; try again shortly")
             }
-            Self::NoHost => f.write_str("no execution host configured"),
+            Self::NoHost => f.write_str("iglu doesn't have an execution host configured"),
             Self::HostUnknown => f.write_str("the workspace's host isn't configured"),
             Self::HostFailed { detail, .. } => f.write_str(detail),
             Self::Internal => f.write_str("internal error"),
@@ -902,9 +906,9 @@ impl std::fmt::Display for Closed {
         f.write_str(match self {
             Self::NotRunning => "the workspace isn't running",
             Self::AccessEnded => "access to this workspace ended",
-            Self::HostFailed => "the workspace's host couldn't attach to it",
-            Self::BrowserNotRunning => "the browser isn't running; restart its column",
-            Self::BrowserUnreachable => "the browser's display isn't answering; restart its column",
+            Self::HostFailed => "the workspace's host couldn't attach to the session",
+            Self::BrowserNotRunning => "the browser isn't running; restart the column",
+            Self::BrowserUnreachable => "the browser's display isn't answering; restart the column",
         })
     }
 }
