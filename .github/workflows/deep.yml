@@ -1,0 +1,61 @@
+name: Deep
+
+on:
+  schedule:
+    # Mondays, before the week's work.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# What's too slow for every pull request: the property tests at thousands of
+# cases each, and the control-plane simulation over many seeds. A failure
+# names its seed or saved case, so it replays locally.
+jobs:
+  properties:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PROPTEST_CASES: "5000"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      # The dev shell's slow builds, which ci.yml's console job keeps.
+      - uses: ./.github/actions/nix-cache
+        with:
+          set: console
+          mode: restore
+
+      - name: Rust
+        run: nix develop -c just test
+
+      - name: Console
+        run: nix develop -c bash -c 'cd console && npm ci && npm test'
+
+  simulation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # 5,000 schedules each, from seeds no other shard uses.
+        first-seed: [1, 5001, 10001, 15001]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      - uses: ./.github/actions/nix-cache
+        with:
+          set: console
+          mode: restore
+
+      - name: Simulate
+        env:
+          IGLU_SIM_SEED: ${{ matrix.first-seed }}
+          IGLU_SIM_SCHEDULES: "5000"
+          IGLU_SIM_STEPS: "200"
+        run: nix develop -c cargo test --release -p iglud 'sim::' -- --nocapture
