@@ -682,16 +682,24 @@ def click_above_bottom(screen: Locator, height: int) -> None:
     screen.click(position={"x": 100, "y": box["height"] - height})
 
 
-def browses(page: Page, name: str) -> Any:
+def opens_browser(page: Page, name: str) -> Any:
     """A browser column shows the workspace's browser, which draws its own
-    tabs and address bar: an address typed there is gone to. Agents in the
-    workspace drive the same browser."""
+    tabs and address bar."""
     open_workspace(page, name)
     page.get_by_role("button", name="Add a column").click()
     with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/columns"), timeout=90_000) as added:
         page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser").click()
     assert added.value.ok, f"{added.value.status} {added.value.text()}"
-    screen = shown_screen(page)
+    shown_screen(page)
+    return {}
+
+
+def browses(page: Page, name: str) -> Any:
+    """An address typed in the browser column's address bar is gone to.
+    Agents in the workspace drive the same browser. Type only once its
+    first page has loaded: that page's load clears the address bar, and on
+    a slow machine it ate the start of the address."""
+    screen = browser_screen(page, name)
     screen.click()
     page.keyboard.press("Control+l")
     page.keyboard.type(PAGE)
@@ -1738,6 +1746,7 @@ STEPS: dict[str, Callable[..., Any]] = {
     "grants-access": grants_access,
     "names-itself": names_itself,
     "pastes-files": pastes_files,
+    "opens-browser": opens_browser,
     "browses": browses,
     "browser-answers": browser_answers,
     "browser-keeps": browser_keeps,

@@ -31,10 +31,12 @@ def diagnose() -> None:
     # What iglud thinks of each workspace, and what happened to it.
     _, listing = control.execute(f"{IGLU} ls; for w in $({IGLU} --json ls | jq -r '.[].name'); do echo \"== $w\"; {IGLU} log $w; done")
     print(f"===== workspaces =====\n{listing}")
-    # Each workspace's browser display, as the guest started it.
+    # Each workspace's browser display, as the guest started it. Bounded,
+    # so a stuck Incus can't hold the run for the driver's 15 minutes, as it
+    # once did.
     _, displays = host.execute(
-        "for i in $(incus list -c n -f csv); do echo \"== $i\"; "
-        "incus exec $i -- sh -c 'tail -n 30 /run/user/*/iglu/display/*.log'; done"
+        "for i in $(timeout 30 incus list -c n -f csv); do echo \"== $i\"; "
+        "timeout 30 incus exec -T $i -- sh -c 'tail -n 30 /run/user/*/iglu/display/*.log' </dev/null; done"
     )
     print(f"===== browser displays =====\n{displays}")
     if control.execute("test -d /tmp/browser")[0] == 0:
@@ -293,6 +295,9 @@ try:
                 time.sleep(1)
             raise AssertionError(f"no page titled {pattern}: {pages()}")
 
+        browser("opens-browser", "demo")
+        # Its first page's load clears the address bar, so typing waits for it.
+        page_titled("New Tab")
         browser("browses", "demo")
         page_titled("Blank")
         browser("browser-answers", "demo")
