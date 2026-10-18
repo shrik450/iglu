@@ -237,11 +237,12 @@ def run() -> None:
 def wait(timeout: float = 300) -> None:
     """Waits until the console and the identity provider answer through
     Caddy, for scripts that start `run` in the background."""
-    trust = ssl.create_default_context(cafile=str(shared() / "ca/ca.crt"))
     deadline = time.monotonic() + timeout
     for url in [f"{AUTH}/.well-known/openid-configuration", f"{CONSOLE}/"]:
         while True:
             try:
+                # `run` makes the CA as it starts, so it may not be there yet.
+                trust = ssl.create_default_context(cafile=str(shared() / "ca/ca.crt"))
                 urllib.request.urlopen(url, context=trust, timeout=5)
                 break
             except urllib.error.HTTPError as error:
