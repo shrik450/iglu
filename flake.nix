@@ -89,10 +89,20 @@
       # built from each commit's sources anyway.
       legacyPackages.x86_64-linux.ci-cache =
         let
+          pkgs = nixpkgs.legacyPackages.x86_64-linux;
           packages = self.packages.x86_64-linux;
+          # cache.nixos.org has these, but the VM test job wants them while
+          # it downloads its machines' closures too, and got the toolchain
+          # last, seven minutes in, holding up the build.
+          toolchain = [
+            pkgs.rustc
+            pkgs.cargo
+            pkgs.pkgsStatic.buildPackages.rustc
+            pkgs.pkgsStatic.buildPackages.cargo
+          ];
         in
         {
-          checks = [
+          checks = toolchain ++ [
             self.checks.x86_64-linux.clippy.cargoArtifacts
             packages.iglud.dependencies
             packages.guest-tools.dependencies
@@ -100,7 +110,7 @@
             packages.zmx
           ];
           console = [ packages.zmx ];
-          e2e = [
+          e2e = toolchain ++ [
             packages.iglud.dependencies
             packages.guest-tools.dependencies
             packages.guest-tools.zmx
