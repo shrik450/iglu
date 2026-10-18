@@ -1,6 +1,6 @@
 # iglu's development commands. Run them from `nix develop`.
-# CI runs the same checks through the flake (nix/checks.nix), and dev-check
-# against a dev stack; see .github/workflows/ci.yml.
+# CI runs the same checks through the flake (nix/checks.nix), dev-check
+# against a dev stack, and the mutation gate; see .github/workflows/.
 
 # List the recipes.
 default:
@@ -19,12 +19,12 @@ lint:
     actionlint
     shellcheck dev/agents/*
 
-# Run the unit tests, and the local runtime's conformance suite.
+# Run the unit and property tests, the conformance suite on the local and simulated runtimes, and a short simulation.
 test:
     cargo build -p iglu-guest
     IGLU_GUEST_TOOLS={{ justfile_directory() }}/target/debug cargo test --workspace
 
-# Type-check and bundle the console.
+# Type-check, unit-test and bundle the console.
 console:
     cd console && npm ci && npm run build
 

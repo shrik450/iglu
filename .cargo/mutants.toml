@@ -26,9 +26,13 @@ exclude_globs = [
   "crates/iglu-hostd/src/incus/reclaim.rs",
   "crates/iglu-hostd/src/incus/tunnel.rs",
   "crates/iglu-hostd/src/incus/upgrade.rs",
-  # hostd's HTTP surface, which iglud reaches only in the dev stack and the
-  # VM test; the conformance suite drives hostd's Host directly.
+  # hostd's HTTP surface. The conformance suite drives hostd's Host
+  # directly; what reaches the routes is iglud's simulation, in the shell
+  # tier's tests, which the runtime tier doesn't run.
   "crates/iglu-hostd/src/server.rs",
+  # The simulators are test harness, like the conformance suite.
+  "crates/iglu-hostd/src/sim.rs",
+  "crates/iglud/src/sim.rs",
 ]
 
 # Tests that wait on processes, such as the local runtime's conformance

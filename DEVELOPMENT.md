@@ -12,31 +12,123 @@ comes from the dev shell: run `nix develop`, then use `just`. Nothing is
 installed globally, no daemon runs outside the dev stack, and nothing needs
 root.
 
-## Checks
+## Tests and checks
 
-| Command          | What it does                                                     |
-| ---------------- | ---------------------------------------------------------------- |
-| `just fmt`       | Formats Rust and Nix.                                            |
-| `just lint`      | rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint. |
-| `just test`      | The unit tests, and the local runtime's conformance suite. Fast. |
-| `just console`   | Type-checks and bundles the console.                             |
-| `just terminal-check` | Checks the console's terminal in Chromium and WebKit, without a stack; see [The terminal tier](#the-terminal-tier). |
-| `just dev-check` | Checks the console in a browser against the running dev stack.   |
-| `just e2e`       | The VM test. Needs x86_64-linux with KVM.                        |
-| `just check`     | Every flake check, including the VM test where it can run.       |
-| `just mutants`   | Mutation-tests the code changed against `main`; see [Mutation testing](#mutation-testing). |
+| Command               | What it does                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `just fmt`            | Formats Rust and Nix.                                                                              |
+| `just lint`           | rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint.                               |
+| `just test`           | Unit and property tests, the conformance suite on the local and simulated runtimes, and a short simulation. Fast. |
+| `just console`        | Type-checks, unit-tests and bundles the console.                                                   |
+| `just terminal-check` | Checks the console's terminal in Chromium and WebKit, without a stack.                             |
+| `just dev-check`      | Checks the console in a browser against the running dev stack.                                     |
+| `just e2e`            | The VM test. Needs x86_64-linux with KVM.                                                          |
+| `just check`          | Every flake check, including the VM test where it can run.                                         |
+| `just mutants`        | Mutation-tests the code changed against `main`.                                                    |
+| `just coverage`       | Measures coverage of every tier the dev shell runs.                                                |
 
-CI runs three jobs, and a pull request merges only when all pass: the flake
-checks except the VM test, `just dev-check` against a dev stack, and the VM
-test (`.github/workflows/ci.yml`). Run `just lint test` before you push, and
-`just dev-check` when you change the console. The VM test needs KVM, which
-workspaces don't have, so CI is usually where it runs.
+Each tier catches what the cheaper ones can't, and `AGENTS.md` says which
+tier a new test belongs in:
 
-The browser checks split the work. The terminal tier covers the terminal on
-its own, a flake check like the others. `just dev-check` covers the console's
-behaviour, over the local host. The VM test covers iglu as it's deployed: the
-NixOS modules, the workspace image and its guest tools, Incus and its
-isolation, and a handful of the same browser steps through all of them.
+| Tier                                    | What it checks                                                          | Where it runs                                                                                  |
+| --------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Unit and property tests                 | Pure functions, on examples and generated inputs                        | `just test`; CI's flake checks; at 5,000 cases in the weekly deep run                          |
+| [Conformance suite](#the-conformance-suite) | What hostd needs from a runtime that the types can't say            | `just test` on the local and simulated runtimes; the VM test on Incus                          |
+| [Simulation](#the-simulation)           | iglud and hostd together, under faults, restarts and reordering         | `just test`, briefly; CI's flake checks; over 20,000 schedules in the weekly deep run          |
+| [Terminal tier](#the-terminal-tier)     | The console's terminal on its own                                       | `just terminal-check`; CI's flake checks, as `console-terminal`                                |
+| [dev-check](#seeing-and-checking-the-console) | The console with iglud and the local host around it               | `just dev-check`; CI's `console` job                                                           |
+| VM test                                 | iglu as deployed: the NixOS modules, the workspace image, Incus and its isolation | `just e2e`; CI's `e2e` job                                                         |
+| [Mutation testing](#mutation-testing)   | Whether the tests notice when the code changes                          | `just mutants`; on each pull request's changed lines, and in full on `main` and weekly         |
+| [Coverage](#coverage)                   | Which lines the tests run                                               | `just coverage`; on each pull request and push to `main`                                       |
+
+A pull request merges only when CI's three jobs (`.github/workflows/ci.yml`)
+and the mutation gate on its changed lines
+(`.github/workflows/mutation.yml`) pass. Coverage
+(`.github/workflows/coverage.yml`) and the weekly deep run
+(`.github/workflows/deep.yml`) report without gating. Run `just lint test`
+and `just mutants` before you push, and `just dev-check` when you change the
+console. The VM test needs KVM, which workspaces don't have, so CI is
+usually where it runs; it runs the conformance suite and Incus's isolation
+checks, and only the browser steps that need a real host or the workspace
+image.
+
+### The conformance suite
+
+`crates/iglu-hostd/src/conformance.rs` holds what every runtime owes hostd
+beyond its types, such as a frozen instance staying frozen, a new boot
+starting without secrets, a resize reaching the program, or an older secrets
+delivery leaving the newer one. Each runtime runs it in its own
+environment: the local runtime with real processes and zmx in `just test`,
+the simulated runtime in `just test` too, held to the checks that need no
+program in a guest, and Incus in the VM test. A behaviour a runtime must
+keep goes here, so every runtime is held to it.
+
+## The terminal tier
+
+Most of the console's bugs have been the terminal's: what it draws, the
+bytes it sends for a key or the wheel, the queries it answers. The terminal
+tier checks those in Chromium and WebKit without iglud, a workspace or a
+shell, in about a second a case:
+
+```sh
+just terminal-check                            # every case, in both engines
+just terminal-check --browser chromium mac-keys  # one case, in one
+```
+
+`console/test/terminal/run.py` bundles a page with the console's own
+`TerminalPane` on it, mounted as the workspace view mounts it, and plays the
+program in each column: it writes what the program would print to the
+pane's WebSocket and reads back exactly what the terminal sends. A case says
+which bytes reach a program, where a step through a shell can only say what
+the shell made of them.
+
+Its differential case checks wterm's renderer against Ghostty's terminal
+core, which holds the screen wterm draws: for output generated with
+fast-check, split anywhere and at sizes small enough to wrap, and for
+output recorded from nvim, vim, less and `git log` (`record.py` remakes
+those), what's drawn must be what the core holds. A failure prints its seed
+and the smallest output that shows it; `--seed` repeats a run. The flake
+check, `console-terminal`, runs a fixed seed, on Linux only; the recipe a
+new one each time.
+
+WebKit draws through EGL, which a workspace has no GPU for: the dev shell
+gives it Mesa through `IGLU_MESA_EGL`, and only WebKit is told.
+
+## The simulation
+
+The simulation runs iglud and hostd together in one process, for real: the
+API, the reconciler, the database, hostd's rules and the HTTP between them.
+Only the runtime is simulated, and every step it takes waits until a seeded
+driver resolves it: it finishes, fails before taking effect, or takes
+effect and fails anyway, as an Incus operation whose answer is lost does.
+The driver also chooses people's requests, reconciler passes, restarts of
+iglud, hostd and the host, and time passing. Time moves only when it moves
+it, so a seed always plays out the same way.
+
+After every event it checks invariants: hostd never takes a step the
+instance's state forbids, secrets never reach another person's guest or go
+back to an older generation, and iglud's records match the host. Once the
+faults stop, every workspace must converge on what its owner asked for. It
+finds what no example test reaches: orderings, lost answers and restarts
+mid-step.
+
+```sh
+cargo test -p iglud sim::                          # 8 schedules of 120 events; part of `just test`
+IGLU_SIM_SCHEDULES=2000 IGLU_SIM_STEPS=200 \
+  cargo test --release -p iglud sim::              # a longer run
+IGLU_SIM_SEED=6 IGLU_SIM_SCHEDULES=1 cargo test -p iglud sim::   # replay one seed
+```
+
+A failure prints its seed and the schedule's events. Keep a found bug as a
+seeded test in `crates/iglud/src/sim.rs` until it's fixed. The weekly deep
+run plays 20,000 schedules of 200 events. The simulated runtime is
+`crates/iglu-hostd/src/sim.rs`, and passes the conformance suite.
+
+It doesn't cover iglud's wall clock, so idle policy, session expiry and
+image pruning are out, nor previews, terminals or more than one host. Its
+guests are modelled, not run. The driver waits for everything under way to
+settle before each choice, so a new background task in iglud has to be
+known to it, or it shows as stuck.
 
 ## Mutation testing
 
@@ -169,7 +261,9 @@ over a local runtime instead of Incus. A workspace is a directory, and its
 processes run as you. Each workspace gets its own `HOME`, with the repository
 cloned into it, and its own `XDG_RUNTIME_DIR`, which holds its delivered
 secrets, attention status and terminal sessions. Terminals are real zmx
-sessions running your login shell, so they survive restarts of `just dev`.
+sessions, so they survive restarts of `just dev`. They run the dev shell's
+bash (`IGLU_DEV_SHELL`) rather than your login shell, so the checks type
+into the same shell on every machine; start yours from it.
 
 Workspaces use your machine's own tools. Your Nix profile is linked into
 each workspace's home, so a login shell finds your tools there, and the
@@ -200,8 +294,8 @@ What's different from a real host:
   workspace whose runtime directory is deleted while it runs reads as failed
   until you start it again, which ends what was left of it first.
 
-The runtime conformance suite checks that the local runtime behaves like
-Incus wherever hostd relies on it; `just test` runs it.
+[The conformance suite](#the-conformance-suite) checks that the local
+runtime behaves like Incus wherever hostd relies on it; `just test` runs it.
 
 ### Running it
 
@@ -302,40 +396,11 @@ just dev-check               # the console's browser checks, as CI runs them
 - **`just dev-compare <before> <after>`** marks what changed between two
   tours, most changed first, so a change shows everything it touched.
 - **`just dev-check`** runs `nix/tests/browser.py`'s steps against the local
-  stack in about two minutes, as CI does. A console fix that needs the rest
-  of iglu gets a step there, added to `dev/ui/check.py`; add it to the VM
-  test too only when it depends on a real host or the workspace image. A fix
-  to the terminal itself goes to the terminal tier instead.
-
-### The terminal tier
-
-Most of the console's bugs have been the terminal's: what it draws, the
-bytes it sends for a key or the wheel, the queries it answers. The terminal
-tier checks those in Chromium and WebKit without iglud, a workspace or a
-shell, in about a second a case:
-
-```sh
-just terminal-check                            # every case, in both engines
-just terminal-check --browser chromium mac-keys  # one case, in one
-```
-
-`console/test/terminal/run.py` bundles a page with the console's own
-`TerminalPane` on it, mounted as the workspace view mounts it, and plays the
-program in each column: it writes what the program would print to the
-pane's WebSocket and reads back exactly what the terminal sends. A case says
-which bytes reach a program, where a step through a shell can only say what
-the shell made of them.
-
-Its differential case checks wterm's renderer against Ghostty's terminal
-core, which holds the screen wterm draws: for output generated with
-fast-check, split anywhere and at sizes small enough to wrap, and for
-output recorded from nvim, vim, less and `git log` (`record.py` remakes
-those), what's drawn must be what the core holds. A failure prints its seed
-and the smallest output that shows it; `--seed` repeats a run. The flake
-check, `console-terminal`, runs a fixed seed; the recipe a new one each time.
-
-WebKit draws through EGL, which a workspace has no GPU for: the dev shell
-gives it Mesa through `IGLU_MESA_EGL`, and only WebKit is told.
+  stack in about two minutes, as CI does. A console fix that needs the
+  rest of iglu gets a step there, added to `dev/ui/check.py`; add it to the
+  VM test too only when it depends on a real host or the workspace image. A
+  fix to the terminal itself goes to [the terminal tier](#the-terminal-tier)
+  instead.
 
 The tools' browsers accept the dev stack's certificates without trusting the
 dev CA, so they work the same on every machine.

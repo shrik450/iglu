@@ -1,4 +1,5 @@
-# Checks that don't need a VM: lints, formatting, and the unit tests.
+# Checks that don't need a VM: lints, formatting, the unit and property tests
+# with the conformance suite and the short simulation, and the terminal tier.
 # `just lint` and `just test` run the same commands from the dev shell.
 {
   lib,

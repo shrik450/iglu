@@ -16,6 +16,8 @@ concurrency:
 
 # Three jobs, each required to merge: the flake checks, the console checked
 # in a browser against the dev stack, and the VM test against a real host.
+# Mutation testing, coverage and the weekly deep run have workflows of their
+# own.
 jobs:
   checks:
     runs-on: ubuntu-24.04

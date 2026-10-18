@@ -7,6 +7,8 @@ name: Mutation
 
 on:
   pull_request:
+  # A merge queue's checks, so the gate can be required with one.
+  merge_group:
   push:
     branches: [main]
   schedule:
@@ -23,7 +25,7 @@ concurrency:
 jobs:
   changed:
     name: changed code
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -41,10 +43,11 @@ jobs:
 
       - name: Mutate what the pull request changes
         env:
-          BASE: ${{ github.base_ref }}
+          # A merge queue names its base as a ref.
+          BASE: ${{ github.base_ref || github.event.merge_group.base_ref }}
         run: |
           nix develop -c npm ci --prefix console
-          nix develop -c just mutants "origin/$BASE"
+          nix develop -c just mutants "origin/${BASE#refs/heads/}"
 
       - name: Keep the results
         if: always()
@@ -56,7 +59,7 @@ jobs:
 
   rust:
     name: ${{ matrix.tier }} ${{ matrix.shard }}/${{ matrix.shards }}
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
@@ -106,7 +109,7 @@ jobs:
 
   console:
     name: console
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -135,7 +138,7 @@ jobs:
   summary:
     name: summary
     needs: [rust, console]
-    if: always() && github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
