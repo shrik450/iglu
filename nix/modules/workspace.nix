@@ -186,6 +186,12 @@ in
         "nix-command"
         "flakes"
       ];
+      # Workspaces have no /dev/kvm, so a NixOS VM test is refused at once
+      # rather than started where it can't run.
+      nix.settings.system-features = lib.mkDefault [
+        "benchmark"
+        "big-parallel"
+      ];
 
       # A workspace isn't an installer; users bring their own flakes.
       system.installer.channel.enable = lib.mkDefault false;

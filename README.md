@@ -327,9 +327,10 @@ GPU the display can't use, fall back to the CPU.
 
 See [AGENTS.md](AGENTS.md) for the layout, commands, and design rules. In
 short: `nix develop`, then `just lint test` while you work and `just check`
-for every check. CI runs all of them except the end-to-end VM test in
-`nix/tests/e2e.nix`, which uses a real identity provider, Incus, Git server,
-and browser; run it with `just e2e` on x86_64-linux with KVM.
+for every check. CI runs them all, including the console against the dev
+stack and the end-to-end VM test in `nix/tests/e2e.nix`, which uses a real
+identity provider, Incus, Git server and browser, and a pull request merges
+only when they pass.
 
 [DEVELOPMENT.md](DEVELOPMENT.md) covers working on iglu locally, including
 the dev stack that runs iglud and the console on your machine with `just dev`.

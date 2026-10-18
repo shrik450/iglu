@@ -6,6 +6,7 @@
 //! A new runtime is done when it passes every check here, and, if it's to
 //! be [`crate::runtime::Isolating`], its own negative isolation tests.
 
+use std::fmt::Write as _;
 use std::future::Future;
 use std::time::{Duration, Instant};
 
@@ -33,7 +34,7 @@ use uuid::Uuid;
 
 use crate::guest::parse_generation;
 use crate::host::Host;
-use crate::runtime::{Guest, GuestFile, Runtime, TerminalInput};
+use crate::runtime::{Guest, GuestFile, Runtime, Terminal, TerminalInput};
 
 /// What the suite needs from the environment it runs in.
 pub struct Fixture {
@@ -112,6 +113,30 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
             .check(
                 "terminals take typing and show what they print, without a client",
                 Suite::typing,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
+                "a resize reaches the program, at any size a terminal may have",
+                Suite::resizes,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
+                "output arrives whole and in order to a slow client, and typing reaches the terminal after",
+                Suite::floods,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
+                "sessions opened and attached at once work apart, and every client of one sees it",
+                Suite::at_once,
             )
             .await,
     );
@@ -243,6 +268,30 @@ struct Suite<'a, R> {
 
 fn ensure(condition: bool, what: impl FnOnce() -> String) -> Checked {
     if condition { Ok(()) } else { Err(what()) }
+}
+
+/// Types a line into an attached terminal.
+async fn type_line(terminal: &Terminal, line: &str) -> Checked {
+    terminal
+        .input
+        .send(TerminalInput::Bytes(Bytes::from(format!("{line}\r"))))
+        .await
+        .map_err(|_| format!("the terminal closed before {line:?}"))
+}
+
+/// Reads a terminal until `expect` shows, and returns all it read; on
+/// giving up, returns that in the error.
+async fn shown(terminal: &mut Terminal, expect: &str, within: Duration) -> Result<String, String> {
+    let mut seen = Vec::new();
+    let deadline = Instant::now() + within;
+    while !String::from_utf8_lossy(&seen).contains(expect) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(remaining, terminal.output.recv()).await {
+            Ok(Some(bytes)) => seen.extend_from_slice(&bytes),
+            Ok(None) | Err(_) => return Err(String::from_utf8_lossy(&seen).into_owned()),
+        }
+    }
+    Ok(String::from_utf8_lossy(&seen).into_owned())
 }
 
 fn running(instance: Instance) -> Option<Running> {
@@ -543,7 +592,22 @@ impl<'a, R: Runtime> Suite<'a, R> {
         line: &str,
         expect: &str,
     ) -> Result<(), String> {
-        let session: SessionName = session.parse().map_err(|e| format!("{e}"))?;
+        let session = self.open_shell(workspace, session).await?;
+        let mut terminal = self
+            .attach(workspace, &session, TerminalSize::DEFAULT)
+            .await?;
+        type_line(&terminal, line).await?;
+        shown(&mut terminal, expect, Duration::from_secs(30))
+            .await
+            .map_err(|seen| format!("{line:?} never showed {expect:?}: {seen:?}"))?;
+        // Let the shell take the line before detaching.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        Ok(())
+    }
+
+    /// Opens a session running the user's shell.
+    async fn open_shell(&self, workspace: WorkspaceId, name: &str) -> Result<SessionName, String> {
+        let session: SessionName = name.parse().map_err(|e| format!("{e}"))?;
         self.host
             .open_terminal(
                 workspace,
@@ -554,33 +618,19 @@ impl<'a, R: Runtime> Suite<'a, R> {
             )
             .await
             .map_err(|e| e.to_string())?;
-        let mut terminal = self
-            .host
-            .attach(workspace, &session, TerminalSize::DEFAULT)
+        Ok(session)
+    }
+
+    async fn attach(
+        &self,
+        workspace: WorkspaceId,
+        session: &SessionName,
+        size: TerminalSize,
+    ) -> Result<Terminal, String> {
+        self.host
+            .attach(workspace, session, size)
             .await
-            .map_err(|e| e.to_string())?;
-        terminal
-            .input
-            .send(TerminalInput::Bytes(Bytes::from(format!("{line}\r"))))
-            .await
-            .map_err(|_| "the terminal closed before any input".to_owned())?;
-        let mut seen = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !String::from_utf8_lossy(&seen).contains(expect) {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match tokio::time::timeout(remaining, terminal.output.recv()).await {
-                Ok(Some(bytes)) => seen.extend_from_slice(&bytes),
-                Ok(None) | Err(_) => {
-                    return Err(format!(
-                        "{line:?} never showed {expect:?}: {:?}",
-                        String::from_utf8_lossy(&seen)
-                    ));
-                }
-            }
-        }
-        // Let the shell take the line before detaching.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        Ok(())
+            .map_err(|e| e.to_string())
     }
 
     async fn running_workspace(&self, workspace: WorkspaceId) -> Checked {
@@ -867,25 +917,145 @@ impl<'a, R: Runtime> Suite<'a, R> {
         expect: &str,
     ) -> Result<String, String> {
         let mut terminal = self
-            .host
             .attach(workspace, session, TerminalSize::DEFAULT)
+            .await?;
+        shown(&mut terminal, expect, Duration::from_secs(30))
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|seen| format!("{session} never showed {expect:?}: {seen:?}"))
+    }
+
+    /// A resize reaches the program in the session, at the smallest and
+    /// largest sizes a terminal may have. Typing and resizes can travel
+    /// apart, so the program is asked until it sees the size.
+    async fn resizes(&self, workspace: WorkspaceId) -> Checked {
+        self.running_workspace(workspace).await?;
+        let session = self.open_shell(workspace, "resized").await?;
+        let mut terminal = self
+            .attach(workspace, &session, TerminalSize::DEFAULT)
+            .await?;
+        let sizes = [(80, 24), (2, 1), (1000, 1000), (132, 43)];
+        for (index, (cols, rows)) in sizes.into_iter().enumerate() {
+            let size = TerminalSize::new(cols, rows).expect("a size a terminal may have");
+            // The first is the size attached at.
+            if index > 0 {
+                terminal
+                    .input
+                    .send(TerminalInput::Resize(size))
+                    .await
+                    .map_err(|_| format!("the terminal closed before resizing to {cols}x{rows}"))?;
+            }
+            let expect = format!("size-{rows}x{cols}");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                type_line(&terminal, r#"printf 'size-%s\n' "$(stty size | tr ' ' x)""#).await?;
+                match shown(&mut terminal, &expect, Duration::from_secs(2)).await {
+                    Ok(_) => break,
+                    Err(seen) if Instant::now() >= deadline => {
+                        return Err(format!("the program never saw {cols}x{rows}: {seen:?}"));
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Output arrives whole and in order however much a program prints,
+    /// though the client reads slowly at first, and typing reaches the
+    /// terminal after: one long copy once wedged a terminal until a reload.
+    async fn floods(&self, workspace: WorkspaceId) -> Checked {
+        const LINES: u32 = 300_000;
+        const LONG: usize = 300_000;
+        self.running_workspace(workspace).await?;
+        let session = self.open_shell(workspace, "flood").await?;
+        let mut terminal = self
+            .attach(workspace, &session, TerminalSize::DEFAULT)
+            .await?;
+        type_line(
+            &terminal,
+            &format!(
+                "seq 1 {LINES}; head -c {LONG} /dev/zero | tr '\\0' A; printf '\\nflood-%s\\n' done"
+            ),
+        )
+        .await?;
         let mut seen = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !String::from_utf8_lossy(&seen).contains(expect) {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        // Slow enough that the program has to wait for the client.
+        let slow_until = Instant::now() + Duration::from_secs(2);
+        // Only the prompt follows the mark, so it's in the last few KiB.
+        while !String::from_utf8_lossy(&seen[seen.len().saturating_sub(4096)..])
+            .contains("flood-done")
+        {
+            if Instant::now() < slow_until {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             match tokio::time::timeout(remaining, terminal.output.recv()).await {
                 Ok(Some(bytes)) => seen.extend_from_slice(&bytes),
                 Ok(None) | Err(_) => {
                     return Err(format!(
-                        "{session} never showed {expect:?}: {:?}",
-                        String::from_utf8_lossy(&seen)
+                        "the output stopped after {} bytes: {:?}",
+                        seen.len(),
+                        String::from_utf8_lossy(&seen[seen.len().saturating_sub(300)..])
                     ));
                 }
             }
         }
-        Ok(String::from_utf8_lossy(&seen).into_owned())
+        // Terminals turn each newline into CR LF.
+        let text = String::from_utf8_lossy(&seen).replace('\r', "");
+        let lines = (1..=LINES).fold(String::new(), |mut lines, n| {
+            let _ = writeln!(lines, "{n}");
+            lines
+        });
+        let long = "A".repeat(LONG);
+        // Shells write their own modes just before a program's output, so
+        // it's found whole, from its first line to the mark.
+        ensure(text.contains(&format!("{lines}{long}\nflood-done")), || {
+            format!(
+                "{} bytes arrived, but not as printed: every line in order {}, the long line whole {}",
+                seen.len(),
+                text.contains(&lines),
+                text.contains(&format!("{long}\nflood-done")),
+            )
+        })?;
+        type_line(&terminal, "printf 'after-%s\\n' flood").await?;
+        shown(&mut terminal, "after-flood", Duration::from_secs(30))
+            .await
+            .map(|_| ())
+            .map_err(|seen| format!("typing after the flood never showed: {seen:?}"))
+    }
+
+    /// Sessions opened and attached at once each work, apart from each
+    /// other, and every client of a session sees what it prints, as a
+    /// second browser tab does.
+    async fn at_once(&self, workspace: WorkspaceId) -> Checked {
+        self.running_workspace(workspace).await?;
+        let (left, right) = tokio::join!(
+            self.open_shell(workspace, "left"),
+            self.open_shell(workspace, "right")
+        );
+        let (left, right) = (left?, right?);
+        let (one, other, again) = tokio::join!(
+            self.attach(workspace, &left, TerminalSize::DEFAULT),
+            self.attach(workspace, &right, TerminalSize::DEFAULT),
+            self.attach(workspace, &left, TerminalSize::DEFAULT),
+        );
+        let (mut one, mut other, mut again) = (one?, other?, again?);
+        type_line(&one, "printf 'from-%s\\n' left").await?;
+        type_line(&other, "printf 'from-%s\\n' right").await?;
+        let wait = Duration::from_secs(30);
+        let (one, other, again) = tokio::join!(
+            shown(&mut one, "from-left", wait),
+            shown(&mut other, "from-right", wait),
+            shown(&mut again, "from-left", wait),
+        );
+        let one = one.map_err(|seen| format!("left never showed its output: {seen:?}"))?;
+        let other = other.map_err(|seen| format!("right never showed its output: {seen:?}"))?;
+        again.map_err(|seen| format!("left's second client never saw its output: {seen:?}"))?;
+        ensure(
+            !one.contains("from-right") && !other.contains("from-left"),
+            || format!("the sessions' output crossed: left {one:?}, right {other:?}"),
+        )
     }
 
     async fn opens_columns(&self, workspace: WorkspaceId) -> Checked {

@@ -20,9 +20,9 @@ crates/
 console/           # TypeScript web console (wterm terminals); src/generated is from iglu-api
 nix/               # NixOS modules, packages, checks, and VM integration tests
 templates/         # `nix flake init -t` starting points for environments
-dev/               # the local dev stack's shared services (Caddy, Authelia), run in Docker
+dev/               # the local dev stack (dev/stack.py), its Caddy and Authelia configs, and UI tools
 justfile           # development commands
-.github/workflows/ # CI, which runs the flake checks except the VM test
+.github/workflows/ # CI: the flake checks, the console against the dev stack, and the VM test
 ```
 
 ## Commands
@@ -37,7 +37,7 @@ just test      # the unit tests and the local runtime's conformance suite; fast
 just console   # type-check and bundle the console
 just api-types # regenerate console/src/generated after changing iglu-api; a check fails if stale
 just check     # every flake check: CI's, plus the VM test on x86_64-linux
-just e2e       # the VM test; needs x86_64-linux with KVM, locally or as a remote builder
+just e2e       # the VM test; needs x86_64-linux with KVM, which workspaces lack, so CI runs it
 just dev       # run iglud and the console locally; see DEVELOPMENT.md
 ```
 
@@ -47,17 +47,22 @@ dev CA it uses for HTTPS.
 Look at console changes before calling them done. With the dev stack running
 and seeded (`just dev-seed`), `just dev-tour` screenshots every view in Chromium
 and WebKit, on desktop and phone, in both themes, with accessibility audits;
-`just dev-compare` shows what a change touched; and `just dev-check` runs the
-VM test's browser steps locally. A console bug fix gets a step in
-`nix/tests/browser.py`, which both run.
+`just dev-compare` shows what a change touched; and `just dev-check` checks
+the console in a browser. A console bug fix gets a step in
+`nix/tests/browser.py`, run by `dev/ui/check.py`; the VM test runs only the
+steps that depend on a real host or the workspace image.
 
-CI runs every flake check except the VM test on pull requests and on `main`
-(`.github/workflows/ci.yml`). The checks live in `nix/checks.nix` and the
-flake, so adding one there adds it to CI. Run `just lint test` before pushing.
+CI runs three jobs on pull requests and on `main`, and each must pass to
+merge (`.github/workflows/ci.yml`): every flake check but the VM test; `just
+dev-check` against a dev stack; and the VM test, which checks iglu as
+deployed: the NixOS modules, the workspace image, and Incus and its
+isolation. The checks live in `nix/checks.nix` and the flake, so adding one
+there adds it to CI. Run `just lint test` before pushing, and `just dev-check`
+after changing the console.
 
-The VM test is too heavy for hosted runners, so it runs only locally. Run
-`just e2e` before merging changes to hostd, the guest tools, the console, the NixOS
-modules, or anything else that touches a real host or guest.
+Nothing about the dev stack or its tools may depend on the machine it runs
+on beyond Nix: no system packages, daemons, privileges or OS trust stores.
+Workspaces, laptops and CI all run it the same way.
 
 Clippy's pedantic group is on for the whole workspace. Fix what it finds.
 When a lint is wrong for a specific item, silence it there with

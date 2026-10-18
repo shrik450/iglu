@@ -972,7 +972,11 @@ def opens_from_programs(page: Page, name: str) -> Any:
     open_workspace(page, name)
     first = columns(page)[0]
     mark = str(time.time_ns())
-    url = f"{CONSOLE}/opened-{mark}"
+    # An address off the machine, answered here, so it opens the same
+    # whether the console is on the Internet or, as in the dev stack, on
+    # this machine's own loopback.
+    url = f"https://example.org/opened-{mark}"
+    page.context.route(url, lambda route: route.fulfill(body="opened"))
     run_in_column(page, first, f"xdg-open {url} && echo web-$((6*7))", "web-42")
     offer = column(page, first).get_by_role("group", name="A program asks to open an address")
     expect(offer).to_contain_text(url)

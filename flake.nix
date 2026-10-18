@@ -163,10 +163,13 @@
                 chromium
                 sway-unwrapped
                 self.packages.${pkgs.stdenv.hostPlatform.system}.wayvnc
+                # `just dev-trust` adds the dev CA to the NSS database.
+                nssTools
               ]
               ++ [
-                # The dev stack's clients. The Docker daemon is yours to run.
-                docker-client
+                # The dev stack's TLS front and identity provider, and its CA.
+                caddy
+                authelia
                 openssl
                 # Seeding, touring and checking the console in real browsers;
                 # see DEVELOPMENT.md.
@@ -176,6 +179,9 @@
                 ]))
               ];
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+            # The dev stack's terminals run this, not your login shell, so the
+            # console's checks type into the same shell on every machine.
+            IGLU_DEV_SHELL = lib.getExe pkgs.bashInteractive;
             PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsers;
             # NixOS has none of the paths Playwright checks for; empty elsewhere.
             PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "true";

@@ -12,6 +12,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Three jobs, each required to merge: the flake checks, the console checked
+# in a browser against the dev stack, and the VM test against a real host.
 jobs:
   checks:
     runs-on: ubuntu-24.04
@@ -26,8 +28,7 @@ jobs:
           use-flakehub: false
           diagnostic-endpoint: ""
 
-      # Every flake check except the VM test, which is too heavy for hosted
-      # runners and runs locally with `just e2e`.
+      # Every flake check except the VM test, which has a job of its own.
       - name: nix build
         run: |
           mapfile -t checks < <(
@@ -37,3 +38,70 @@ jobs:
           )
           echo "checks: ${checks[*]}"
           nix build -L --no-link "${checks[@]/#/.#checks.x86_64-linux.}"
+
+  console:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
+          diagnostic-endpoint: ""
+
+      # Built first, so the stack starts in seconds once it's asked to.
+      - name: Build
+        run: |
+          nix develop -c cargo build -p iglud -p iglu-devhost -p iglu-guest -p iglu-cli
+          nix develop -c npm ci --prefix console
+
+      - name: Start the dev stack
+        run: |
+          nohup nix develop -c just dev > dev-stack.log 2>&1 &
+          nix develop -c just dev-wait
+
+      - name: Check the console
+        run: nix develop -c just dev-check
+
+      - name: Keep the dev stack's logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-stack-logs
+          path: |
+            dev-stack.log
+            .dev/state/logs/
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      # Hosted runners have KVM, but only root can open it.
+      - name: Let builds use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The VM test's store paths and disks need more room than the runner
+      # leaves free; these preinstalled toolchains are unused.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
+          diagnostic-endpoint: ""
+
+      - name: nix build
+        run: nix build -L --no-link .#checks.x86_64-linux.e2e

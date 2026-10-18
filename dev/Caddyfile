@@ -1,32 +1,44 @@
+# The dev stack's HTTPS front. dev/stack.py runs it and sets the variables:
+# where the shared files are, the one port it serves on, and where iglud and
+# Authelia listen.
 {
+	# Nothing reconfigures it while it runs, and it keeps no state outside
+	# the shared directory.
+	admin off
+	persist_config off
+	# HTTPS only, on the stack's port; no listener on port 80 to redirect.
+	auto_https disable_redirects
+	storage file_system {$IGLU_DEV_SHARED}/caddy
 	# Every certificate comes from the shared, name-constrained dev CA.
 	pki {
 		ca local {
 			root {
-				cert /ca/ca.crt
-				key /ca/ca.key
+				cert {$IGLU_DEV_SHARED}/ca/ca.crt
+				key {$IGLU_DEV_SHARED}/ca/ca.key
 			}
 		}
 	}
 	local_certs
-	# The CA is trusted on the Mac, not inside this container.
+	# Trusting the CA is yours to choose; see `just dev-trust`.
 	skip_install_trust
 }
 
-auth.localhost {
-	reverse_proxy authelia:9091
+{$IGLU_DEV_AUTH_HOST}:{$IGLU_DEV_PORT} {
+	bind 127.0.0.1 ::1
+	reverse_proxy {$IGLU_DEV_AUTHELIA}
 }
 
-# The console is at iglu.localhost and previews are under preview.localhost,
-# both served by the iglud listening on port 7100.
-iglu.localhost, *.preview.localhost {
-	reverse_proxy host.docker.internal:7100
+# iglud serves the console and the previews, which dev/stack.py names.
+{$IGLU_DEV_CONSOLE_HOST}:{$IGLU_DEV_PORT}, *.{$IGLU_DEV_PREVIEW_DOMAIN}:{$IGLU_DEV_PORT} {
+	bind 127.0.0.1 ::1
+	reverse_proxy {$IGLU_DEV_IGLUD}
 }
 
 # Fixture repositories for local workspaces to clone, read-only over Git's
 # dumb HTTP protocol. `just dev-seed` writes them; the devhost has workspaces'
-# Git trust the dev CA for *.localhost.
-git.localhost {
-	root * /srv/git
+# Git trust the dev CA for *.localhost only.
+{$IGLU_DEV_GIT_HOST}:{$IGLU_DEV_PORT} {
+	bind 127.0.0.1 ::1
+	root * {$IGLU_DEV_SHARED}/git
 	file_server
 }

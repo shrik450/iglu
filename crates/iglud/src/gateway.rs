@@ -228,16 +228,12 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
     let Some(principal) = session else {
         return match kind {
             Transport::Http(MethodClass::Safe) => {
-                let here = format!(
-                    "https://{label}.{}{}",
-                    app.config.preview_domain,
-                    request.uri()
-                );
+                let here = format!("{}{}", app.config.preview_origin(&label), request.uri());
                 let encoded: String =
                     url::form_urlencoded::byte_serialize(here.as_bytes()).collect();
                 Redirect::to(&format!(
-                    "https://{PREVIEW_AUTH_LABEL}.{}/login?return={encoded}",
-                    app.config.preview_domain
+                    "{}/login?return={encoded}",
+                    app.config.preview_origin(PREVIEW_AUTH_LABEL)
                 ))
                 .into_response()
             }
@@ -311,7 +307,7 @@ async fn forward(
 ) -> anyhow::Result<Response> {
     let websocket = matches!(kind, Transport::WebSocket);
     let own_origin = app.config.preview_origin(name.as_str());
-    let public_host = format!("{name}.{}", app.config.preview_domain);
+    let public_host = app.config.preview_host(name.as_str());
     let client_upgrade = websocket.then(|| hyper::upgrade::on(&mut request));
 
     let (mut parts, body) = request.into_parts();
