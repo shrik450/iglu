@@ -44,6 +44,8 @@ let
     runCommand "${pname}-${version}"
       {
         inherit pname version;
+        # For caches that keep what changes only with the lock files.
+        passthru.dependencies = workspace.dependencies.release;
         meta = {
           inherit description;
           mainProgram = builtins.head bins;

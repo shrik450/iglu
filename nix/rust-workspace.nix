@@ -37,10 +37,23 @@ in
   inherit common;
   inherit (common) version src;
   dependencies = {
-    # For the packages.
-    release = craneLib.buildDepsOnly (common // { doCheck = false; });
-    # For clippy and the tests, which keep overflow checks and debug
-    # assertions.
-    dev = craneLib.buildDepsOnly (common // { CARGO_PROFILE = "dev"; });
+    # For the packages, which need only what `cargo build` makes.
+    release = craneLib.buildDepsOnly (
+      common
+      // {
+        doCheck = false;
+        cargoCheckCommand = "true";
+      }
+    );
+    # For clippy, which needs what `cargo check` makes, and the tests, which
+    # keep overflow checks and debug assertions. Neither uses what `cargo
+    # build` makes.
+    dev = craneLib.buildDepsOnly (
+      common
+      // {
+        CARGO_PROFILE = "dev";
+        cargoBuildCommand = "true";
+      }
+    );
   };
 }

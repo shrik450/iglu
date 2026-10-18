@@ -25,10 +25,10 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      - uses: ./.github/actions/nix-cache
         with:
-          use-flakehub: false
-          diagnostic-endpoint: ""
+          set: checks
+          mode: restore
 
       # Every flake check except the VM test, which has a job of its own.
       - name: nix build
@@ -41,6 +41,13 @@ jobs:
           echo "checks: ${checks[*]}"
           nix build -L --no-link "${checks[@]/#/.#checks.x86_64-linux.}"
 
+      - name: Keep what was slow to build for the next run
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/nix-cache
+        with:
+          set: checks
+          mode: save
+
   console:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -49,10 +56,10 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      - uses: ./.github/actions/nix-cache
         with:
-          use-flakehub: false
-          diagnostic-endpoint: ""
+          set: console
+          mode: restore
 
       # Built first, so the stack starts in seconds once it's asked to.
       - name: Build
@@ -67,6 +74,13 @@ jobs:
 
       - name: Check the console
         run: nix develop -c just dev-check
+
+      - name: Keep what was slow to build for the next run
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/nix-cache
+        with:
+          set: console
+          mode: save
 
       - name: Keep the dev stack's logs
         if: failure()
@@ -92,18 +106,32 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       # The VM test's store paths and disks need more room than the runner
-      # leaves free; these preinstalled toolchains are unused.
+      # leaves free; these preinstalled toolchains are unused. Removing them
+      # takes two minutes, so it happens while Nix starts.
       - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        run: |
+          sudo nohup rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+            > /dev/null 2>&1 &
 
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      - uses: ./.github/actions/nix-cache
         with:
-          use-flakehub: false
-          diagnostic-endpoint: ""
+          set: e2e
+          mode: restore
 
       - name: nix build
         run: nix build -L --no-link .#checks.x86_64-linux.e2e
+
+      - name: Disk use
+        if: ${{ !cancelled() }}
+        run: df -h / /mnt
+
+      - name: Keep what was slow to build for the next run
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/nix-cache
+        with:
+          set: e2e
+          mode: save

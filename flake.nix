@@ -56,10 +56,19 @@
               "-Dtarget=${pkgs.stdenv.hostPlatform.parsed.cpu.name}-linux-musl"
             ];
           });
-          guest-tools = pkgs.runCommand "iglu-guest-tools" { } ''
-            mkdir -p $out/bin
-            cp ${static.iglu-guest}/bin/* ${static.iglu}/bin/iglu ${zmx}/bin/zmx $out/bin/
-          '';
+          guest-tools =
+            pkgs.runCommand "iglu-guest-tools"
+              {
+                # For caches that keep what changes only with the lock files.
+                passthru = {
+                  inherit zmx;
+                  inherit (static.iglu-guest) dependencies;
+                };
+              }
+              ''
+                mkdir -p $out/bin
+                cp ${static.iglu-guest}/bin/* ${static.iglu}/bin/iglu ${zmx}/bin/zmx $out/bin/
+              '';
           # The browser column's VNC server, which workspaces take from here
           # so the patch meets the version it was written for. It types
           # keysyms: text follows the person's keyboard layout, and any
@@ -74,6 +83,29 @@
         else
           { inherit (all) iglu zmx; }
       );
+
+      # What each CI job keeps between runs: what's slow to build and changes
+      # only with the lock files. The rest comes from cache.nixos.org, or is
+      # built from each commit's sources anyway.
+      legacyPackages.x86_64-linux.ci-cache =
+        let
+          packages = self.packages.x86_64-linux;
+        in
+        {
+          checks = [
+            self.checks.x86_64-linux.clippy.cargoArtifacts
+            packages.iglud.dependencies
+            packages.guest-tools.dependencies
+            packages.guest-tools.zmx
+            packages.zmx
+          ];
+          console = [ packages.zmx ];
+          e2e = [
+            packages.iglud.dependencies
+            packages.guest-tools.dependencies
+            packages.guest-tools.zmx
+          ];
+        };
 
       nixosModules = {
         workspace = import ./nix/modules/workspace.nix { inherit self; };
