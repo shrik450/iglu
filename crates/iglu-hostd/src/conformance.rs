@@ -44,6 +44,17 @@ pub struct Fixture {
     pub next: EnvSource,
     /// How long a started workspace may take to finish booting.
     pub boot_timeout: Duration,
+    pub guests: Guests,
+}
+
+/// Whether a runtime's guests run programs. A simulated runtime's answer
+/// the guest tools' commands without running anything, so it's held to the
+/// checks that need no program in a guest: the lifecycle, secrets,
+/// provisioning and images. The rest need shells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Guests {
+    Programs,
+    Modelled,
 }
 
 /// One check's result.
@@ -98,93 +109,101 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check(
+                "an older delivery of secrets leaves the newer ones, and counts as delivered",
+                Suite::older_secrets_are_superseded,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
                 "provisioning outlives a restart",
                 Suite::provisioning_outlives_a_restart,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check("terminals run in the workspace", Suite::terminals)
+            .with_programs("terminals run in the workspace", Suite::terminals)
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "terminals take typing and show what they print, without a client",
                 Suite::typing,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "a resize reaches the program, at any size a terminal may have",
                 Suite::resizes,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "output arrives whole and in order to a slow client, and typing reaches the terminal after",
                 Suite::floods,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "sessions opened and attached at once work apart, and every client of one sees it",
                 Suite::at_once,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "columns open once a boot, with their arguments exactly as given",
                 Suite::opens_columns,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check("stopping a frozen workspace ends it", Suite::stops_frozen)
+            .with_programs("stopping a frozen workspace ends it", Suite::stops_frozen)
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "tunnels reach the guest's ports, which show as listening",
                 Suite::tunnels,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "threads reach the inventory, go with their session and outlast a freeze",
                 Suite::attention,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "caffeinate keeps a terminal working while its command runs",
                 Suite::caffeinate,
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check("a large bundle arrives whole", Suite::large_bundle)
+            .with_programs("a large bundle arrives whole", Suite::large_bundle)
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "agents keep their configuration for every workspace of the person's, and no one else's",
                 Suite::keeps_per_person,
             )
@@ -198,9 +217,9 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
             )
             .await,
     );
-    outcomes.push(
+    outcomes.extend(
         suite
-            .check(
+            .with_programs(
                 "updating upgrades it in place to the next image from any settled state, keeping its files",
                 |suite, workspace| suite.updates(workspace, &fixture.next),
             )
@@ -261,6 +280,7 @@ struct Suite<'a, R> {
     host: &'a Host<R>,
     image: BuiltImage,
     boot_timeout: Duration,
+    guests: Guests,
     /// Who owns the workspaces the checks make, one person for the run, so
     /// the run makes one kept directory.
     owner: PrincipalId,
@@ -318,6 +338,7 @@ impl<'a, R: Runtime> Suite<'a, R> {
                 host,
                 image,
                 boot_timeout: fixture.boot_timeout,
+                guests: fixture.guests,
                 owner: PrincipalId::from_uuid(Uuid::new_v4()),
             }),
             BuildOutcome::Failed { log_tail } => Err(Outcome {
@@ -340,6 +361,19 @@ impl<'a, R: Runtime> Suite<'a, R> {
         Outcome {
             check: name,
             result: result.and(cleaned.map(|_| ())),
+        }
+    }
+
+    /// Runs a check that needs programs in the guest, unless the runtime's
+    /// guests run none.
+    async fn with_programs<'s, F, Fut>(&'s self, name: &'static str, check: F) -> Option<Outcome>
+    where
+        F: FnOnce(&'s Self, WorkspaceId) -> Fut,
+        Fut: Future<Output = Checked>,
+    {
+        match self.guests {
+            Guests::Programs => Some(self.check(name, check).await),
+            Guests::Modelled => None,
         }
     }
 
@@ -560,6 +594,27 @@ impl<'a, R: Runtime> Suite<'a, R> {
         ensure(second.secrets.is_none() && held.is_none(), || {
             format!("secrets outlived a restart: {second:?}, the guest holds {held:?}")
         })
+    }
+
+    /// A delivery older than the one the guest holds, landing late, leaves
+    /// the newer secrets in place and counts as delivered: no error, and so
+    /// nothing to retry.
+    async fn older_secrets_are_superseded(&self, workspace: WorkspaceId) -> Checked {
+        self.running_workspace(workspace).await?;
+        let newer = SecretsGeneration::from_u64(5);
+        let older = SecretsGeneration::from_u64(3);
+        for generation in [newer, older] {
+            let secrets = bundle(generation, []).map_err(|e| e.to_string())?;
+            let instance = self
+                .perform(workspace, Command::DeliverSecrets(secrets))
+                .await?;
+            ensure(
+                running(instance).and_then(|r| r.secrets) == Some(newer),
+                || format!("after delivering {generation:?}: {instance:?}"),
+            )?;
+        }
+        let held = self.delivered(workspace).await?;
+        ensure(held == Some(newer), || format!("the guest holds {held:?}"))
     }
 
     async fn provisioning_outlives_a_restart(&self, workspace: WorkspaceId) -> Checked {

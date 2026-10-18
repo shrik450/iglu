@@ -17,6 +17,8 @@ mod login;
 mod model;
 mod oidc;
 mod reconcile;
+#[cfg(test)]
+mod sim;
 mod terminal;
 mod views;
 

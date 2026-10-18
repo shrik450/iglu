@@ -41,6 +41,8 @@ rustix = { version = "1.1.5", features = ["fs"] }
 
 [dev-dependencies]
 proptest = "1"
+# The simulated runtime's own conformance test needs both.
+iglu-hostd = { path = ".", features = ["sim", "conformance"] }
 
 [lints]
 workspace = true
@@ -48,6 +50,8 @@ workspace = true
 [features]
 # The runtime conformance suite, and a binary that runs it against Incus.
 conformance = ["uuid/v4"]
+# A runtime held in memory, whose steps wait for whoever drives a simulation.
+sim = []
 
 [[bin]]
 name = "iglu-hostd-conformance"

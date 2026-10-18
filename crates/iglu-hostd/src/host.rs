@@ -172,6 +172,8 @@ impl<R: Runtime> Host<R> {
             "installing secrets failed",
         )
         .await?;
+        // A guest leaves an older delivery than the one it holds in place,
+        // and says it succeeded: the cache keeps the newer of the two.
         self.boots.delivered(name, guest.boot, bundle.generation);
         Ok(())
     }

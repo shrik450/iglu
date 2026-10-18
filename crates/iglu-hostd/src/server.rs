@@ -104,7 +104,9 @@ impl TryFrom<String> for Loopback {
     }
 }
 
-fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
+/// Every route hostd serves, for serving them some other way, as a
+/// simulation does.
+pub fn router<R: Runtime>(app: Arc<App<R>>) -> Router {
     Router::new()
         .route(path::INVENTORY, get(inventory::<R>))
         .route(path::BUILDS, post(build::<R>))
