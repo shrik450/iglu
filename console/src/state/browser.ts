@@ -153,3 +153,30 @@ export function preferred(encodings: readonly number[], hardware: boolean): numb
   const first = (hardware ? [H264, ZRLE] : [ZRLE]).filter((e) => encodings.includes(e));
   return [...first, ...encodings.filter((e) => !first.includes(e))];
 }
+
+/** RFB's ClientCutText, which carries a paste's text to the display. */
+const CLIENT_CUT_TEXT = 6;
+/** The extended clipboard's actions, in a ClientCutText's flags. Caps
+ * names every action the sender takes, so it's none of them. */
+const EXTENDED_CAPS = 0x0100_0000;
+const EXTENDED_NOTIFY = 0x0800_0000;
+const EXTENDED_PROVIDE = 0x1000_0000;
+const EXTENDED_TEXT = 0x0000_0001;
+
+/** What a message sent to the display does for a paste: "text" when it
+ * carries the text, as a plain ClientCutText or an extended clipboard's
+ * Provide does; "announced" when it only says there's text, an extended
+ * Notify, which the display answers by asking for it; null otherwise. The
+ * display takes messages in order, so keys sent after the text find it on
+ * the browser's clipboard; after an announcement, they'd find the last. */
+export function pasteStep(message: Uint8Array): "text" | "announced" | null {
+  if (message.length < 8 || message[0] !== CLIENT_CUT_TEXT) return null;
+  const view = new DataView(message.buffer, message.byteOffset, message.byteLength);
+  if (view.getInt32(4) >= 0) return "text";
+  if (message.length < 12) return null;
+  const flags = view.getUint32(8);
+  if (flags & EXTENDED_CAPS) return null;
+  if (flags & EXTENDED_PROVIDE && flags & EXTENDED_TEXT) return "text";
+  if (flags & EXTENDED_NOTIFY && flags & EXTENDED_TEXT) return "announced";
+  return null;
+}

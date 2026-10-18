@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ALT, clipboardShortcut, CONTROL, displaySize, keyFor, keysymOf, modifiersFor, preferred, scaleOf, SHIFT, SUPER, typing } from "./browser.ts";
+import { ALT, clipboardShortcut, CONTROL, displaySize, keyFor, keysymOf, modifiersFor, pasteStep, preferred, scaleOf, SHIFT, SUPER, typing } from "./browser.ts";
 
 const plain = { key: "", altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
 
@@ -75,4 +75,30 @@ test("the display is asked for H.264 when it encodes on a GPU, and ZRLE otherwis
   assert.deepEqual(preferred(offered, true), [50, 16, 1, 7, 0, -256]);
   // A browser that can't decode H.264 doesn't offer it.
   assert.deepEqual(preferred([1, 7, 16, 0], true), [16, 1, 7, 0]);
+});
+
+test("a paste's keys wait for a message that carries its text, not one that only announces it", () => {
+  const cutText = (length: number, ...rest: number[]) => {
+    const message = new Uint8Array(8 + rest.length * 4);
+    const view = new DataView(message.buffer);
+    message[0] = 6;
+    view.setInt32(4, length);
+    rest.forEach((word, index) => view.setUint32(8 + index * 4, word));
+    return message;
+  };
+  // Without extended clipboards, the text itself.
+  assert.equal(pasteStep(Uint8Array.of(...cutText(5).subarray(0, 8), ...new TextEncoder().encode("hello"))), "text");
+  assert.equal(pasteStep(cutText(0)), "text");
+  // With them, a Notify announces the text and the Provide that follows the
+  // display's Request carries it; caps and requests do neither.
+  assert.equal(pasteStep(cutText(-4, 0x0800_0001)), "announced");
+  assert.equal(pasteStep(cutText(-12, 0x1000_0001, 0x789c)), "text");
+  assert.equal(pasteStep(cutText(-4, 0x0800_0000)), null);
+  // Caps lists every action, Provide and Notify among them.
+  assert.equal(pasteStep(cutText(-8, 0x1f00_0001, 0)), null);
+  assert.equal(pasteStep(cutText(-4, 0x0200_0001)), null);
+  // Not a ClientCutText at all: a key, a pointer, or too short to say.
+  assert.equal(pasteStep(Uint8Array.of(4, 1, 0, 0, 0, 0, 0, 0x76)), null);
+  assert.equal(pasteStep(Uint8Array.of(5, 0, 0, 10, 0, 10)), null);
+  assert.equal(pasteStep(Uint8Array.of(6, 0, 0)), null);
 });

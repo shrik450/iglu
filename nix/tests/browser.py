@@ -361,8 +361,14 @@ def filled(screen: Locator) -> None:
     """Waits for the browser's display to fill its screen: drawn in the
     screen's device pixels, at the column's size, so a point on the screen
     is the same point in the browser. A dialog above it takes room while
-    it's open, and the display takes a moment to follow."""
-    fit = "c => Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1"
+    it's open, and the display takes a moment to follow: a display still at
+    its last size draws in its own pixels too, smaller than the screen, and
+    a click as it grew landed where the page no longer was."""
+    fit = (
+        "c => { const s = c.closest('.browser-screen').getBoundingClientRect(), b = c.getBoundingClientRect();"
+        " return Math.abs(b.width - s.width) <= 1 && Math.abs(b.height - s.height) <= 1"
+        " && Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1; }"
+    )
     screen.page.wait_for_function(fit, arg=screen.element_handle(), timeout=10_000)
 
 
@@ -428,20 +434,24 @@ def browser_answers(page: Page, name: str) -> Any:
     return {}
 
 
+# Enter pressed, as RFB's KeyEvent sends it to the browser's display.
+ENTER_DOWN = bytes([4, 1, 0, 0, 0, 0, 0xFF, 0x0D])
+
+
 def browser_keeps(page: Page, name: str) -> Any:
-    """A download lands in the workspace's Downloads, and is saved from
-    there; copying and pasting go through this computer's clipboard."""
+    """Copying and pasting go through this computer's clipboard, and a
+    download lands in the workspace's Downloads, and is saved from there.
+    What the browser only selects isn't copied: selecting a field's text
+    before pasting over it took the clipboard, and pasted that text back. A
+    paste reaches the browser before the keys after it, however slow the
+    display is to ask for its text: they went after half a second
+    regardless, and pasted what the browser had. The clipboard goes first:
+    the download's notice resizes the screen, and a click as it does misses
+    the field."""
+    sent: list[bytes] = []
+    page.on("websocket", lambda socket: socket.on("framesent", lambda frame: sent.append(frame) if isinstance(frame, bytes) else None))
     screen = browser_screen(page, name)
     browser = column(page, "browser")
-    click_above_bottom(screen, DOWNLOAD)
-    done = browser.get_by_role("status", name="Downloaded")
-    expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)
-    with page.expect_download() as saving:
-        done.get_by_role("link", name="Save to this computer").click()
-    assert saving.value.suggested_filename == "note.txt", saving.value.suggested_filename
-    assert Path(saving.value.path()).read_text() == "saved here"
-    expect(done).to_have_count(0)
-    filled(screen)
     page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
     click_above_bottom(screen, FIELD)
     page.keyboard.press("Control+a")
@@ -451,9 +461,29 @@ def browser_keeps(page: Page, name: str) -> Any:
         assert time.monotonic() < deadline, page.evaluate("navigator.clipboard.readText()")
         time.sleep(0.2)
     page.evaluate("navigator.clipboard.writeText('pasted')")
+    # Changed, then selected, as a person selects what they'll paste over,
+    # and given as long as a person takes, for a selection to come back.
+    click_above_bottom(screen, FIELD)
+    page.keyboard.press("End")
+    page.keyboard.type("more")
     page.keyboard.press("Control+a")
+    page.wait_for_timeout(2000)
+    assert page.evaluate("navigator.clipboard.readText()") == "pasted", page.evaluate("navigator.clipboard.readText()")
     page.keyboard.press("Control+v")
     page.keyboard.press("Enter")
+    # The keys wait for the paste: gone once Enter is, before this page closes.
+    deadline = time.monotonic() + 30
+    while ENTER_DOWN not in sent:
+        assert time.monotonic() < deadline, "Enter never reached the browser"
+        page.wait_for_timeout(100)
+    click_above_bottom(screen, DOWNLOAD)
+    done = browser.get_by_role("status", name="Downloaded")
+    expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)
+    with page.expect_download() as saving:
+        done.get_by_role("link", name="Save to this computer").click()
+    assert saving.value.suggested_filename == "note.txt", saving.value.suggested_filename
+    assert Path(saving.value.path()).read_text() == "saved here"
+    expect(done).to_have_count(0)
     # A second browser would want the same port: asking again goes to this one.
     page.get_by_role("button", name="Add a column").click()
     expect(page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser")).to_contain_text("open")
