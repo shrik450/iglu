@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  # A merge queue checks each change on top of the ones ahead of it.
+  merge_group:
   push:
     branches: [main]
 

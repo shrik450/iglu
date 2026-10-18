@@ -2,7 +2,7 @@
 # `just lint` and `just test` run the same commands from the dev shell.
 {
   lib,
-  rustPlatform,
+  craneLib,
   runCommand,
   cargo,
   clippy,
@@ -17,24 +17,24 @@
 }:
 
 let
-  workspace = import ./rust-workspace.nix { inherit lib; };
+  workspace = import ./rust-workspace.nix { inherit lib craneLib; };
 
-  # Runs a cargo command over the whole workspace with vendored dependencies.
+  # Runs a cargo command over the whole workspace, from its compiled
+  # dependencies.
   cargoCheck =
     name: nativeBuildInputs: command:
-    rustPlatform.buildRustPackage {
-      pname = "iglu-${name}";
-      inherit (workspace) version src cargoLock;
-      inherit nativeBuildInputs;
-      buildPhase = ''
-        runHook preBuild
-        ${command}
-        runHook postBuild
-      '';
-      doCheck = false;
-      installPhase = "touch $out";
-      dontFixup = true;
-    };
+    craneLib.mkCargoDerivation (
+      workspace.common
+      // {
+        pname = "iglu-${name}";
+        CARGO_PROFILE = "dev";
+        cargoArtifacts = workspace.dependencies.dev;
+        inherit nativeBuildInputs;
+        buildPhaseCargoCommand = command;
+        installPhaseCommand = "touch $out";
+        doInstallCargoArtifacts = false;
+      }
+    );
 
   nixFiles = lib.fileset.toSource {
     root = ../.;

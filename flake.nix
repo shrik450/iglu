@@ -2,9 +2,16 @@
   description = "iglu: self-hosted workspaces for coding agents";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # Builds the Rust workspace with its dependencies in a derivation of their
+  # own, which the packages and checks share and caches keep between commits.
+  inputs.crane.url = "github:ipetkov/crane";
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      crane,
+    }:
     let
       lib = nixpkgs.lib;
       linux = [
@@ -23,20 +30,26 @@
           all = import ./nix/packages.nix {
             inherit (pkgs)
               lib
-              rustPlatform
+              runCommand
               buildNpmPackage
               zmx
               ;
+            craneLib = crane.mkLib pkgs;
           };
           # Static, so they run in any workspace, whatever its system: hosts
           # mount them into every instance. Zig links zmx with musl itself.
           static = import ./nix/packages.nix {
             inherit (pkgs.pkgsStatic)
               lib
-              rustPlatform
+              runCommand
               buildNpmPackage
               zmx
               ;
+            craneLib = crane.mkLib pkgs.pkgsStatic;
+            crates = [
+              "iglu-guest"
+              "iglu-cli"
+            ];
           };
           zmx = all.zmx.overrideAttrs (old: {
             zigBuildFlags = (old.zigBuildFlags or [ ]) ++ [
@@ -110,7 +123,6 @@
         // import ./nix/checks.nix {
           inherit (pkgs)
             lib
-            rustPlatform
             runCommand
             cargo
             clippy
@@ -123,6 +135,7 @@
             lsof
             ;
           inherit (self.packages.${system}) zmx;
+          craneLib = crane.mkLib pkgs;
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
           e2e = pkgs.testers.runNixOSTest (import ./nix/tests/e2e.nix { inherit self nixpkgs; });
