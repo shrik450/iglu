@@ -1,0 +1,14 @@
+crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with 1
+crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with -1
+crates/iglu-domain/src/time.rs:36:27: replace < with == in Timestamp::since
+crates/iglu-domain/src/time.rs:36:27: replace < with > in Timestamp::since
+crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with 0
+crates/iglu-domain/src/time.rs:56:19: replace < with == in <impl TryFrom<i64> for Millis>::try_from
+crates/iglu-domain/src/time.rs:56:19: replace < with > in <impl TryFrom<i64> for Millis>::try_from
+crates/iglu-domain/src/time.rs:56:19: replace < with <= in <impl TryFrom<i64> for Millis>::try_from
+crates/iglu-domain/src/time.rs:73:26: replace * with + in Millis::from_secs
+crates/iglu-domain/src/time.rs:73:26: replace * with / in Millis::from_secs
+crates/iglu-domain/src/time.rs:66:9: replace <impl From<Millis> for i64>::from -> Self with Default::default()
+crates/iglu-domain/src/time.rs:78:9: replace Millis::as_millis -> i64 with 0
+crates/iglu-domain/src/time.rs:78:9: replace Millis::as_millis -> i64 with 1
+crates/iglu-domain/src/time.rs:78:9: replace Millis::as_millis -> i64 with -1

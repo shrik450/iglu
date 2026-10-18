@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace Timestamp::from_unix_millis -> Self with Default::default()
+@@ -10,17 +10,17 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+ #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
+ #[serde(transparent)]
+ pub struct Timestamp(i64);
+ 
+ impl Timestamp {
+     #[must_use]
+     pub const fn from_unix_millis(millis: i64) -> Self {
+-        Self(millis)
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub const fn unix_millis(self) -> i64 {
+         self.0
+     }
+ 
+     /// `self + duration`, saturating at the end of time.

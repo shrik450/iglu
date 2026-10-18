@@ -31,9 +31,8 @@ impl Timestamp {
 
     /// How long ago `earlier` was, or zero if it's in the future.
     #[must_use]
-    pub const fn since(self, earlier: Self) -> Millis {
-        let elapsed = self.0.saturating_sub(earlier.0);
-        Millis(if elapsed < 0 { 0 } else { elapsed })
+    pub fn since(self, earlier: Self) -> Millis {
+        Millis(self.0.saturating_sub(earlier.0).max(0))
     }
 }
 
@@ -94,5 +93,10 @@ mod tests {
     fn plus_adds() {
         let t = Timestamp::from_unix_millis(1_000).plus(Millis::from_secs(5));
         assert_eq!(t.unix_millis(), 6_000);
+    }
+
+    #[test]
+    fn timestamps_show_their_unit() {
+        assert_eq!(Timestamp::from_unix_millis(1_500).to_string(), "1500ms");
     }
 }

@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace <impl fmt::Display for Timestamp>::fmt -> fmt::Result with Ok(Default::default())
+@@ -33,17 +33,17 @@
+     #[must_use]
+     pub fn since(self, earlier: Self) -> Millis {
+         Millis(self.0.saturating_sub(earlier.0).max(0))
+     }
+ }
+ 
+ impl fmt::Display for Timestamp {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+-        write!(f, "{}ms", self.0)
++        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// A non-negative duration in milliseconds.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+ #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
+ #[serde(try_from = "i64", into = "i64")]
+ pub struct Millis(i64);

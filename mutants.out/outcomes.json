@@ -1,0 +1,1159 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 32.48444641,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 3.320702744,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:18:9: replace Timestamp::from_unix_millis -> Self with Default::default()",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Timestamp::from_unix_millis",
+            "return_type": "-> Self",
+            "span": {
+              "start": {
+                "line": 16,
+                "column": 5
+              },
+              "end": {
+                "line": 19,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 18,
+              "column": 9
+            },
+            "end": {
+              "line": 18,
+              "column": 21
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_18_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_18_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.007255431,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with 1",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Timestamp::unix_millis",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 21,
+                "column": 5
+              },
+              "end": {
+                "line": 24,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 23,
+              "column": 9
+            },
+            "end": {
+              "line": 23,
+              "column": 15
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_23_col_9_001.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_23_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 8.286972323,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.303979234,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with -1",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Timestamp::unix_millis",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 21,
+                "column": 5
+              },
+              "end": {
+                "line": 24,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 23,
+              "column": 9
+            },
+            "end": {
+              "line": 23,
+              "column": 15
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_23_col_9_002.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_23_col_9_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 7.430780436,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.150925738,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:29:9: replace Timestamp::plus -> Self with Default::default()",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Timestamp::plus",
+            "return_type": "-> Self",
+            "span": {
+              "start": {
+                "line": 26,
+                "column": 5
+              },
+              "end": {
+                "line": 30,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 29,
+              "column": 9
+            },
+            "end": {
+              "line": 29,
+              "column": 48
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_29_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_29_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.752681832,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:35:9: replace Timestamp::since -> Millis with Default::default()",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Timestamp::since",
+            "return_type": "-> Millis",
+            "span": {
+              "start": {
+                "line": 32,
+                "column": 5
+              },
+              "end": {
+                "line": 36,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 35,
+              "column": 9
+            },
+            "end": {
+              "line": 35,
+              "column": 56
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_35_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_35_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.852745228,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:41:9: replace <impl fmt::Display for Timestamp>::fmt -> fmt::Result with Ok(Default::default())",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "<impl fmt::Display for Timestamp>::fmt",
+            "return_type": "-> fmt::Result",
+            "span": {
+              "start": {
+                "line": 40,
+                "column": 5
+              },
+              "end": {
+                "line": 42,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 41,
+              "column": 9
+            },
+            "end": {
+              "line": 41,
+              "column": 34
+            }
+          },
+          "replacement": "Ok(Default::default())",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_41_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_41_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 15.520764275,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.150877421,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:55:9: replace <impl TryFrom<i64> for Millis>::try_from -> Result<Self, Self::Error> with Ok(Default::default())",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+            "return_type": "-> Result<Self, Self::Error>",
+            "span": {
+              "start": {
+                "line": 54,
+                "column": 5
+              },
+              "end": {
+                "line": 60,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 55,
+              "column": 9
+            },
+            "end": {
+              "line": 59,
+              "column": 10
+            }
+          },
+          "replacement": "Ok(Default::default())",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_55_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_55_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.801736456,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with 0",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Timestamp::unix_millis",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 21,
+                "column": 5
+              },
+              "end": {
+                "line": 24,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 23,
+              "column": 9
+            },
+            "end": {
+              "line": 23,
+              "column": 15
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_23_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_23_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 37.948097142,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.203127206,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:55:19: replace < with > in <impl TryFrom<i64> for Millis>::try_from",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+            "return_type": "-> Result<Self, Self::Error>",
+            "span": {
+              "start": {
+                "line": 54,
+                "column": 5
+              },
+              "end": {
+                "line": 60,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 55,
+              "column": 19
+            },
+            "end": {
+              "line": 55,
+              "column": 20
+            }
+          },
+          "replacement": ">",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_55_col_19_001.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_55_col_19_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 4.267977363,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 3.412853127,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:55:19: replace < with <= in <impl TryFrom<i64> for Millis>::try_from",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+            "return_type": "-> Result<Self, Self::Error>",
+            "span": {
+              "start": {
+                "line": 54,
+                "column": 5
+              },
+              "end": {
+                "line": 60,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 55,
+              "column": 19
+            },
+            "end": {
+              "line": 55,
+              "column": 20
+            }
+          },
+          "replacement": "<=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_55_col_19_002.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_55_col_19_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 3.817420871,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 4.714856726,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:55:19: replace < with == in <impl TryFrom<i64> for Millis>::try_from",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+            "return_type": "-> Result<Self, Self::Error>",
+            "span": {
+              "start": {
+                "line": 54,
+                "column": 5
+              },
+              "end": {
+                "line": 60,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 55,
+              "column": 19
+            },
+            "end": {
+              "line": 55,
+              "column": 20
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_55_col_19.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_55_col_19.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 14.194986949,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 5.012456204,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:72:9: replace Millis::from_secs -> Self with Default::default()",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Millis::from_secs",
+            "return_type": "-> Self",
+            "span": {
+              "start": {
+                "line": 70,
+                "column": 5
+              },
+              "end": {
+                "line": 73,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 72,
+              "column": 9
+            },
+            "end": {
+              "line": 72,
+              "column": 33
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_72_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_72_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.80230402,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:72:26: replace * with + in Millis::from_secs",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Millis::from_secs",
+            "return_type": "-> Self",
+            "span": {
+              "start": {
+                "line": 70,
+                "column": 5
+              },
+              "end": {
+                "line": 73,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 72,
+              "column": 26
+            },
+            "end": {
+              "line": 72,
+              "column": 27
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_72_col_26.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_72_col_26.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 3.810553776,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.202938102,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:65:9: replace <impl From<Millis> for i64>::from -> Self with Default::default()",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "<impl From<Millis> for i64>::from",
+            "return_type": "-> Self",
+            "span": {
+              "start": {
+                "line": 64,
+                "column": 5
+              },
+              "end": {
+                "line": 66,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 65,
+              "column": 9
+            },
+            "end": {
+              "line": 65,
+              "column": 19
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_65_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_65_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 3.761799861,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 3.471186736,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:72:26: replace * with / in Millis::from_secs",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Millis::from_secs",
+            "return_type": "-> Self",
+            "span": {
+              "start": {
+                "line": 70,
+                "column": 5
+              },
+              "end": {
+                "line": 73,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 72,
+              "column": 26
+            },
+            "end": {
+              "line": 72,
+              "column": 27
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_72_col_26_001.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_72_col_26_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 4.3623912,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.151091394,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:77:9: replace Millis::as_millis -> i64 with 0",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Millis::as_millis",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 75,
+                "column": 5
+              },
+              "end": {
+                "line": 78,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 77,
+              "column": 9
+            },
+            "end": {
+              "line": 77,
+              "column": 15
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_77_col_9.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_77_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 3.558598461,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.15105898,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:77:9: replace Millis::as_millis -> i64 with 1",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Millis::as_millis",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 75,
+                "column": 5
+              },
+              "end": {
+                "line": 78,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 77,
+              "column": 9
+            },
+            "end": {
+              "line": 77,
+              "column": 15
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_77_col_9_001.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_77_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 3.660929674,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.150899839,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/iglu-domain/src/time.rs:77:9: replace Millis::as_millis -> i64 with -1",
+          "package": "iglu-domain",
+          "file": "crates/iglu-domain/src/time.rs",
+          "function": {
+            "function_name": "Millis::as_millis",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 75,
+                "column": 5
+              },
+              "end": {
+                "line": 78,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 77,
+              "column": 9
+            },
+            "end": {
+              "line": 77,
+              "column": 15
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__iglu-domain__src__time.rs_line_77_col_9_002.log",
+      "diff_path": "diff/crates__iglu-domain__src__time.rs_line_77_col_9_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 3.557577444,
+          "process_status": "Success",
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.152701985,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=iglu-domain@0.3.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 18,
+  "missed": 0,
+  "caught": 13,
+  "timeout": 0,
+  "unviable": 5,
+  "success": 0,
+  "start_time": "2026-10-18T21:40:13.762063556Z",
+  "end_time": "2026-10-18T21:41:58.743561621Z",
+  "cargo_mutants_version": "27.1.0"
+}

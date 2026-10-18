@@ -1,0 +1,527 @@
+
+*** crates/iglu-domain/src/time.rs:56:19: replace < with == in <impl TryFrom<i64> for Millis>::try_from
+
+*** mutation diff:
+--- crates/iglu-domain/src/time.rs
++++ replace < with == in <impl TryFrom<i64> for Millis>::try_from
+@@ -48,17 +48,17 @@
+ #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
+ #[serde(try_from = "i64", into = "i64")]
+ pub struct Millis(i64);
+ 
+ impl TryFrom<i64> for Millis {
+     type Error = ParseError;
+ 
+     fn try_from(millis: i64) -> Result<Self, Self::Error> {
+-        if millis < 0 {
++        if millis == /* ~ changed by cargo-mutants ~ */ 0 {
+             Err(ParseError::new("duration", "must not be negative"))
+         } else {
+             Ok(Self(millis))
+         }
+     }
+ }
+ 
+ impl From<Millis> for i64 {
+
+
+*** /nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo test --no-run --verbose --package=iglu-domain@0.3.0
+       Fresh unicode-ident v1.0.26
+       Fresh stable_deref_trait v1.2.1
+       Fresh writeable v0.6.4
+       Fresh proc-macro2 v1.0.107
+       Fresh litemap v0.8.3
+       Fresh rand_core v0.10.1
+       Fresh quote v1.0.47
+       Fresh libc v0.2.189
+       Fresh syn v3.0.6
+       Fresh utf8_iter v1.0.4
+       Fresh cfg-if v1.0.5
+       Fresh serde_core v1.0.229
+       Fresh synstructure v0.14.0
+       Fresh zerovec-derive v0.11.6
+       Fresh displaydoc v0.2.7
+       Fresh zerofrom-derive v0.1.8
+       Fresh yoke-derive v0.8.3
+       Fresh icu_properties_data v2.3.0
+       Fresh zerofrom v0.1.8
+       Fresh icu_normalizer_data v2.3.0
+       Fresh getrandom v0.4.3
+       Fresh memchr v2.8.3
+       Fresh yoke v0.8.3
+       Fresh bitflags v2.13.2
+       Fresh autocfg v1.5.1
+       Fresh smallvec v1.16.2
+       Fresh linux-raw-sys v0.12.1
+       Fresh zerovec v0.11.8
+       Fresh zerotrie v0.2.5
+       Fresh rustix v1.1.5
+       Fresh tinystr v0.8.4
+       Fresh potential_utf v0.1.6
+       Fresh serde_derive v1.0.229
+       Fresh regex-syntax v0.8.11
+       Fresh icu_locale_core v2.3.0
+       Fresh icu_collections v2.3.0
+       Fresh fastrand v2.5.0
+       Fresh once_cell v1.21.4
+       Fresh icu_provider v2.3.1
+       Fresh tempfile v3.27.0
+       Fresh serde v1.0.229
+       Fresh icu_properties v2.3.0
+       Fresh icu_normalizer v2.3.0
+       Fresh aho-corasick v1.1.5
+       Fresh idna_adapter v1.2.2
+       Fresh thiserror-impl v2.0.21
+       Fresh wait-timeout v0.2.1
+       Fresh quick-error v1.2.3
+       Fresh bit-vec v0.10.1
+       Fresh cpufeatures v0.3.1
+       Fresh percent-encoding v2.3.2
+       Fresh fnv v1.0.7
+       Fresh thiserror v2.0.21
+       Fresh chacha20 v0.10.2
+       Fresh rusty-fork v0.3.1
+       Fresh form_urlencoded v1.2.2
+       Fresh bit-set v0.11.1
+       Fresh idna v1.1.0
+       Fresh regex-automata v0.4.18
+       Fresh zmij v1.0.23
+       Fresh num-traits v0.2.19
+       Fresh serde_plain v1.0.2
+       Fresh rand v0.10.3
+       Fresh uuid v1.26.1
+       Fresh rand_xorshift v0.5.0
+       Fresh unarray v0.1.4
+       Fresh itoa v1.0.18
+       Fresh core_detect v1.0.0
+       Fresh serde_json v1.0.151
+       Fresh url v2.5.8
+       Fresh regex v1.13.1
+       Dirty iglu-domain v0.3.0 (/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/crates/iglu-domain): couldn't read metadata for file `target/debug/deps/libiglu_domain-8cf47f2910408eb8.rlib`
+   Compiling iglu-domain v0.3.0 (/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/crates/iglu-domain)
+       Fresh proptest v1.12.0
+     Running `rustc --crate-name iglu_domain --edition=2024 crates/iglu-domain/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' '--deny=clippy::wildcard_enum_match_arm' '--deny=clippy::unwrap_used' --forbid=unsafe_code '--deny=clippy::cast_sign_loss' '--deny=clippy::cast_possible_wrap' '--deny=clippy::cast_possible_truncation' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("ts"))' -C metadata=63c1d9eceda37238 -C extra-filename=-8cf47f2910408eb8 --out-dir /home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps -C incremental=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/incremental -L dependency=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps --extern serde=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde-ca342256b970e1d2.rmeta --extern serde_plain=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde_plain-fd6c74f02b3cdc25.rmeta --extern thiserror=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libthiserror-cd00c830e423bd59.rmeta --extern uuid=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libuuid-a5e2cc6c7b48369c.rmeta`
+     Running `rustc --crate-name iglu_domain --edition=2024 crates/iglu-domain/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' '--deny=clippy::wildcard_enum_match_arm' '--deny=clippy::unwrap_used' --forbid=unsafe_code '--deny=clippy::cast_sign_loss' '--deny=clippy::cast_possible_wrap' '--deny=clippy::cast_possible_truncation' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("ts"))' -C metadata=78b4debeb3ae055b -C extra-filename=-ab10556c928e9221 --out-dir /home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps -C incremental=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/incremental -L dependency=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps --extern proptest=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libproptest-9960fb399cf27d5c.rlib --extern regex=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libregex-fdbb32d3eec7f177.rlib --extern serde=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde-ca342256b970e1d2.rlib --extern serde_json=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde_json-4a56b3432f8cd164.rlib --extern serde_plain=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde_plain-fd6c74f02b3cdc25.rlib --extern thiserror=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libthiserror-cd00c830e423bd59.rlib --extern url=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/liburl-52ee32d65fb16d49.rlib --extern uuid=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libuuid-a5e2cc6c7b48369c.rlib`
+     Running `rustc --crate-name properties --edition=2024 crates/iglu-domain/tests/properties/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--warn=clippy::pedantic' '--deny=clippy::wildcard_enum_match_arm' '--deny=clippy::unwrap_used' --forbid=unsafe_code '--deny=clippy::cast_sign_loss' '--deny=clippy::cast_possible_wrap' '--deny=clippy::cast_possible_truncation' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("ts"))' -C metadata=f075ff0b47386607 -C extra-filename=-e765eebd3c9eebbf --out-dir /home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps -C incremental=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/incremental -L dependency=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps --extern iglu_domain=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libiglu_domain-8cf47f2910408eb8.rlib --extern proptest=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libproptest-9960fb399cf27d5c.rlib --extern regex=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libregex-fdbb32d3eec7f177.rlib --extern serde=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde-ca342256b970e1d2.rlib --extern serde_json=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde_json-4a56b3432f8cd164.rlib --extern serde_plain=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libserde_plain-fd6c74f02b3cdc25.rlib --extern thiserror=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libthiserror-cd00c830e423bd59.rlib --extern url=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/liburl-52ee32d65fb16d49.rlib --extern uuid=/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/libuuid-a5e2cc6c7b48369c.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.09s
+  Executable `/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/iglu_domain-ab10556c928e9221`
+  Executable `/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/properties-e765eebd3c9eebbf`
+
+*** result: Success
+
+*** /nix/store/w20n3pmhhd1av9llykxa3gd21c9jsm8l-cargo-1.98.1/bin/cargo test --verbose --package=iglu-domain@0.3.0
+       Fresh unicode-ident v1.0.26
+       Fresh stable_deref_trait v1.2.1
+       Fresh rand_core v0.10.1
+       Fresh proc-macro2 v1.0.107
+       Fresh litemap v0.8.3
+       Fresh writeable v0.6.4
+       Fresh quote v1.0.47
+       Fresh libc v0.2.189
+       Fresh cfg-if v1.0.5
+       Fresh utf8_iter v1.0.4
+       Fresh syn v3.0.6
+       Fresh serde_core v1.0.229
+       Fresh synstructure v0.14.0
+       Fresh zerovec-derive v0.11.6
+       Fresh displaydoc v0.2.7
+       Fresh zerofrom-derive v0.1.8
+       Fresh yoke-derive v0.8.3
+       Fresh icu_properties_data v2.3.0
+       Fresh zerofrom v0.1.8
+       Fresh icu_normalizer_data v2.3.0
+       Fresh getrandom v0.4.3
+       Fresh autocfg v1.5.1
+       Fresh yoke v0.8.3
+       Fresh memchr v2.8.3
+       Fresh smallvec v1.16.2
+       Fresh linux-raw-sys v0.12.1
+       Fresh zerovec v0.11.8
+       Fresh zerotrie v0.2.5
+       Fresh bitflags v2.13.2
+       Fresh tinystr v0.8.4
+       Fresh potential_utf v0.1.6
+       Fresh rustix v1.1.5
+       Fresh serde_derive v1.0.229
+       Fresh regex-syntax v0.8.11
+       Fresh icu_locale_core v2.3.0
+       Fresh icu_collections v2.3.0
+       Fresh fastrand v2.5.0
+       Fresh once_cell v1.21.4
+       Fresh icu_provider v2.3.1
+       Fresh tempfile v3.27.0
+       Fresh serde v1.0.229
+       Fresh icu_normalizer v2.3.0
+       Fresh icu_properties v2.3.0
+       Fresh aho-corasick v1.1.5
+       Fresh idna_adapter v1.2.2
+       Fresh thiserror-impl v2.0.21
+       Fresh wait-timeout v0.2.1
+       Fresh quick-error v1.2.3
+       Fresh bit-vec v0.10.1
+       Fresh cpufeatures v0.3.1
+       Fresh fnv v1.0.7
+       Fresh percent-encoding v2.3.2
+       Fresh idna v1.1.0
+       Fresh chacha20 v0.10.2
+       Fresh form_urlencoded v1.2.2
+       Fresh rusty-fork v0.3.1
+       Fresh thiserror v2.0.21
+       Fresh bit-set v0.11.1
+       Fresh regex-automata v0.4.18
+       Fresh num-traits v0.2.19
+       Fresh zmij v1.0.23
+       Fresh serde_plain v1.0.2
+       Fresh rand v0.10.3
+       Fresh uuid v1.26.1
+       Fresh rand_xorshift v0.5.0
+       Fresh unarray v0.1.4
+       Fresh core_detect v1.0.0
+       Fresh itoa v1.0.18
+       Fresh proptest v1.12.0
+       Fresh regex v1.13.1
+       Fresh url v2.5.8
+       Fresh serde_json v1.0.151
+       Fresh iglu-domain v0.3.0 (/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/crates/iglu-domain)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running `/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/iglu_domain-ab10556c928e9221`
+
+running 126 tests
+test attention::tests::a_session_keeps_its_most_wanted_threads ... ok
+test attention::tests::thread_keys_are_bounded_words ... ok
+test attention::tests::ties_go_to_the_newest ... ok
+test attention::tests::a_waiting_thread_outlasts_newer_finished_ones ... ok
+test attention::tests::unseen_done_beats_working_but_seen_done_does_not ... ok
+test attention::tests::summaries_are_sanitized_not_rejected ... ok
+test attention::tests::waiting_beats_everything ... ok
+test auth::tests::a_new_workspace_works_with_its_columns_but_cant_stop_itself ... ok
+test auth::tests::a_workspace_may_do_exactly_what_it_was_granted ... ok
+test auth::tests::a_workspace_never_acts_as_its_owner ... ok
+test auth::tests::disabled_owners_may_do_nothing ... ok
+test auth::tests::emails_are_parsed ... ok
+test auth::tests::others_may_do_nothing ... ok
+test auth::tests::owners_may_do_everything ... ok
+test auth::tests::sign_in_needs_a_matching_subject_or_verified_email ... ok
+test capacity::tests::admits_when_reservation_and_headroom_fit ... ok
+test capacity::tests::displays_human_units ... ok
+test capacity::tests::reports_the_shortfall ... ok
+test column::tests::a_label_is_one_line_of_text_up_to_forty_characters ... ok
+test column::tests::a_layout_must_name_every_column_once ... ok
+test column::tests::joining_marks_ended_and_adopted_sessions ... ok
+test column::tests::arguments_are_data_with_bounds ... ok
+test column::tests::names_count_up_from_the_base ... ok
+test column::tests::kinds_and_widths_round_trip_as_the_console_writes_them ... ok
+test display::tests::a_scale_is_a_screens_pixel_ratio_rounded_to_hundredths ... ok
+test download::tests::a_name_is_one_part_of_a_path ... ok
+test env::tests::env_sources_cannot_smuggle_arguments ... ok
+test download::tests::only_downloads_in_the_users_downloads_are_named ... ok
+test env::tests::env_sources_split_on_hash ... ok
+test env::tests::guest_paths_are_absolute_and_normal ... ok
+test env::tests::guest_users_are_not_root ... ok
+test git::tests::branches_are_printable_and_bounded ... ok
+test git::tests::changes_unpushed_commits_and_unpushed_branches_are_unsaved ... ok
+test git::tests::clean_and_pushed_loses_nothing ... ok
+test git::tests::only_clean_branches_come_off_the_wire ... ok
+test id::tests::foreign_instance_names_are_rejected ... ok
+test id::tests::instance_names_round_trip ... ok
+test idle::tests::an_unused_workspace_freezes_then_stops ... ok
+test idle::tests::busy_workspaces_and_other_phases_are_left_alone ... ok
+test idle::tests::opening_thaws_only_frozen_workspaces ... ok
+test idle::tests::projects_can_override_the_policy ... ok
+test idle::tests::working_or_waiting_threads_keep_it_busy ... ok
+test label::tests::deserializing_parses ... ok
+test label::tests::labels_follow_dns_rules ... ok
+test label::tests::the_gateway_label_is_not_a_route_name ... ok
+test label::tests::workspace_and_route_names_start_with_a_letter ... ok
+test lifecycle::tests::a_failed_runtime_never_looks_like_progress ... ok
+test column::tests::templates_get_distinct_names_in_order ... ok
+test lifecycle::tests::a_frozen_workspace_found_stopped_is_adopted_as_stopped ... ok
+test lifecycle::tests::a_new_workspace_is_created_then_started_then_brought_up ... ok
+test lifecycle::tests::a_root_is_outdated_only_when_known_to_be_from_another_image ... ok
+test lifecycle::tests::a_workspace_finishes_provisioning_before_it_freezes ... ok
+test lifecycle::tests::an_outdated_system_is_upgraded_from_wherever_it_is_given_room ... ok
+test lifecycle::tests::capacity_never_blocks_stopping_freezing_or_deleting ... ok
+test lifecycle::tests::changed_secrets_are_redelivered_to_running_workspaces ... ok
+test lifecycle::tests::deletion_is_complete_once_the_instance_is_absent ... ok
+test lifecycle::tests::each_boot_opens_its_columns_once_after_provisioning ... ok
+test lifecycle::tests::failed_runtimes_block_until_stopped_or_deleted ... ok
+test lifecycle::tests::one_pass_admits_only_what_fits ... ok
+test lifecycle::tests::only_running_workspaces_can_be_frozen ... ok
+test lifecycle::tests::phases_describe_progress ... ok
+test lifecycle::tests::start_and_thaw_wait_for_capacity ... ok
+test listener::tests::a_port_shows_once ... ok
+test listener::tests::loopback_and_wildcards_are_reachable ... ok
+test listener::tests::only_clean_names_come_off_the_wire ... ok
+test lifecycle::tests::transitions_in_progress_are_waited_out ... ok
+test names::tests::a_label_is_one_line_of_text ... ok
+test listener::tests::process_names_are_sanitized ... ok
+test names::tests::attempts_produce_different_candidates ... ok
+test names::tests::branches_name_by_their_last_part ... ok
+test names::tests::labels_name_by_their_letters_and_digits ... ok
+test names::tests::every_word_makes_valid_names ... ok
+test names::tests::later_attempts_add_a_suffix ... ok
+test names::tests::words_are_unique ... ok
+test parse::tests::printable_leaves_out_what_breaks_or_reorders_a_line ... ok
+test pasted::tests::a_name_kept_again_is_numbered_before_its_extension ... ok
+test pasted::tests::a_browsers_name_is_made_fit_to_keep ... ok
+test port::tests::out_of_range_json_ports_get_the_ports_message ... ok
+test port::tests::ports_are_nonzero_u16 ... ok
+test preferences::tests::values_that_could_do_harm_are_refused ... ok
+test preferences::tests::a_whole_document_goes_out_and_back ... ok
+test preferences::tests::what_is_missing_reads_as_its_default ... ok
+test preview::tests::a_workspace_can_call_its_own_routes ... ok
+test preview::tests::console_mutations_need_the_same_origin ... ok
+test preview::tests::bearer_requests_skip_the_origin_checks ... ok
+test pasted::tests::names_that_could_escape_are_refused ... ok
+test preview::tests::console_websockets_need_the_exact_origin ... ok
+test preview::tests::cross_site_subresources_without_an_origin_are_rejected ... ok
+test preview::tests::links_between_apps_still_work ... ok
+test preview::tests::other_workspaces_cannot_call_a_route ... ok
+test preview::tests::preview_apps_set_only_their_own_cookies ... ok
+test preview::tests::same_origin_and_user_initiated_requests_are_forwarded ... ok
+test project::tests::a_project_without_a_repository_has_no_branches ... ok
+test project::tests::a_taken_name_gets_a_number ... ok
+test project::tests::a_workspace_branches_after_its_name_unless_told ... ok
+test project::tests::names_come_from_the_repository_and_stay_unique ... ok
+test project::tests::openings_are_bounded_and_named ... ok
+test project::tests::preview_ports_are_unique_ordered_and_bounded ... ok
+test repo::tests::branch_names_follow_git_rules ... ok
+test repo::tests::parses_common_remote_forms ... ok
+test repo::tests::rejects_urls_that_could_be_options_or_local_paths ... ok
+test secret::tests::conflicting_destinations_are_rejected ... ok
+test secret::tests::destinations_conflict_when_they_overlap ... ok
+test secret::tests::git_credentials_become_fetch_tokens ... ok
+test names::tests::candidates_are_valid_route_and_workspace_names ... ok
+test secret::tests::platform_variables_are_reserved ... ok
+test secret::tests::tokens_cannot_reach_other_nix_settings ... ok
+test secret::tests::values_never_print ... ok
+test signin::tests::only_the_starting_browser_finishes_a_sign_in ... ok
+test signin::tests::return_paths_stay_on_the_console ... ok
+test standing::tests::a_frozen_waiting_agent_does_not_need_you_until_it_thaws ... ok
+test standing::tests::a_waiting_agent_needs_you_and_comes_first ... ok
+test standing::tests::among_those_that_need_you_the_newest_need_comes_first ... ok
+test standing::tests::awake_comes_before_frozen_before_stopped ... ok
+test standing::tests::trouble_needs_you_whatever_the_phase ... ok
+test standing::tests::unseen_done_needs_you_but_seen_done_does_not ... ok
+test standing::tests::working_or_idling_never_moves_a_workspace ... ok
+test terminal::tests::close_reasons_fit_a_frame_without_splitting_a_character ... ok
+test terminal::tests::input_is_exact_and_bounded ... ok
+test terminal::tests::session_names_are_bounded ... ok
+test secret::tests::home_paths_cannot_escape_home ... ok
+test terminal::tests::terminal_sizes_are_bounded ... ok
+test time::tests::since_never_goes_negative ... ok
+test time::tests::plus_adds ... ok
+test terminal::tests::long_output_keeps_its_end_whole ... ok
+test terminal::tests::output_is_the_last_lines_without_the_blank_end ... ok
+
+test result: ok. 126 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/home/shrik450/iglu/.dev/tmp/mutants/cargo-mutants-iglu-FvgKhj.tmp/target/debug/deps/properties-e765eebd3c9eebbf`
+
+running 181 tests
+test access::a_cookie_never_changes_state_from_another_origin ... ok
+test access::a_disabled_account_does_nothing ... ok
+test access::another_site_reaches_a_preview_only_by_navigating_to_it ... ok
+test access::a_workspace_never_does_more_than_its_owner ... ok
+test access::console_refusals_name_the_right_reason ... ok
+test access::fetch_metadata_reads_as_browsers_send_it ... ok
+test access::an_active_person_does_everything_with_what_they_own ... ok
+test access::previews_take_whatever_comes_from_their_own_workspace ... ok
+test access::more_grants_never_allow_less ... ok
+test access::trusting_a_source_more_never_rejects_more ... ok
+test access::a_workspace_does_only_what_it_was_granted_on_that_workspace ... ok
+test grammars::a_command_has_a_program_and_at_most_64_arguments ... ok
+test access::nobody_acts_on_what_another_person_owns ... ok
+test access::sign_in_admits_exactly_who_the_policy_lists ... ok
+test grammars::download_names ... ok
+test grammars::byte_limits_are_exact ... ok
+test grammars::dns_labels ... ok
+test grammars::file_names ... ok
+test grammars::checkout_dirs ... ok
+test grammars::git_usernames ... ok
+test grammars::env_var_names ... ok
+test grammars::home_paths ... ok
+test grammars::image_fingerprints ... ok
+test grammars::flake_attrs ... ok
+test grammars::git_hosts ... ok
+test grammars::terminal_sizes_are_what_they_say ... ok
+test grammars::key_codes ... ok
+test grammars::theme_names ... ok
+test grammars::unix_users ... ok
+test grammars::thread_keys ... ok
+test grammars::secret_names ... ok
+test grammars::session_names ... ok
+test lifecycle::deletion_is_never_refused_and_never_undone ... ok
+test lifecycle::a_workspace_shows_as_running_only_once_it_is_up ... ok
+test lifecycle::idle_steps_only_put_unused_workspaces_to_sleep ... ok
+test lifecycle::opening_thaws_only_a_frozen_workspace ... ok
+test lifecycle::a_stable_plan_is_the_settled_phase ... ok
+test lifecycle::following_the_plan_reaches_what_the_person_wants ... ok
+test lifecycle::whatever_needs_its_person_comes_first ... ok
+test lifecycle::without_room_nothing_brings_memory_back ... ok
+test lifecycle::a_pass_charges_only_what_brings_memory_back ... ok
+test names::a_free_column_name_counts_up_past_what_is_taken ... ok
+test names::a_name_from_text_is_its_first_attempt_numbered ... ok
+test names::a_layout_of_every_column_once_arranges_them ... ok
+test names::candidates_are_the_same_for_the_same_entropy ... ok
+test names::candidates_are_workspace_and_route_names ... ok
+test names::every_workspace_name_is_a_branch ... ok
+test names::a_layout_that_misses_or_repeats_a_column_is_refused ... ok
+test names::names_from_branches_come_from_their_last_part ... ok
+test names::a_free_column_name_is_free ... ok
+test names::names_from_text_are_workspace_names ... ok
+test names::names_from_text_come_from_text_with_a_letter ... ok
+test names::joined_columns_are_asked_for_in_order_then_adopted_in_name_order ... ok
+test names::a_unique_project_name_is_free ... ok
+test outputs::a_pass_admits_no_more_than_the_host_holds ... ok
+test outputs::a_bundle_refuses_exactly_what_conflicts ... ok
+test outputs::admission_fits_exactly_when_reservation_and_headroom_do ... ok
+test outputs::bytes_show_without_panicking ... ok
+test outputs::a_sign_in_finishes_only_with_its_own_state ... ok
+test names::templates_get_distinct_names ... ok
+test outputs::close_reasons_are_the_longest_start_that_fits ... ok
+test outputs::conflicts_are_symmetric_and_every_target_conflicts_with_itself ... ok
+test names::suggested_project_names_are_free ... ok
+test outputs::cookie_checks_never_panic ... ok
+test outputs::file_names_from_browsers_are_file_names ... ok
+test outputs::downloads_open_inside_home ... ok
+test outputs::downloads_are_named_only_in_a_downloads_directory ... ok
+test outputs::kept_threads_are_the_most_pressing ... ok
+test outputs::loopback_and_wildcards_are_reachable_and_nothing_else ... ok
+test outputs::file_names_that_fit_keep_their_extension ... ok
+test outputs::numbered_file_names_differ_from_the_first ... ok
+test outputs::preview_apps_never_set_a_cookie_wider_than_their_host ... ok
+test outputs::capped_statuses_keep_what_keep_would ... ok
+test outputs::preview_apps_never_set_the_gateways_cookie ... ok
+test outputs::preview_apps_set_their_own_host_only_cookies ... ok
+test outputs::sanitized_process_names_are_clean_and_settle ... ok
+test outputs::sanitized_branches_are_clean_and_settle ... ok
+test outputs::sanitized_summaries_are_one_clean_line ... ok
+test outputs::time_never_runs_backwards ... ok
+test text::arg_text ... ok
+test outputs::the_most_urgent_status_is_at_least_as_urgent_as_every_other ... ok
+test text::args ... ok
+test outputs::merged_listeners_are_one_per_port_in_order ... ok
+test text::attention_states ... ok
+test text::branch_names_never_read_as_options_or_revisions ... ok
+test text::branch_name_text ... ok
+test text::branch_names ... ok
+test text::column_label_text ... ok
+test text::checkout_dir_text ... ok
+test text::checkout_dirs ... ok
+test text::column_labels ... ok
+test text::column_widths ... ok
+test text::desired_states ... ok
+test text::display_name_text ... ok
+test text::display_scales_parse_from_any_text ... ok
+test text::display_names ... ok
+test text::display_names_have_no_space_at_either_end ... ok
+test text::display_scales_stay_between_one_and_four ... ok
+test text::dns_labels_take_their_whole_grammar ... ok
+test text::dns_label_text ... ok
+test text::dns_labels ... ok
+test text::durations_off_the_wire_are_exactly_the_non_negative_ones_and_go_back_as_sent ... FAILED
+test text::download_name_text ... ok
+test text::download_names ... ok
+test text::email_text ... ok
+test text::emails ... ok
+test text::env_sources ... ok
+test text::emails_are_lowercase ... ok
+test text::emails_whose_case_changes_their_length_round_trip ... ok
+test text::env_var_names_leave_the_platform_its_own ... ok
+test text::env_var_name_text ... ok
+test text::env_var_names ... ok
+test text::flake_attr_text ... ok
+test text::file_names ... ok
+test text::file_names_take_their_whole_grammar ... ok
+test text::flake_attrs ... ok
+test text::flake_ref_text ... ok
+test text::git_host_text ... ok
+test text::flake_refs ... ok
+test text::font_names ... ok
+test text::git_hosts_are_lowercase ... ok
+test text::git_hosts ... ok
+test text::git_username_text ... ok
+test text::guest_paths ... ok
+test text::git_usernames ... ok
+test text::guest_path_text ... ok
+test text::guest_ports_are_every_nonzero_port ... ok
+test text::guest_paths_have_no_dot_components ... ok
+test text::guest_ports ... ok
+test text::home_path_text ... ok
+test text::home_paths ... ok
+test text::home_paths_never_leave_home ... ok
+test text::image_fingerprint_text ... ok
+test text::host_ids ... ok
+test text::home_paths_take_relative_paths ... ok
+test text::image_fingerprints ... ok
+test text::instance_names_are_their_workspaces ... ok
+test text::instance_names ... ok
+test text::issuers ... ok
+test text::issuer_text ... ok
+test text::names_from_text_take_any_attempt ... ok
+test text::key_codes ... ok
+test text::output_lines_are_1_to_2000 ... ok
+test text::named_labels_are_dns_labels_that_start_with_a_letter ... ok
+test text::pasted_themes ... ok
+test text::output_lines ... ok
+test text::principal_statuses ... ok
+test text::permissions ... ok
+test text::phases ... ok
+test text::project_names ... ok
+test text::repo_url_text ... ok
+test text::repo_urls ... ok
+test text::repo_urls_check_out_into_one_safe_directory ... ok
+test text::return_paths_stay_on_the_console ... ok
+test text::return_path_text ... ok
+test text::route_names ... ok
+test text::secret_name_text ... ok
+test text::secret_names ... ok
+test text::scp_like_and_https_repo_urls_name_their_host ... ok
+test text::secret_values_round_trip ... ok
+test text::session_name_text ... ok
+test text::session_names ... ok
+test text::session_names_take_their_whole_grammar ... ok
+test text::subject_text ... ok
+test text::subjects ... ok
+test text::summaries ... ok
+test text::summary_text ... ok
+test text::terminal_input ... ok
+test text::terminal_input_text ... ok
+test text::theme_names ... ok
+test text::thread_key_text ... ok
+test text::thread_keys ... ok
+test text::thread_keys_take_their_whole_grammar ... ok
+test text::unix_user_text ... ok
+test text::unix_users ... ok
+test text::workspace_ids ... ok
+test text::workspace_label_text ... ok
+test text::workspace_labels ... ok
+test text::workspace_name_text ... ok
+test text::workspace_names ... ok
+test outputs::last_lines_are_the_end_of_the_history ... ok
+
+failures:
+
+---- text::durations_off_the_wire_are_exactly_the_non_negative_ones_and_go_back_as_sent stdout ----
+
+thread 'text::durations_off_the_wire_are_exactly_the_non_negative_ones_and_go_back_as_sent' (1351105) panicked at crates/iglu-domain/tests/properties/text.rs:385:1:
+Test failed: assertion failed: `(left == right)` 
+  left: `false`, 
+ right: `true`: Err(Error("invalid duration: must not be negative", line: 0, column: 0)) at crates/iglu-domain/tests/properties/text.rs:399.
+minimal failing input: millis = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    text::durations_off_the_wire_are_exactly_the_non_negative_ones_and_go_back_as_sent
+
+test result: FAILED. 180 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.26s
+
+error: test failed, to rerun pass `-p iglu-domain --test properties`
+
+*** result: Failure(101)

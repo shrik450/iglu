@@ -390,10 +390,15 @@ proptest! {
         }
     }
 
+    // Values near zero are drawn often, where a boundary would be off by one.
     #[test]
-    fn durations_off_the_wire_are_never_negative(millis in any::<i64>()) {
-        if let Ok(duration) = serde_json::from_str::<iglu_domain::time::Millis>(&millis.to_string()) {
-            prop_assert!(duration.as_millis() >= 0, "{:?}", duration);
+    fn durations_off_the_wire_are_exactly_the_non_negative_ones_and_go_back_as_sent(
+        millis in prop_oneof![any::<i64>(), -2i64..=2],
+    ) {
+        let parsed = serde_json::from_str::<iglu_domain::time::Millis>(&millis.to_string());
+        prop_assert_eq!(parsed.is_ok(), millis >= 0, "{:?}", parsed);
+        if let Ok(duration) = parsed {
+            prop_assert_eq!(serde_json::to_string(&duration)?, millis.to_string());
         }
     }
 }

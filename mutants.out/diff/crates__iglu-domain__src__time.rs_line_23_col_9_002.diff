@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace Timestamp::unix_millis -> i64 with -1
+@@ -15,17 +15,17 @@
+ impl Timestamp {
+     #[must_use]
+     pub const fn from_unix_millis(millis: i64) -> Self {
+         Self(millis)
+     }
+ 
+     #[must_use]
+     pub const fn unix_millis(self) -> i64 {
+-        self.0
++        -1 /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// `self + duration`, saturating at the end of time.
+     #[must_use]
+     pub const fn plus(self, duration: Millis) -> Self {
+         Self(self.0.saturating_add(duration.0))
+     }
+ 

@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace Timestamp::since -> Millis with Default::default()
+@@ -27,17 +27,17 @@
+     #[must_use]
+     pub const fn plus(self, duration: Millis) -> Self {
+         Self(self.0.saturating_add(duration.0))
+     }
+ 
+     /// How long ago `earlier` was, or zero if it's in the future.
+     #[must_use]
+     pub fn since(self, earlier: Self) -> Millis {
+-        Millis(self.0.saturating_sub(earlier.0).max(0))
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl fmt::Display for Timestamp {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+         write!(f, "{}ms", self.0)
+     }
+ }

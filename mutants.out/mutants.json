@@ -1,0 +1,578 @@
+[
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Timestamp::from_unix_millis -> Self with Default::default()\n@@ -10,17 +10,17 @@\n #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]\n #[cfg_attr(feature = \"ts\", derive(ts_rs::TS), ts(type = \"number\"))]\n #[serde(transparent)]\n pub struct Timestamp(i64);\n \n impl Timestamp {\n     #[must_use]\n     pub const fn from_unix_millis(millis: i64) -> Self {\n-        Self(millis)\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n \n     #[must_use]\n     pub const fn unix_millis(self) -> i64 {\n         self.0\n     }\n \n     /// `self + duration`, saturating at the end of time.\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Timestamp::from_unix_millis",
+      "return_type": "-> Self",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 19
+        },
+        "start": {
+          "column": 5,
+          "line": 16
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:18:9: replace Timestamp::from_unix_millis -> Self with Default::default()",
+    "package": "iglu-domain",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 21,
+        "line": 18
+      },
+      "start": {
+        "column": 9,
+        "line": 18
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Timestamp::unix_millis -> i64 with 0\n@@ -15,17 +15,17 @@\n impl Timestamp {\n     #[must_use]\n     pub const fn from_unix_millis(millis: i64) -> Self {\n         Self(millis)\n     }\n \n     #[must_use]\n     pub const fn unix_millis(self) -> i64 {\n-        self.0\n+        0 /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// `self + duration`, saturating at the end of time.\n     #[must_use]\n     pub const fn plus(self, duration: Millis) -> Self {\n         Self(self.0.saturating_add(duration.0))\n     }\n \n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Timestamp::unix_millis",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 24
+        },
+        "start": {
+          "column": 5,
+          "line": 21
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with 0",
+    "package": "iglu-domain",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 23
+      },
+      "start": {
+        "column": 9,
+        "line": 23
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Timestamp::unix_millis -> i64 with 1\n@@ -15,17 +15,17 @@\n impl Timestamp {\n     #[must_use]\n     pub const fn from_unix_millis(millis: i64) -> Self {\n         Self(millis)\n     }\n \n     #[must_use]\n     pub const fn unix_millis(self) -> i64 {\n-        self.0\n+        1 /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// `self + duration`, saturating at the end of time.\n     #[must_use]\n     pub const fn plus(self, duration: Millis) -> Self {\n         Self(self.0.saturating_add(duration.0))\n     }\n \n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Timestamp::unix_millis",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 24
+        },
+        "start": {
+          "column": 5,
+          "line": 21
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with 1",
+    "package": "iglu-domain",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 23
+      },
+      "start": {
+        "column": 9,
+        "line": 23
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Timestamp::unix_millis -> i64 with -1\n@@ -15,17 +15,17 @@\n impl Timestamp {\n     #[must_use]\n     pub const fn from_unix_millis(millis: i64) -> Self {\n         Self(millis)\n     }\n \n     #[must_use]\n     pub const fn unix_millis(self) -> i64 {\n-        self.0\n+        -1 /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// `self + duration`, saturating at the end of time.\n     #[must_use]\n     pub const fn plus(self, duration: Millis) -> Self {\n         Self(self.0.saturating_add(duration.0))\n     }\n \n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Timestamp::unix_millis",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 24
+        },
+        "start": {
+          "column": 5,
+          "line": 21
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:23:9: replace Timestamp::unix_millis -> i64 with -1",
+    "package": "iglu-domain",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 23
+      },
+      "start": {
+        "column": 9,
+        "line": 23
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Timestamp::plus -> Self with Default::default()\n@@ -21,17 +21,17 @@\n     #[must_use]\n     pub const fn unix_millis(self) -> i64 {\n         self.0\n     }\n \n     /// `self + duration`, saturating at the end of time.\n     #[must_use]\n     pub const fn plus(self, duration: Millis) -> Self {\n-        Self(self.0.saturating_add(duration.0))\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// How long ago `earlier` was, or zero if it's in the future.\n     #[must_use]\n     pub fn since(self, earlier: Self) -> Millis {\n         Millis(self.0.saturating_sub(earlier.0).max(0))\n     }\n }\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Timestamp::plus",
+      "return_type": "-> Self",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 30
+        },
+        "start": {
+          "column": 5,
+          "line": 26
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:29:9: replace Timestamp::plus -> Self with Default::default()",
+    "package": "iglu-domain",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 48,
+        "line": 29
+      },
+      "start": {
+        "column": 9,
+        "line": 29
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Timestamp::since -> Millis with Default::default()\n@@ -27,17 +27,17 @@\n     #[must_use]\n     pub const fn plus(self, duration: Millis) -> Self {\n         Self(self.0.saturating_add(duration.0))\n     }\n \n     /// How long ago `earlier` was, or zero if it's in the future.\n     #[must_use]\n     pub fn since(self, earlier: Self) -> Millis {\n-        Millis(self.0.saturating_sub(earlier.0).max(0))\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n impl fmt::Display for Timestamp {\n     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n         write!(f, \"{}ms\", self.0)\n     }\n }\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Timestamp::since",
+      "return_type": "-> Millis",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 36
+        },
+        "start": {
+          "column": 5,
+          "line": 32
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:35:9: replace Timestamp::since -> Millis with Default::default()",
+    "package": "iglu-domain",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 56,
+        "line": 35
+      },
+      "start": {
+        "column": 9,
+        "line": 35
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace <impl fmt::Display for Timestamp>::fmt -> fmt::Result with Ok(Default::default())\n@@ -33,17 +33,17 @@\n     #[must_use]\n     pub fn since(self, earlier: Self) -> Millis {\n         Millis(self.0.saturating_sub(earlier.0).max(0))\n     }\n }\n \n impl fmt::Display for Timestamp {\n     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n-        write!(f, \"{}ms\", self.0)\n+        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n /// A non-negative duration in milliseconds.\n #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]\n #[cfg_attr(feature = \"ts\", derive(ts_rs::TS), ts(type = \"number\"))]\n #[serde(try_from = \"i64\", into = \"i64\")]\n pub struct Millis(i64);\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "<impl fmt::Display for Timestamp>::fmt",
+      "return_type": "-> fmt::Result",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 42
+        },
+        "start": {
+          "column": 5,
+          "line": 40
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:41:9: replace <impl fmt::Display for Timestamp>::fmt -> fmt::Result with Ok(Default::default())",
+    "package": "iglu-domain",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 34,
+        "line": 41
+      },
+      "start": {
+        "column": 9,
+        "line": 41
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace <impl TryFrom<i64> for Millis>::try_from -> Result<Self, Self::Error> with Ok(Default::default())\n@@ -47,21 +47,17 @@\n #[cfg_attr(feature = \"ts\", derive(ts_rs::TS), ts(type = \"number\"))]\n #[serde(try_from = \"i64\", into = \"i64\")]\n pub struct Millis(i64);\n \n impl TryFrom<i64> for Millis {\n     type Error = ParseError;\n \n     fn try_from(millis: i64) -> Result<Self, Self::Error> {\n-        if millis < 0 {\n-            Err(ParseError::new(\"duration\", \"must not be negative\"))\n-        } else {\n-            Ok(Self(millis))\n-        }\n+        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n impl From<Millis> for i64 {\n     fn from(duration: Millis) -> Self {\n         duration.0\n     }\n }\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+      "return_type": "-> Result<Self, Self::Error>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 60
+        },
+        "start": {
+          "column": 5,
+          "line": 54
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:55:9: replace <impl TryFrom<i64> for Millis>::try_from -> Result<Self, Self::Error> with Ok(Default::default())",
+    "package": "iglu-domain",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 59
+      },
+      "start": {
+        "column": 9,
+        "line": 55
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace < with == in <impl TryFrom<i64> for Millis>::try_from\n@@ -47,17 +47,17 @@\n #[cfg_attr(feature = \"ts\", derive(ts_rs::TS), ts(type = \"number\"))]\n #[serde(try_from = \"i64\", into = \"i64\")]\n pub struct Millis(i64);\n \n impl TryFrom<i64> for Millis {\n     type Error = ParseError;\n \n     fn try_from(millis: i64) -> Result<Self, Self::Error> {\n-        if millis < 0 {\n+        if millis == /* ~ changed by cargo-mutants ~ */ 0 {\n             Err(ParseError::new(\"duration\", \"must not be negative\"))\n         } else {\n             Ok(Self(millis))\n         }\n     }\n }\n \n impl From<Millis> for i64 {\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+      "return_type": "-> Result<Self, Self::Error>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 60
+        },
+        "start": {
+          "column": 5,
+          "line": 54
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/iglu-domain/src/time.rs:55:19: replace < with == in <impl TryFrom<i64> for Millis>::try_from",
+    "package": "iglu-domain",
+    "replacement": "==",
+    "span": {
+      "end": {
+        "column": 20,
+        "line": 55
+      },
+      "start": {
+        "column": 19,
+        "line": 55
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace < with > in <impl TryFrom<i64> for Millis>::try_from\n@@ -47,17 +47,17 @@\n #[cfg_attr(feature = \"ts\", derive(ts_rs::TS), ts(type = \"number\"))]\n #[serde(try_from = \"i64\", into = \"i64\")]\n pub struct Millis(i64);\n \n impl TryFrom<i64> for Millis {\n     type Error = ParseError;\n \n     fn try_from(millis: i64) -> Result<Self, Self::Error> {\n-        if millis < 0 {\n+        if millis > /* ~ changed by cargo-mutants ~ */ 0 {\n             Err(ParseError::new(\"duration\", \"must not be negative\"))\n         } else {\n             Ok(Self(millis))\n         }\n     }\n }\n \n impl From<Millis> for i64 {\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+      "return_type": "-> Result<Self, Self::Error>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 60
+        },
+        "start": {
+          "column": 5,
+          "line": 54
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/iglu-domain/src/time.rs:55:19: replace < with > in <impl TryFrom<i64> for Millis>::try_from",
+    "package": "iglu-domain",
+    "replacement": ">",
+    "span": {
+      "end": {
+        "column": 20,
+        "line": 55
+      },
+      "start": {
+        "column": 19,
+        "line": 55
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace < with <= in <impl TryFrom<i64> for Millis>::try_from\n@@ -47,17 +47,17 @@\n #[cfg_attr(feature = \"ts\", derive(ts_rs::TS), ts(type = \"number\"))]\n #[serde(try_from = \"i64\", into = \"i64\")]\n pub struct Millis(i64);\n \n impl TryFrom<i64> for Millis {\n     type Error = ParseError;\n \n     fn try_from(millis: i64) -> Result<Self, Self::Error> {\n-        if millis < 0 {\n+        if millis <= /* ~ changed by cargo-mutants ~ */ 0 {\n             Err(ParseError::new(\"duration\", \"must not be negative\"))\n         } else {\n             Ok(Self(millis))\n         }\n     }\n }\n \n impl From<Millis> for i64 {\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "<impl TryFrom<i64> for Millis>::try_from",
+      "return_type": "-> Result<Self, Self::Error>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 60
+        },
+        "start": {
+          "column": 5,
+          "line": 54
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/iglu-domain/src/time.rs:55:19: replace < with <= in <impl TryFrom<i64> for Millis>::try_from",
+    "package": "iglu-domain",
+    "replacement": "<=",
+    "span": {
+      "end": {
+        "column": 20,
+        "line": 55
+      },
+      "start": {
+        "column": 19,
+        "line": 55
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace <impl From<Millis> for i64>::from -> Self with Default::default()\n@@ -57,17 +57,17 @@\n         } else {\n             Ok(Self(millis))\n         }\n     }\n }\n \n impl From<Millis> for i64 {\n     fn from(duration: Millis) -> Self {\n-        duration.0\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n impl Millis {\n     #[must_use]\n     pub const fn from_secs(secs: u32) -> Self {\n         Self(secs as i64 * 1000)\n     }\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "<impl From<Millis> for i64>::from",
+      "return_type": "-> Self",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 66
+        },
+        "start": {
+          "column": 5,
+          "line": 64
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:65:9: replace <impl From<Millis> for i64>::from -> Self with Default::default()",
+    "package": "iglu-domain",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 19,
+        "line": 65
+      },
+      "start": {
+        "column": 9,
+        "line": 65
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Millis::from_secs -> Self with Default::default()\n@@ -64,17 +64,17 @@\n     fn from(duration: Millis) -> Self {\n         duration.0\n     }\n }\n \n impl Millis {\n     #[must_use]\n     pub const fn from_secs(secs: u32) -> Self {\n-        Self(secs as i64 * 1000)\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n \n     #[must_use]\n     pub const fn as_millis(self) -> i64 {\n         self.0\n     }\n }\n \n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Millis::from_secs",
+      "return_type": "-> Self",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 73
+        },
+        "start": {
+          "column": 5,
+          "line": 70
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:72:9: replace Millis::from_secs -> Self with Default::default()",
+    "package": "iglu-domain",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 33,
+        "line": 72
+      },
+      "start": {
+        "column": 9,
+        "line": 72
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace * with + in Millis::from_secs\n@@ -64,17 +64,17 @@\n     fn from(duration: Millis) -> Self {\n         duration.0\n     }\n }\n \n impl Millis {\n     #[must_use]\n     pub const fn from_secs(secs: u32) -> Self {\n-        Self(secs as i64 * 1000)\n+        Self(secs as i64 + /* ~ changed by cargo-mutants ~ */ 1000)\n     }\n \n     #[must_use]\n     pub const fn as_millis(self) -> i64 {\n         self.0\n     }\n }\n \n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Millis::from_secs",
+      "return_type": "-> Self",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 73
+        },
+        "start": {
+          "column": 5,
+          "line": 70
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/iglu-domain/src/time.rs:72:26: replace * with + in Millis::from_secs",
+    "package": "iglu-domain",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 27,
+        "line": 72
+      },
+      "start": {
+        "column": 26,
+        "line": 72
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace * with / in Millis::from_secs\n@@ -64,17 +64,17 @@\n     fn from(duration: Millis) -> Self {\n         duration.0\n     }\n }\n \n impl Millis {\n     #[must_use]\n     pub const fn from_secs(secs: u32) -> Self {\n-        Self(secs as i64 * 1000)\n+        Self(secs as i64 / /* ~ changed by cargo-mutants ~ */ 1000)\n     }\n \n     #[must_use]\n     pub const fn as_millis(self) -> i64 {\n         self.0\n     }\n }\n \n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Millis::from_secs",
+      "return_type": "-> Self",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 73
+        },
+        "start": {
+          "column": 5,
+          "line": 70
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/iglu-domain/src/time.rs:72:26: replace * with / in Millis::from_secs",
+    "package": "iglu-domain",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 27,
+        "line": 72
+      },
+      "start": {
+        "column": 26,
+        "line": 72
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Millis::as_millis -> i64 with 0\n@@ -69,17 +69,17 @@\n impl Millis {\n     #[must_use]\n     pub const fn from_secs(secs: u32) -> Self {\n         Self(secs as i64 * 1000)\n     }\n \n     #[must_use]\n     pub const fn as_millis(self) -> i64 {\n-        self.0\n+        0 /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Millis::as_millis",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 78
+        },
+        "start": {
+          "column": 5,
+          "line": 75
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:77:9: replace Millis::as_millis -> i64 with 0",
+    "package": "iglu-domain",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 77
+      },
+      "start": {
+        "column": 9,
+        "line": 77
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Millis::as_millis -> i64 with 1\n@@ -69,17 +69,17 @@\n impl Millis {\n     #[must_use]\n     pub const fn from_secs(secs: u32) -> Self {\n         Self(secs as i64 * 1000)\n     }\n \n     #[must_use]\n     pub const fn as_millis(self) -> i64 {\n-        self.0\n+        1 /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Millis::as_millis",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 78
+        },
+        "start": {
+          "column": 5,
+          "line": 75
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:77:9: replace Millis::as_millis -> i64 with 1",
+    "package": "iglu-domain",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 77
+      },
+      "start": {
+        "column": 9,
+        "line": 77
+      }
+    }
+  },
+  {
+    "diff": "--- crates/iglu-domain/src/time.rs\n+++ replace Millis::as_millis -> i64 with -1\n@@ -69,17 +69,17 @@\n impl Millis {\n     #[must_use]\n     pub const fn from_secs(secs: u32) -> Self {\n         Self(secs as i64 * 1000)\n     }\n \n     #[must_use]\n     pub const fn as_millis(self) -> i64 {\n-        self.0\n+        -1 /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n",
+    "file": "crates/iglu-domain/src/time.rs",
+    "function": {
+      "function_name": "Millis::as_millis",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 78
+        },
+        "start": {
+          "column": 5,
+          "line": 75
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/iglu-domain/src/time.rs:77:9: replace Millis::as_millis -> i64 with -1",
+    "package": "iglu-domain",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 77
+      },
+      "start": {
+        "column": 9,
+        "line": 77
+      }
+    }
+  }
+]

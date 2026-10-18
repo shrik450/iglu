@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace Timestamp::plus -> Self with Default::default()
+@@ -21,17 +21,17 @@
+     #[must_use]
+     pub const fn unix_millis(self) -> i64 {
+         self.0
+     }
+ 
+     /// `self + duration`, saturating at the end of time.
+     #[must_use]
+     pub const fn plus(self, duration: Millis) -> Self {
+-        Self(self.0.saturating_add(duration.0))
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// How long ago `earlier` was, or zero if it's in the future.
+     #[must_use]
+     pub fn since(self, earlier: Self) -> Millis {
+         Millis(self.0.saturating_sub(earlier.0).max(0))
+     }
+ }

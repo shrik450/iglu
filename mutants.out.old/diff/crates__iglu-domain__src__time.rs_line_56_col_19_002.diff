@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace < with <= in <impl TryFrom<i64> for Millis>::try_from
+@@ -48,17 +48,17 @@
+ #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
+ #[serde(try_from = "i64", into = "i64")]
+ pub struct Millis(i64);
+ 
+ impl TryFrom<i64> for Millis {
+     type Error = ParseError;
+ 
+     fn try_from(millis: i64) -> Result<Self, Self::Error> {
+-        if millis < 0 {
++        if millis <= /* ~ changed by cargo-mutants ~ */ 0 {
+             Err(ParseError::new("duration", "must not be negative"))
+         } else {
+             Ok(Self(millis))
+         }
+     }
+ }
+ 
+ impl From<Millis> for i64 {

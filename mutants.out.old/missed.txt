@@ -1,0 +1,2 @@
+crates/iglu-domain/src/time.rs:36:27: replace < with <= in Timestamp::since
+crates/iglu-domain/src/time.rs:42:9: replace <impl fmt::Display for Timestamp>::fmt -> fmt::Result with Ok(Default::default())

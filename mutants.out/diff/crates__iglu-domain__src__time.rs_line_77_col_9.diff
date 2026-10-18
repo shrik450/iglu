@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace Millis::as_millis -> i64 with 0
+@@ -69,17 +69,17 @@
+ impl Millis {
+     #[must_use]
+     pub const fn from_secs(secs: u32) -> Self {
+         Self(secs as i64 * 1000)
+     }
+ 
+     #[must_use]
+     pub const fn as_millis(self) -> i64 {
+-        self.0
++        0 /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+     #[test]

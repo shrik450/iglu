@@ -1,0 +1,21 @@
+--- crates/iglu-domain/src/time.rs
++++ replace Millis::from_secs -> Self with Default::default()
+@@ -64,17 +64,17 @@
+     fn from(duration: Millis) -> Self {
+         duration.0
+     }
+ }
+ 
+ impl Millis {
+     #[must_use]
+     pub const fn from_secs(secs: u32) -> Self {
+-        Self(secs as i64 * 1000)
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub const fn as_millis(self) -> i64 {
+         self.0
+     }
+ }
+ 

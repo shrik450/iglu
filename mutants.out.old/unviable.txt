@@ -1,0 +1,5 @@
+crates/iglu-domain/src/time.rs:18:9: replace Timestamp::from_unix_millis -> Self with Default::default()
+crates/iglu-domain/src/time.rs:29:9: replace Timestamp::plus -> Self with Default::default()
+crates/iglu-domain/src/time.rs:35:9: replace Timestamp::since -> Millis with Default::default()
+crates/iglu-domain/src/time.rs:56:9: replace <impl TryFrom<i64> for Millis>::try_from -> Result<Self, Self::Error> with Ok(Default::default())
+crates/iglu-domain/src/time.rs:73:9: replace Millis::from_secs -> Self with Default::default()
