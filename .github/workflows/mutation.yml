@@ -33,10 +33,11 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      # The dev shell's slow builds, which ci.yml's console job keeps.
+      - uses: ./.github/actions/nix-cache
         with:
-          use-flakehub: false
-          diagnostic-endpoint: ""
+          set: console
+          mode: restore
 
       - name: Mutate what the pull request changes
         env:
@@ -79,10 +80,11 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      # The dev shell's slow builds, which ci.yml's console job keeps.
+      - uses: ./.github/actions/nix-cache
         with:
-          use-flakehub: false
-          diagnostic-endpoint: ""
+          set: console
+          mode: restore
 
       # Missed mutants and timeouts are results to report, not failures.
       - name: Mutate
@@ -112,10 +114,11 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      # The dev shell's slow builds, which ci.yml's console job keeps.
+      - uses: ./.github/actions/nix-cache
         with:
-          use-flakehub: false
-          diagnostic-endpoint: ""
+          set: console
+          mode: restore
 
       - name: Mutate
         run: |

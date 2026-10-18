@@ -27,16 +27,13 @@ jobs:
           # The base branch, for the changed lines, and the metrics branch.
           fetch-depth: 0
 
-      # Instrumented builds of every test and program take about 7 GB.
-      - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
       - uses: cachix/install-nix-action@v31
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      # The dev shell's slow builds, which ci.yml's console job keeps.
+      - uses: ./.github/actions/nix-cache
         with:
-          use-flakehub: false
-          diagnostic-endpoint: ""
+          set: console
+          mode: restore
 
       - name: Main's coverage, to compare with
         run: git show origin/metrics:coverage/latest.json > baseline.json || rm -f baseline.json
