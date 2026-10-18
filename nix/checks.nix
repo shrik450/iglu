@@ -14,6 +14,14 @@
   lsof,
   git,
   netcat,
+  # For the terminal tier, which runs only when the flake passes these.
+  buildNpmPackage ? null,
+  python3 ? null,
+  playwright-driver ? null,
+  mesa ? null,
+  makeFontsConf ? null,
+  dejavu_fonts ? null,
+  console ? null,
 }:
 
 let
@@ -98,4 +106,48 @@ in
         actionlint ${../.github/workflows}/*.yml
         touch $out
       '';
+}
+// lib.optionalAttrs (console != null) {
+  # The terminal tier: the console's terminal in headless Chromium and
+  # WebKit, without iglud; see console/test/terminal/run.py. Its generated
+  # output is the same every build; `just terminal-check` tries new.
+  console-terminal = buildNpmPackage {
+    pname = "iglu-console-terminal";
+    inherit (console) version npmDeps;
+    src = lib.fileset.toSource {
+      root = ../console;
+      fileset = lib.fileset.unions [
+        ../console/package.json
+        ../console/package-lock.json
+        ../console/tsconfig.json
+        ../console/src
+        ../console/vendor
+        ../console/test/terminal
+      ];
+    };
+    nativeBuildInputs = [
+      (python3.withPackages (ps: [
+        ps.playwright
+        ps.pillow
+      ]))
+    ];
+    env = {
+      PLAYWRIGHT_BROWSERS_PATH = playwright-driver.browsers.override { withFirefox = false; };
+      PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
+      # A browser's fallback fonts, and Mesa for WebKit to draw without a GPU.
+      FONTCONFIG_FILE = makeFontsConf { fontDirectories = [ dejavu_fonts ]; };
+      IGLU_MESA_EGL = "${mesa}/share/glvnd/egl_vendor.d";
+    };
+    dontNpmBuild = true;
+    buildPhase = ''
+      runHook preBuild
+      export HOME=$TMPDIR TERMINAL_SHOTS=$TMPDIR/shots
+      npx tsc -b vendor/wterm-dom
+      npx tsc --noEmit -p test/terminal
+      node test/terminal/build.mjs $TMPDIR/page
+      python3 test/terminal/run.py --built $TMPDIR/page --runs 500 --seed 1
+      runHook postBuild
+    '';
+    installPhase = "touch $out";
+  };
 }

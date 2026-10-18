@@ -16,6 +16,7 @@ from playwright.sync_api import BrowserContext, Page, Playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import cover  # noqa: E402
 from stack import CONSOLE, ROOT, shared  # noqa: E402, F401
 
 PASSWORD = "password"
@@ -27,6 +28,8 @@ def launch(playwright: Playwright, engine: str = "chromium", **context: Any) -> 
     which every engine would need its own way to do on each system.
     Chromium's flag also covers contexts that nix/tests/browser.py's steps
     make for themselves."""
+    if into := os.environ.get(cover.BROWSER_ENV):
+        cover.watch_browsers(Path(into))
     args = ["--ignore-certificate-errors"] if engine == "chromium" else []
     # The dev shell's browsers bring their own libraries; ones the machine
     # puts on the library path can be built against another glibc.

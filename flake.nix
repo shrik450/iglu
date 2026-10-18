@@ -121,8 +121,17 @@
             git
             netcat
             lsof
+            buildNpmPackage
+            python3
+            playwright-driver
+            mesa
+            makeFontsConf
+            dejavu_fonts
             ;
           inherit (self.packages.${system}) zmx;
+          # The terminal tier runs the console in Chromium and WebKit, which
+          # the sandbox has on Linux only.
+          console = if pkgs.stdenv.hostPlatform.isLinux then self.packages.${system}.console else null;
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
           e2e = pkgs.testers.runNixOSTest (import ./nix/tests/e2e.nix { inherit self nixpkgs; });
@@ -151,6 +160,9 @@
                 nixfmt
                 actionlint
                 shellcheck
+                # Mutation testing and coverage; see DEVELOPMENT.md.
+                cargo-mutants
+                cargo-llvm-cov
                 # The local runtime runs workspaces with these.
                 self.packages.${pkgs.stdenv.hostPlatform.system}.zmx
                 git
@@ -171,17 +183,23 @@
                 caddy
                 authelia
                 openssl
-                # Seeding, touring and checking the console in real browsers;
-                # see DEVELOPMENT.md.
+                # Seeding, touring and checking the console in real browsers,
+                # and coverage of the lines a change touches; see DEVELOPMENT.md.
                 (python3.withPackages (ps: [
                   ps.playwright
                   ps.pillow
+                  ps.diff-cover
                 ]))
               ];
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+            # cargo-llvm-cov reads profiles with the LLVM rustc was built with.
+            LLVM_COV = "${pkgs.rustc.llvmPackages.llvm}/bin/llvm-cov";
+            LLVM_PROFDATA = "${pkgs.rustc.llvmPackages.llvm}/bin/llvm-profdata";
             # The dev stack's terminals run this, not your login shell, so the
             # console's checks type into the same shell on every machine.
             IGLU_DEV_SHELL = lib.getExe pkgs.bashInteractive;
+            # WebKit needs an EGL display; without a GPU, Mesa's software one.
+            IGLU_MESA_EGL = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.mesa}/share/glvnd/egl_vendor.d";
             PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsers;
             # NixOS has none of the paths Playwright checks for; empty elsewhere.
             PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "true";

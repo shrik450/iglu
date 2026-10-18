@@ -1,0 +1,7 @@
+{
+  // The console's settings, for the terminal tier's page; checked as the
+  // console is, after wterm's DOM renderer: tsc -b vendor/wterm-dom.
+  "extends": "../../tsconfig.json",
+  "include": ["*.ts", "../../src/*.d.ts"],
+  "references": [{ "path": "../../vendor/wterm-dom" }]
+}

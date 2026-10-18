@@ -48,7 +48,12 @@ Look at console changes before calling them done. With the dev stack running
 and seeded (`just dev-seed`), `just dev-tour` screenshots every view in Chromium
 and WebKit, on desktop and phone, in both themes, with accessibility audits;
 `just dev-compare` shows what a change touched; and `just dev-check` checks
-the console in a browser. A console bug fix gets a step in
+the console in a browser. A console bug fix gets a test where the bug lives.
+A bug in the terminal itself, in what it draws, sends or answers, gets a
+case in the terminal tier, `console/test/terminal/run.py`, which plays the
+program against the console's own terminal in Chromium and WebKit without a
+stack (`just terminal-check`). A bug that needs the rest of iglu, such as a
+session, iglud or the views around a column, gets a step in
 `nix/tests/browser.py`, run by `dev/ui/check.py`; the VM test runs only the
 steps that depend on a real host or the workspace image.
 
@@ -150,6 +155,24 @@ reasonable, not only correct.
 - A test that asserts implementation details is worse than no test.
 - Negative tests matter as much as positive ones for isolation and access
   control.
+- State what a pure function promises as a property, checked on generated
+  inputs, alongside the examples that show it: proptest in Rust, each
+  crate's under `tests/properties/` or in the module for private
+  functions, and fast-check in the console, in `*.properties.test.ts`.
+  The properties that pay are round trips (what's parsed, shown, sent or
+  stored reads back the same), never panicking on untrusted input,
+  invariants (bounds, no control characters, nothing reaching another
+  host), agreement with the system that consumes the output (a browser's
+  URL parser, Git's credential format), and, for anything fed in chunks,
+  that splitting the input anywhere changes nothing. Finite domains, such
+  as the access rules, are checked on every combination instead.
+- `PROPTEST_CASES` sets how many cases every property runs, in Rust and
+  the console alike: the default is quick enough for `just test`, and CI's
+  deeper run raises it.
+- When a property fails, proptest saves the case under
+  `proptest-regressions/`. Commit those files: the case then runs first,
+  everywhere, from then on. Fix the code, not the property; when a
+  generator was wrong instead, fix the generator and delete what it saved.
 
 ## Change hygiene
 

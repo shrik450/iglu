@@ -20,9 +20,11 @@ root.
 | `just lint`      | rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint. |
 | `just test`      | The unit tests, and the local runtime's conformance suite. Fast. |
 | `just console`   | Type-checks and bundles the console.                             |
+| `just terminal-check` | Checks the console's terminal in Chromium and WebKit, without a stack; see [The terminal tier](#the-terminal-tier). |
 | `just dev-check` | Checks the console in a browser against the running dev stack.   |
 | `just e2e`       | The VM test. Needs x86_64-linux with KVM.                        |
 | `just check`     | Every flake check, including the VM test where it can run.       |
+| `just mutants`   | Mutation-tests the code changed against `main`; see [Mutation testing](#mutation-testing). |
 
 CI runs three jobs, and a pull request merges only when all pass: the flake
 checks except the VM test, `just dev-check` against a dev stack, and the VM
@@ -30,10 +32,97 @@ test (`.github/workflows/ci.yml`). Run `just lint test` before you push, and
 `just dev-check` when you change the console. The VM test needs KVM, which
 workspaces don't have, so CI is usually where it runs.
 
-The two browser checks split the work. `just dev-check` covers the console's
+The browser checks split the work. The terminal tier covers the terminal on
+its own, a flake check like the others. `just dev-check` covers the console's
 behaviour, over the local host. The VM test covers iglu as it's deployed: the
 NixOS modules, the workspace image and its guest tools, Incus and its
 isolation, and a handful of the same browser steps through all of them.
+
+## Mutation testing
+
+Mutation testing checks the tests themselves. It changes the code in one
+small way at a time, such as turning a `<` into `<=` or making a function
+return a default, and runs the tests against each change, called a mutant. A
+mutant the tests don't notice points at behaviour that nothing checks.
+cargo-mutants mutates the Rust (`.cargo/mutants.toml`), and Stryker mutates the
+console (`console/stryker.config.mjs`).
+
+Code is mutated in tiers, by what tests it:
+
+| Tier      | What's mutated                                           | Tested by                                          | Gates pull requests |
+| --------- | -------------------------------------------------------- | -------------------------------------------------- | ------------------- |
+| `core`    | iglu-domain, iglu-proto and iglu-api                     | Their unit tests                                   | Yes                 |
+| `runtime` | hostd's host and rules, and the local runtime            | Their unit tests and the runtime conformance suite | Yes                 |
+| `console` | The console's state modules, and the vendored `wheel.ts` | The console's unit tests                           | Yes                 |
+| `shell`   | iglud, iglu-guest and iglu-cli                           | Their unit tests                                   | No, reported only   |
+
+The `shell` tier is reported but doesn't gate anything. Most of its code is
+meant to be tested end to end, by `just dev-check` and the VM test, which
+can't run once per mutant. Its score shows how much of it unit tests reach,
+and a pure function there that wants a unit test belongs in iglu-domain. Code
+that no `cargo test` can run, such as the Incus runtime and the binaries'
+entry points, isn't mutated at all. `.cargo/mutants.toml` lists it, with a
+reason for each.
+
+- `just mutants` mutates the lines changed against `main` in the gating tiers,
+  and fails if the tests miss a mutant. Give another base as an argument:
+  `just mutants origin/main`. CI runs it on every pull request
+  (`.github/workflows/mutation.yml`).
+- `just mutants-tier <tier>` mutates a whole tier, and passes any further
+  arguments to cargo-mutants or Stryker, such as `--shard 0/4` or `-j 2`. Full
+  runs of `runtime` and `shell` take hours, so CI runs every tier on pushes to
+  `main` and weekly, sharded. The run's summary has each package's score and
+  the mutants its tests missed.
+
+Results go to `.dev/mutants/`, and each mutant is built in a copy of the tree
+under `.dev/tmp/mutants/`. A timeout counts as caught, since the tests didn't
+pass.
+
+Some mutants can't be caught because they don't change what the code does,
+such as a regular expression's anchor on a string that's always one character
+long. Say so where the mutant is, rather than write a test that can't fail.
+For Rust, add the mutant to `exclude_re` in `.cargo/mutants.toml` with the
+reason. For the console, add a `// Stryker disable next-line <mutator>:
+<reason>` comment.
+
+## Coverage
+
+Coverage shows which lines any test runs, tier by tier. `dev/cover.py`
+measures every tier the dev shell can run:
+
+| Tier                 | Measured from                                                                    |
+| -------------------- | -------------------------------------------------------------------------------- |
+| Rust, unit           | `cargo test`, the local runtime's conformance suite included                     |
+| Rust, with dev-check | The above, plus iglud, the local host and its guest tools under `just dev-check` |
+| Console, unit        | The console's unit tests, in the files they load                                 |
+| Console, browsers    | The console as dev-check's Chromium runs it                                      |
+
+- `just coverage` runs every tier, starting a dev stack of its own, so stop
+  `just dev` first. It writes lcov for each tier, `summary.md`, and an HTML
+  report of the Rust under `.dev/coverage/`.
+- `just coverage-diff [base]` then shows coverage of the lines changed since
+  `base`, `main` by default.
+
+Rust is built with LLVM's source-based coverage into `target/coverage`, apart
+from your normal builds. Its programs write their counters to their profiles
+as they run, so processes that are killed rather than exit, such as the guest
+tools a terminal's detaching ends, still count. The browsers' coverage comes
+from V8 through the DevTools protocol, mapped back to the TypeScript through
+the dev bundle's source map. V8 forgets a page's counts when it navigates, so
+they're taken before each navigation the tools make; one a click makes, such
+as through sign-in, loses what ran since the last.
+
+CI measures coverage on every pull request and push to `main`
+(`.github/workflows/coverage.yml`), and doesn't gate on it. The run's summary
+has each tier's totals by crate and console area, the change from `main`,
+and, on pull requests, coverage of the lines the pull request changes. Each
+push to `main` appends its summary to `coverage/history.jsonl` on the
+`metrics` branch, which holds results alone.
+
+Two parts of iglu run only in the VM test, which isn't measured: the Incus
+runtime, and the NixOS modules' wiring. Instrumenting the VM test's programs
+would mean building them all a second time, so the Incus runtime's lines show
+as uncovered unless a unit test reaches them.
 
 ## The local dev stack
 
@@ -213,9 +302,40 @@ just dev-check               # the console's browser checks, as CI runs them
 - **`just dev-compare <before> <after>`** marks what changed between two
   tours, most changed first, so a change shows everything it touched.
 - **`just dev-check`** runs `nix/tests/browser.py`'s steps against the local
-  stack in about two minutes, as CI does. A console fix gets a step there,
-  added to `dev/ui/check.py`; add it to the VM test too only when it depends
-  on a real host or the workspace image.
+  stack in about two minutes, as CI does. A console fix that needs the rest
+  of iglu gets a step there, added to `dev/ui/check.py`; add it to the VM
+  test too only when it depends on a real host or the workspace image. A fix
+  to the terminal itself goes to the terminal tier instead.
+
+### The terminal tier
+
+Most of the console's bugs have been the terminal's: what it draws, the
+bytes it sends for a key or the wheel, the queries it answers. The terminal
+tier checks those in Chromium and WebKit without iglud, a workspace or a
+shell, in about a second a case:
+
+```sh
+just terminal-check                            # every case, in both engines
+just terminal-check --browser chromium mac-keys  # one case, in one
+```
+
+`console/test/terminal/run.py` bundles a page with the console's own
+`TerminalPane` on it, mounted as the workspace view mounts it, and plays the
+program in each column: it writes what the program would print to the
+pane's WebSocket and reads back exactly what the terminal sends. A case says
+which bytes reach a program, where a step through a shell can only say what
+the shell made of them.
+
+Its differential case checks wterm's renderer against Ghostty's terminal
+core, which holds the screen wterm draws: for output generated with
+fast-check, split anywhere and at sizes small enough to wrap, and for
+output recorded from nvim, vim, less and `git log` (`record.py` remakes
+those), what's drawn must be what the core holds. A failure prints its seed
+and the smallest output that shows it; `--seed` repeats a run. The flake
+check, `console-terminal`, runs a fixed seed; the recipe a new one each time.
+
+WebKit draws through EGL, which a workspace has no GPU for: the dev shell
+gives it Mesa through `IGLU_MESA_EGL`, and only WebKit is told.
 
 The tools' browsers accept the dev stack's certificates without trusting the
 dev CA, so they work the same on every machine.

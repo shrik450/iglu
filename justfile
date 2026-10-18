@@ -28,6 +28,11 @@ test:
 console:
     cd console && npm ci && npm run build
 
+# Check the console's terminal in Chromium and WebKit, without a stack, on newly generated output: just terminal-check --browser chromium mac-keys
+terminal-check *args:
+    cd console && npx tsc -b vendor/wterm-dom && npx tsc --noEmit -p test/terminal
+    python3 console/test/terminal/run.py {{ args }}
+
 # Run every flake check: CI's, plus the VM test on x86_64-linux with KVM.
 check:
     nix flake check -L
@@ -40,6 +45,59 @@ e2e:
 api-types:
     rm -rf console/src/generated
     TS_RS_EXPORT_DIR={{justfile_directory()}}/console/src/generated cargo test -p iglu-api --features ts
+
+# Mutation testing. DEVELOPMENT.md explains the tiers, and which gate pull requests.
+
+# Mutate what changed against a base in the tiers that gate pull requests, and fail on a mutant the tests miss: just mutants
+mutants base="main":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    mkdir -p .dev/mutants
+    diff=.dev/mutants/changes.diff
+    git diff --merge-base "{{ base }}" > "$diff"
+    failed=0
+    # cargo-mutants exits 2 for missed mutants and 3 for timeouts, which
+    # count as caught: the tests didn't pass.
+    rust() {
+        just mutants-tier "$1" --in-diff "$diff" --output ".dev/mutants/$1"
+        case $? in 0 | 3) ;; *) failed=1 ;; esac
+    }
+    rust core
+    if grep -qE '^\+\+\+ b/crates/iglu-(hostd|devhost)/' "$diff"; then rust runtime; fi
+    (cd console && node stryker-diff.mjs "{{ base }}") || failed=1
+    exit $failed
+
+# Mutate one tier in full, core, runtime, shell or console, passing the rest on: just mutants-tier core --shard 0/4
+[positional-arguments]
+mutants-tier tier *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    # Each mutant is built in a copy of the tree, made here rather than in /tmp.
+    mkdir -p .dev/tmp/mutants
+    export TMPDIR="$PWD/.dev/tmp/mutants"
+    case "{{ tier }}" in
+        core) exec cargo mutants -p iglu-domain -p iglu-proto -p iglu-api "$@" ;;
+        runtime)
+            # hostd's rules and the local runtime, tested by the conformance
+            # suite, which runs the guest tools built here.
+            cargo build -p iglu-guest
+            IGLU_GUEST_TOOLS="$PWD/target/debug" exec cargo mutants -p iglu-hostd -p iglu-devhost \
+                --test-package iglu-hostd --test-package iglu-devhost "$@" ;;
+        shell) exec cargo mutants -p iglud -p iglu-guest -p iglu-cli "$@" ;;
+        console) cd console && exec npx stryker run "$@" ;;
+        *) echo "tiers: core, runtime, shell, console" >&2; exit 1 ;;
+    esac
+
+# Coverage, by dev/cover.py. DEVELOPMENT.md explains the tiers.
+
+# Measure coverage of every tier, running a dev stack of its own (stop `just dev` first); reports land in .dev/coverage/.
+coverage:
+    python3 dev/cover.py all
+
+# Show coverage of the lines changed since a base, after `just coverage`: just coverage-diff main
+coverage-diff base="main":
+    python3 dev/cover.py diff "{{ base }}"
 
 # The local dev stack: iglud, a local host, Caddy and Authelia, all run from
 # the dev shell by dev/stack.py. DEVELOPMENT.md explains it.

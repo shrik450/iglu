@@ -265,7 +265,9 @@ impl LocalRuntime {
             .await
             .unwrap_or(false)
             .then_some(profile);
-        let inherited = ["PATH", "LANG", "TMPDIR"]
+        // LLVM_PROFILE_FILE is where instrumented guest tools write their
+        // coverage, when it's being measured.
+        let inherited = ["PATH", "LANG", "TMPDIR", "LLVM_PROFILE_FILE"]
             .into_iter()
             .filter_map(|key| std::env::var_os(key).map(|value| (key, value)))
             .collect();

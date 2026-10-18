@@ -292,4 +292,38 @@ mod tests {
         let names: Vec<_> = plan.links.iter().map(|(_, name)| name.as_str()).collect();
         assert_eq!(names, ["0", "1"]);
     }
+
+    mod credentials {
+        use super::*;
+        use percent_encoding::percent_decode_str;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Git reads each line back as a URL; whatever a username or
+            /// password holds, it reads back the same credential for the host.
+            #[test]
+            fn every_credential_reads_back_as_stored(
+                username in "[!-9;-~]{1,40}",
+                password in prop::collection::vec(any::<char>(), 1..40).prop_map(String::from_iter),
+                name in "[a-z]([a-z0-9-]{0,9}[a-z0-9])?(\\.[a-z][a-z0-9]{0,8}){0,3}",
+                port in prop::option::of(1..u16::MAX),
+            ) {
+                let host = port.map_or_else(|| name.clone(), |port| format!("{name}:{port}"));
+                let credential = GitCredential {
+                    host: host.parse().expect("the pattern is a host"),
+                    username: username.parse().expect("the pattern is a username"),
+                    password: SecretValue::try_from(password.clone()).expect("a value"),
+                };
+                let store = credential_store(std::slice::from_ref(&credential));
+                let line = store.strip_suffix('\n').expect("one line per credential");
+                prop_assert!(!line.contains('\n'));
+                let url = url::Url::parse(line).expect("a credential line is a URL");
+                let decode = |s: &str| percent_decode_str(s).decode_utf8().map(std::borrow::Cow::into_owned).ok();
+                prop_assert_eq!(decode(url.username()), Some(username));
+                prop_assert_eq!(url.password().and_then(decode), Some(password));
+                prop_assert_eq!(url.host_str(), Some(name.as_str()));
+                prop_assert_eq!(url.port_or_known_default(), Some(port.unwrap_or(443)));
+            }
+        }
+    }
 }

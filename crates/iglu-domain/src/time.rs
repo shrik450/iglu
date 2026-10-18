@@ -4,6 +4,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ParseError;
+
 /// Milliseconds since the Unix epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
@@ -44,8 +46,26 @@ impl fmt::Display for Timestamp {
 /// A non-negative duration in milliseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
-#[serde(transparent)]
+#[serde(try_from = "i64", into = "i64")]
 pub struct Millis(i64);
+
+impl TryFrom<i64> for Millis {
+    type Error = ParseError;
+
+    fn try_from(millis: i64) -> Result<Self, Self::Error> {
+        if millis < 0 {
+            Err(ParseError::new("duration", "must not be negative"))
+        } else {
+            Ok(Self(millis))
+        }
+    }
+}
+
+impl From<Millis> for i64 {
+    fn from(duration: Millis) -> Self {
+        duration.0
+    }
+}
 
 impl Millis {
     #[must_use]

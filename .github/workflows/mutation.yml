@@ -1,0 +1,193 @@
+name: Mutation
+
+# Mutation testing: does each test suite notice when the code it covers
+# changes? A pull request's tests must catch every mutant in the lines it
+# changes, in the tiers that gate it; main and a weekly run mutate
+# everything and report the score. DEVELOPMENT.md explains the tiers.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changed:
+    name: changed code
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
+          diagnostic-endpoint: ""
+
+      - name: Mutate what the pull request changes
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          nix develop -c npm ci --prefix console
+          nix develop -c just mutants "origin/$BASE"
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-changed
+          path: .dev/mutants/
+          if-no-files-found: ignore
+
+  rust:
+    name: ${{ matrix.tier }} ${{ matrix.shard }}/${{ matrix.shards }}
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tier: core, shard: 0, shards: 2 }
+          - { tier: core, shard: 1, shards: 2 }
+          - { tier: runtime, shard: 0, shards: 4 }
+          - { tier: runtime, shard: 1, shards: 4 }
+          - { tier: runtime, shard: 2, shards: 4 }
+          - { tier: runtime, shard: 3, shards: 4 }
+          - { tier: shell, shard: 0, shards: 6 }
+          - { tier: shell, shard: 1, shards: 6 }
+          - { tier: shell, shard: 2, shards: 6 }
+          - { tier: shell, shard: 3, shards: 6 }
+          - { tier: shell, shard: 4, shards: 6 }
+          - { tier: shell, shard: 5, shards: 6 }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
+          diagnostic-endpoint: ""
+
+      # Missed mutants and timeouts are results to report, not failures.
+      - name: Mutate
+        env:
+          TIER: ${{ matrix.tier }}
+          SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
+          OUT: .dev/mutants/${{ matrix.tier }}-${{ matrix.shard }}
+        run: |
+          status=0
+          nix develop -c just mutants-tier "$TIER" --shard "$SHARD" --output "$OUT" -j 2 --annotations none || status=$?
+          case $status in 0 | 2 | 3) ;; *) exit "$status" ;; esac
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutants-${{ matrix.tier }}-${{ matrix.shard }}
+          path: .dev/mutants/${{ matrix.tier }}-${{ matrix.shard }}/mutants.out/
+          if-no-files-found: ignore
+
+  console:
+    name: console
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
+          diagnostic-endpoint: ""
+
+      - name: Mutate
+        run: |
+          nix develop -c npm ci --prefix console
+          nix develop -c just mutants-tier console --concurrency 4
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutants-console
+          path: .dev/mutants/console/
+          if-no-files-found: ignore
+
+  summary:
+    name: summary
+    needs: [rust, console]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: results
+
+      # Score: the share of viable mutants the tests caught, timeouts
+      # included; mutants that don't build don't count.
+      - name: Summarize
+        run: |
+          {
+            echo "## Mutation score"
+            echo
+            echo "| Tier | Package | Caught | Timeout | Missed | Unviable | Score |"
+            echo "| ---- | ------- | -----: | ------: | -----: | -------: | ----: |"
+            for tier in core runtime shell; do
+              compgen -G "results/mutants-$tier-*/outcomes.json" > /dev/null || continue
+              jq -rs --arg tier "$tier" '
+                [.[].outcomes[] | select(.scenario.Mutant) | {p: .scenario.Mutant.package, s: .summary}]
+                | group_by(.p)[]
+                | {p: .[0].p,
+                   c: map(select(.s == "CaughtMutant")) | length,
+                   t: map(select(.s == "Timeout")) | length,
+                   m: map(select(.s == "MissedMutant")) | length,
+                   u: map(select(.s == "Unviable")) | length}
+                | "| \($tier) | \(.p) | \(.c) | \(.t) | \(.m) | \(.u) | \(if .c + .t + .m > 0 then ((.c + .t) * 1000 / (.c + .t + .m) | floor) / 10 else 100 end)% |"
+              ' results/mutants-"$tier"-*/outcomes.json
+            done
+            if [ -f results/mutants-console/mutation.json ]; then
+              jq -r '
+                [.files[].mutants[].status] as $s
+                | ($s | map(select(. == "Killed")) | length) as $k
+                | ($s | map(select(. == "Timeout")) | length) as $t
+                | ($s | map(select(. == "Survived" or . == "NoCoverage")) | length) as $m
+                | ($s | map(select(. == "CompileError" or . == "RuntimeError")) | length) as $u
+                | "| console | iglu-console | \($k) | \($t) | \($m) | \($u) | \(if $k + $t + $m > 0 then (($k + $t) * 1000 / ($k + $t + $m) | floor) / 10 else 100 end)% |"
+              ' results/mutants-console/mutation.json
+            fi
+            echo
+            echo "<details><summary>Missed mutants</summary>"
+            echo
+            echo '```'
+            cat results/mutants-*/missed.txt 2>/dev/null | sort
+            if [ -f results/mutants-console/mutation.json ]; then
+              jq -r '.files | to_entries[] | .key as $f | .value.mutants[]
+                | select(.status == "Survived" or .status == "NoCoverage")
+                | "console/\($f):\(.location.start.line): \(.mutatorName) \(.replacement // "" | tojson)"' \
+                results/mutants-console/mutation.json | sort
+            fi
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+          { cat results/mutants-*/missed.txt 2>/dev/null; true; } | sort > missed.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mutants-missed
+          path: missed.txt

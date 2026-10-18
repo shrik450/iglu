@@ -127,7 +127,17 @@ fn address(typed: &str) -> String {
     if has_scheme || typed.is_empty() {
         return typed.to_owned();
     }
-    let host = typed.split(['/', ':', '?', '#']).next().unwrap_or_default();
+    // The host as a browser reads it, so plain HTTP never reaches another:
+    // a backslash ends it as a slash does, and user info and a port are
+    // either side of it.
+    let authority = typed
+        .split(['/', '\\', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let host_and_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = host_and_port.split(':').next().unwrap_or_default();
     let local = host == "localhost"
         || host.ends_with(".localhost")
         || host.parse::<std::net::Ipv4Addr>().is_ok();
@@ -461,12 +471,82 @@ mod tests {
         assert_eq!(address("app.localhost/x"), "http://app.localhost/x");
         assert_eq!(address("127.0.0.1:8080/a?b"), "http://127.0.0.1:8080/a?b");
         assert_eq!(address("example.com"), "https://example.com");
+        // What only looks local goes over HTTPS.
+        assert_eq!(address("app\\.localhost"), "https://app\\.localhost");
+        assert_eq!(
+            address("localhost:3000@evil.example"),
+            "https://localhost:3000@evil.example"
+        );
         assert_eq!(address(" https://example.com/a "), "https://example.com/a");
         assert_eq!(address("about:blank"), "about:blank");
         assert_eq!(
             address("file:///home/dev/index.html"),
             "file:///home/dev/index.html"
         );
+    }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn typed() -> impl Strategy<Value = String> {
+            let piece = prop::sample::select(
+                &[
+                    "localhost",
+                    ".localhost",
+                    "app",
+                    "127.0.0.1",
+                    "10.0.0.2",
+                    "127.1",
+                    ":",
+                    "@",
+                    "/",
+                    "\\",
+                    "?",
+                    "#",
+                    "evil.example",
+                    "3000",
+                    "[",
+                    "]",
+                    "%40",
+                    " ",
+                    "\t",
+                    "http:",
+                    "x",
+                ][..],
+            );
+            prop_oneof![
+                prop::collection::vec(piece, 0..8).prop_map(|pieces| pieces.concat()),
+                any::<String>(),
+            ]
+        }
+
+        proptest! {
+            /// Only the workspace's own addresses go over plain HTTP:
+            /// whatever is typed, what's given `http://` here reaches
+            /// localhost or a numbered address, never a named host.
+            #[test]
+            fn plain_http_only_reaches_the_workspace_itself(typed in typed()) {
+                let opened = address(&typed);
+                if opened != typed.trim()
+                    && opened.starts_with("http://")
+                    && let Ok(url) = url::Url::parse(&opened)
+                {
+                    let local = match url.host() {
+                        Some(url::Host::Domain(host)) => host == "localhost" || host.ends_with(".localhost"),
+                        Some(url::Host::Ipv4(_)) => true,
+                        Some(url::Host::Ipv6(_)) | None => false,
+                    };
+                    prop_assert!(local, "{:?} opens {} over plain HTTP", typed, url);
+                }
+            }
+
+            #[test]
+            fn addresses_without_a_scheme_get_one(typed in "[a-z0-9.]{1,12}(:[0-9]{1,5})?(/[a-z]{0,6})?") {
+                let opened = address(&typed);
+                prop_assert!(opened == format!("http://{typed}") || opened == format!("https://{typed}"), "{}", opened);
+            }
+        }
     }
 
     #[test]

@@ -256,7 +256,10 @@ pub fn parse_lsof(output: &str) -> Vec<(u32, ListenerReport)> {
     let mut process = String::new();
     let mut six = false;
     for line in output.lines() {
-        let (field, value) = line.split_at(line.len().min(1));
+        // Fields are one ASCII letter; a line that starts otherwise isn't one.
+        let Some((field, value)) = line.split_at_checked(line.len().min(1)) else {
+            continue;
+        };
         match field {
             "p" => {
                 process.clear();

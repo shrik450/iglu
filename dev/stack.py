@@ -2,6 +2,7 @@
 provider and TLS front they need, run from the dev shell.
 
     python3 dev/stack.py run           # just dev
+    python3 dev/stack.py run --coverage  # the same, measuring Rust's coverage; see dev/cover.py
     python3 dev/stack.py wait          # until the console answers
     python3 dev/stack.py reset         # just dev-reset
     python3 dev/stack.py cli ARGS...   # just dev-cli
@@ -88,9 +89,10 @@ def private(path: Path, contents: str) -> None:
     path.write_text(contents)
 
 
-def setup() -> None:
+def setup(tools: Path = ROOT / "target/debug") -> None:
     """Creates what's missing: the dev CA, Authelia's key, iglud's secrets,
-    and both daemons' settings."""
+    and both daemons' settings, with the local host running the guest tools
+    in `tools`."""
     ca = shared() / "ca"
     for directory in [ca, shared() / "authelia/data", shared() / "git", state() / "logs"]:
         directory.mkdir(parents=True, exist_ok=True)
@@ -152,7 +154,7 @@ def setup() -> None:
         "runtime": {
             "state_dir": str(state() / "devhost"),
             "runtime_dir": str(runtime()),
-            "guest_tools": str(ROOT / "target/debug"),
+            "guest_tools": str(tools),
             # The dev shell's bash, not your login shell, so checks type into
             # the same shell everywhere; run yours from it.
             "shell": os.environ["IGLU_DEV_SHELL"],
@@ -182,24 +184,39 @@ def services_env() -> dict[str, str]:
     }
 
 
-def run() -> None:
-    """Builds and runs the whole stack in the foreground, rebuilding the
-    console on save, until Ctrl-C or one of its processes ends."""
-    setup()
-    subprocess.run(
-        ["cargo", "build", "-p", "iglud", "-p", "iglu-devhost", "-p", "iglu-guest", "-p", "iglu-cli"],
-        cwd=ROOT, check=True,
-    )
+def console_dependencies() -> None:
+    """Installs the console's npm dependencies when they're missing or the
+    lock file has changed since: npm records the one it installed from."""
     console = ROOT / "console"
-    # npm records the lock file it installed from; reinstall when the lock
-    # file has changed since.
     installed = console / "node_modules/.package-lock.json"
     if not installed.exists() or installed.stat().st_mtime < (console / "package-lock.json").stat().st_mtime:
         subprocess.run(["npm", "ci"], cwd=console, check=True)
 
+
+def run(coverage: bool = False) -> None:
+    """Builds and runs the whole stack in the foreground, rebuilding the
+    console on save, until Ctrl-C or one of its processes ends. With
+    `coverage`, its Rust programs are built and run measuring coverage."""
+    build = dict(os.environ)
+    target = ROOT / "target/debug"
+    if coverage:
+        import cover
+
+        build = cover.rust_env()
+        target = cover.TARGET / "debug"
+    setup(target)
+    subprocess.run(
+        ["cargo", "build", "-p", "iglud", "-p", "iglu-devhost", "-p", "iglu-guest", "-p", "iglu-cli"],
+        cwd=ROOT, env=build, check=True,
+    )
+    console = ROOT / "console"
+    console_dependencies()
+
     logs = state() / "logs"
     env = services_env()
-    target = ROOT / "target/debug"
+    if coverage:
+        # Where iglud, the local host and its guest tools write profiles.
+        env["LLVM_PROFILE_FILE"] = build["LLVM_PROFILE_FILE"]
     # Caddy and Authelia are chatty and rarely interesting, so they log to
     # files; the rest log here.
     commands = [
@@ -237,11 +254,12 @@ def run() -> None:
 def wait(timeout: float = 300) -> None:
     """Waits until the console and the identity provider answer through
     Caddy, for scripts that start `run` in the background."""
-    trust = ssl.create_default_context(cafile=str(shared() / "ca/ca.crt"))
     deadline = time.monotonic() + timeout
     for url in [f"{AUTH}/.well-known/openid-configuration", f"{CONSOLE}/"]:
         while True:
             try:
+                # `run` makes the CA as it starts, so it may not be there yet.
+                trust = ssl.create_default_context(cafile=str(shared() / "ca/ca.crt"))
                 urllib.request.urlopen(url, context=trust, timeout=5)
                 break
             except urllib.error.HTTPError as error:
@@ -326,6 +344,8 @@ def main() -> None:
     match sys.argv[1:]:
         case ["cli", *args]:
             cli(args)
+        case ["run", "--coverage"]:
+            run(coverage=True)
         case [command] if command in commands:
             commands[command]()
         case _:
