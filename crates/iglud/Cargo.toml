@@ -46,6 +46,10 @@ serde_urlencoded = "0.7.1"
 proptest = "1"
 # Reads addresses as a browser does.
 url = "2"
+# The simulation runs hostd in process, over its simulated runtime.
+iglu-hostd = { path = "../iglu-hostd", features = ["sim"] }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5.3", features = ["util"] }
 
 [lints]
 workspace = true
