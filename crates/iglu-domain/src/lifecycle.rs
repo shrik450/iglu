@@ -99,6 +99,14 @@ impl SecretsGeneration {
         Self(value)
     }
 
+    /// Whether a delivery of this generation replaces what a guest holds.
+    /// An older one has been superseded and is left alone, so whatever order
+    /// deliveries land in, a guest ends up with the newest.
+    #[must_use]
+    pub fn replaces(self, held: Option<Self>) -> bool {
+        held.is_none_or(|held| self >= held)
+    }
+
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
@@ -475,6 +483,25 @@ pub fn allow_transition(current: Phase, requested: DesiredState) -> Result<(), T
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Deliveries landing in any order leave a guest with the newest,
+        /// and what it holds never goes back.
+        #[test]
+        fn deliveries_in_any_order_leave_the_newest(generations in proptest::collection::vec(0u64..8, 1..12)) {
+            let mut held = None;
+            for generation in &generations {
+                let offered = SecretsGeneration::from_u64(*generation);
+                if offered.replaces(held) {
+                    prop_assert!(held <= Some(offered));
+                    held = Some(offered);
+                }
+            }
+            prop_assert_eq!(held, generations.iter().copied().max().map(SecretsGeneration::from_u64));
+        }
+    }
+
     use super::*;
     use crate::capacity::Bytes;
 

@@ -9,6 +9,7 @@ use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 
+use iglu_domain::lifecycle::SecretsGeneration;
 use iglu_domain::secret::{GitCredential, HomePath, SecretBundle};
 use serde::Deserialize;
 
@@ -141,16 +142,47 @@ pub fn describe(error: &serde_json::Error) -> String {
     format!("{what} at line {} column {}", error.line(), error.column())
 }
 
+/// What installing a bundle did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Installed {
+    Replaced,
+    /// The guest holds a newer delivery, which stays: an older one landing
+    /// late, after a newer one, is already superseded.
+    Superseded {
+        offered: SecretsGeneration,
+        held: SecretsGeneration,
+    },
+}
+
 /// Replaces the delivered secrets with a new bundle: the environment, Git
 /// credentials, files and their links, and last the generation hosts read.
+/// A bundle older than the one this boot holds is left out. Installs take
+/// turns, so two landing at once can't both pass that check.
 ///
 /// # Errors
 ///
 /// When the bundle is unreadable or a file can't be written.
-pub fn install(dirs: &Dirs, request: &[u8]) -> Result<(), InstallError> {
+pub fn install(dirs: &Dirs, request: &[u8]) -> Result<Installed, InstallError> {
     let bundle = serde_json::from_slice::<InstallRequest>(request)
         .map_err(|e| InstallError::Bundle(describe(&e)))?
         .bundle;
+    let lock_path = dirs.secrets_lock();
+    let lock = fs::File::create(&lock_path).map_err(io_at(&lock_path))?;
+    lock.lock().map_err(io_at(&lock_path))?;
+    let generation = dirs.secrets_generation();
+    let held = fs::read(&generation)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| text.trim().parse().ok())
+        .map(SecretsGeneration::from_u64);
+    if !bundle.generation.replaces(held)
+        && let Some(held) = held
+    {
+        return Ok(Installed::Superseded {
+            offered: bundle.generation,
+            held,
+        });
+    }
     let home = dirs.home();
 
     let links_file = dirs.secret_links_file();
@@ -197,9 +229,9 @@ pub fn install(dirs: &Dirs, request: &[u8]) -> Result<(), InstallError> {
     let linked: Vec<&HomePath> = plan.links.iter().map(|(path, _)| path).collect();
     write_atomic(&links_file, &serde_json::to_vec(&linked)?).map_err(io_at(&links_file))?;
 
-    let generation = dirs.secrets_generation();
     write_atomic(&generation, bundle.generation.get().to_string().as_bytes())
-        .map_err(io_at(&generation))
+        .map_err(io_at(&generation))?;
+    Ok(Installed::Replaced)
 }
 
 /// Git credentials in `git credential-store`'s file format, which Git's

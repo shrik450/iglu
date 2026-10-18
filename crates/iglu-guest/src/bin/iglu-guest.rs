@@ -84,7 +84,16 @@ fn main() -> ExitCode {
                 return fail(format!("reading the bundle: {error}"));
             }
             match secrets::install(&dirs, &request) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(secrets::Installed::Replaced) => ExitCode::SUCCESS,
+                // Already delivered, as far as anyone asking is concerned.
+                Ok(secrets::Installed::Superseded { offered, held }) => {
+                    eprintln!(
+                        "iglu-guest: left secrets {} in place of the older {}",
+                        held.get(),
+                        offered.get()
+                    );
+                    ExitCode::SUCCESS
+                }
                 Err(error) => fail(error),
             }
         }

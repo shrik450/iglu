@@ -110,6 +110,8 @@ pub struct Delivery {
     pub generation: SecretsGeneration,
     /// What the guest held before, this boot.
     pub replaced: Option<SecretsGeneration>,
+    /// Whether it took the place of what the guest held.
+    pub installed: bool,
     pub values: Vec<String>,
 }
 
@@ -576,7 +578,10 @@ fn answer(world: &mut World, guest: &Guest, command: Command) -> Output {
     match command {
         Command::Install(bundle) => {
             let replaced = instance.guest.secrets;
-            instance.guest.secrets = Some(bundle.generation);
+            let installed = bundle.generation.replaces(replaced);
+            if installed {
+                instance.guest.secrets = Some(bundle.generation);
+            }
             let values = bundle
                 .env
                 .values()
@@ -588,6 +593,7 @@ fn answer(world: &mut World, guest: &Guest, command: Command) -> Output {
                 owner,
                 generation: bundle.generation,
                 replaced,
+                installed,
                 values,
             });
             ok("")

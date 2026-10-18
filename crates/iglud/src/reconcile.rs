@@ -389,11 +389,11 @@ async fn act(
             tracing::info!(workspace = %id, "workspace deleted");
             Ok(true)
         }
+        // Nothing is left to do, so nothing holds the workspace up and no
+        // failure still matters: a step whose answer was lost may have
+        // taken effect anyway. The activity log keeps what happened.
         Plan::Stable => {
-            let resolved = matches!(
-                ws.condition,
-                Some(Condition::Capacity { .. } | Condition::RuntimeFailed)
-            );
+            let resolved = ws.condition.is_some();
             if resolved {
                 app.db
                     .call(move |tx| db::set_condition(tx, id, None))

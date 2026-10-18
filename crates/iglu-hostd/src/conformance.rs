@@ -109,6 +109,14 @@ pub async fn run<R: Runtime>(host: &Host<R>, fixture: &Fixture) -> Vec<Outcome> 
     outcomes.push(
         suite
             .check(
+                "an older delivery of secrets leaves the newer ones, and counts as delivered",
+                Suite::older_secrets_are_superseded,
+            )
+            .await,
+    );
+    outcomes.push(
+        suite
+            .check(
                 "provisioning outlives a restart",
                 Suite::provisioning_outlives_a_restart,
             )
@@ -586,6 +594,27 @@ impl<'a, R: Runtime> Suite<'a, R> {
         ensure(second.secrets.is_none() && held.is_none(), || {
             format!("secrets outlived a restart: {second:?}, the guest holds {held:?}")
         })
+    }
+
+    /// A delivery older than the one the guest holds, landing late, leaves
+    /// the newer secrets in place and counts as delivered: no error, and so
+    /// nothing to retry.
+    async fn older_secrets_are_superseded(&self, workspace: WorkspaceId) -> Checked {
+        self.running_workspace(workspace).await?;
+        let newer = SecretsGeneration::from_u64(5);
+        let older = SecretsGeneration::from_u64(3);
+        for generation in [newer, older] {
+            let secrets = bundle(generation, []).map_err(|e| e.to_string())?;
+            let instance = self
+                .perform(workspace, Command::DeliverSecrets(secrets))
+                .await?;
+            ensure(
+                running(instance).and_then(|r| r.secrets) == Some(newer),
+                || format!("after delivering {generation:?}: {instance:?}"),
+            )?;
+        }
+        let held = self.delivered(workspace).await?;
+        ensure(held == Some(newer), || format!("the guest holds {held:?}"))
     }
 
     async fn provisioning_outlives_a_restart(&self, workspace: WorkspaceId) -> Checked {

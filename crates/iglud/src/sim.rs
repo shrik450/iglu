@@ -239,13 +239,13 @@ struct Iglud {
     router: axum::Router,
 }
 
-fn write_config(dir: &Path, hostd: SocketAddr) {
+fn write_config(dir: &Path, hostd: SocketAddr, database: &Path) {
     std::fs::write(dir.join("secret-key"), "11".repeat(32)).expect("written");
     let config = json!({
         "listen": "127.0.0.1:0",
         "console_origin": format!("https://{CONSOLE_HOST}"),
         "preview_domain": "preview.sim.test",
-        "database": dir.join("iglu.db"),
+        "database": database,
         "secret_key_file": dir.join("secret-key"),
         "console_assets": dir,
         "oidc": {
@@ -417,6 +417,8 @@ struct Sim {
     /// The steps pending when the last pass looked, which it saw as
     /// changing their instances' state.
     before_pass: BTreeSet<u64>,
+    /// How many times iglud has started, which names its database.
+    generation: u32,
 }
 
 impl Sim {
@@ -430,7 +432,7 @@ impl Sim {
             operation: Timeouts::default().operation(),
         });
         let mut hostd = Hostd::new(&runtime);
-        write_config(&dir, hostd.listen().await);
+        write_config(&dir, hostd.listen().await, &dir.join("iglu-0.db"));
         let iglud = start_iglud(&dir);
         let mut sim = Self {
             rng: Rng(seed),
@@ -448,6 +450,7 @@ impl Sim {
             owners: HashMap::new(),
             violations_seen: 0,
             before_pass: BTreeSet::new(),
+            generation: 0,
         };
         sim.set_up().await;
         sim
@@ -641,12 +644,26 @@ impl Sim {
     /// Waits until everything that can happen without the driver has: each
     /// effect, request and build under way is waiting on a pending step.
     async fn settle(&mut self) -> bool {
-        for _ in 0..200_000 {
+        let started = WallClock::now();
+        for round in 0u32.. {
             for _ in 0..4 {
                 tokio::task::yield_now().await;
             }
             if self.quiet().await {
                 return true;
+            }
+            // How long settling takes depends on the machine, never what
+            // settles: the database runs on threads of its own, which a busy
+            // machine may be slow to get to, so after a while this waits for
+            // them rather than spinning.
+            if started.elapsed() > Duration::from_secs(120) {
+                break;
+            }
+            if round > 256 {
+                let _ = tokio::task::spawn_blocking(|| {
+                    std::thread::sleep(Duration::from_millis(1));
+                })
+                .await;
             }
         }
         let pending: Vec<String> = self.pending().iter().map(|p| self.describe(p)).collect();
@@ -845,7 +862,22 @@ impl Sim {
         }
         self.orphan_all();
         self.dead.extend(self.building_ids().await);
-        write_config(&self.dir, self.hostd.listen().await);
+        // The next iglud starts from what the database held when this one
+        // died. The dead one's tasks still hold timers, and one that fires
+        // can write; those writes go to a copy no one reads, as a dead
+        // process's would go nowhere.
+        self.generation += 1;
+        let old = self.iglud.app.config.database.clone();
+        let new = self.dir.join(format!("iglu-{}.db", self.generation));
+        let copy = new.clone();
+        tokio::task::spawn_blocking(move || {
+            rusqlite::Connection::open(&old)
+                .and_then(|db| db.execute("VACUUM INTO ?1", [copy.to_string_lossy()]))
+                .expect("copying the database");
+        })
+        .await
+        .expect("copying the database");
+        write_config(&self.dir, self.hostd.listen().await, &new);
         self.iglud = start_iglud(&self.dir);
         "iglud restarts".into()
     }
@@ -1026,7 +1058,7 @@ impl Sim {
             if !foreign.is_empty() {
                 self.find(format!("a guest of person {owner:?} was given {foreign:?}"));
             }
-            if delivery.replaced > Some(delivery.generation) {
+            if delivery.installed && delivery.replaced > Some(delivery.generation) {
                 self.find(format!(
                     "a guest's secrets went back from {:?} to {:?} within a boot",
                     delivery.replaced, delivery.generation
@@ -1103,7 +1135,16 @@ impl Sim {
             .call(|tx| {
                 Ok(db::live_workspaces(tx)?
                     .into_iter()
-                    .map(|ws| (ws.id, ws.desired, ws.condition.is_some()))
+                    .map(|ws| {
+                        let condition = match ws.condition {
+                            None => "",
+                            Some(Condition::Error { .. }) => "!error",
+                            Some(Condition::Capacity { .. }) => "!capacity",
+                            Some(Condition::RuntimeFailed) => "!failed",
+                            Some(Condition::HostOffline { .. }) => "!offline",
+                        };
+                        (ws.id, ws.desired, condition)
+                    })
                     .collect::<Vec<_>>())
             })
             .await
@@ -1124,7 +1165,7 @@ impl Sim {
                     if i.guest.columns_opened { "+c" } else { "" },
                     i.guest.sessions.len()
                 )),
-                if record.is_some_and(|r| r.2) { "!" } else { "" },
+                record.map_or("", |r| r.2),
             );
         }
         let _ = write!(out, "pending {}", self.runtime.pending().len());
@@ -1360,9 +1401,8 @@ async fn drive(sim: &mut Sim) {
     }
 }
 
-/// The smallest schedule that shows a settled workspace keeping an error:
-/// a step that takes effect but whose answer is lost leaves the condition
-/// it recorded, and with nothing left to do, nothing clears it.
+/// A step that takes effect but whose answer is lost records an error;
+/// once nothing is left to do, the workspace keeps none.
 async fn stale_error(dir: PathBuf) -> Vec<String> {
     let mut sim = Sim::new(0, dir).await;
     sim.create();
@@ -1389,10 +1429,9 @@ async fn stale_error(dir: PathBuf) -> Vec<String> {
     sim.converged().await
 }
 
-/// The smallest schedule that shows a guest left with older secrets than
-/// iglud and hostd believe it has: a delivery under way when iglud restarts
-/// carries on, the new iglud delivers newer secrets, and the older delivery
-/// lands last.
+/// A delivery under way when iglud restarts carries on, the new iglud
+/// delivers newer secrets, and the older delivery lands last: the guest
+/// keeps the newer ones.
 async fn older_secrets(dir: PathBuf) -> Vec<String> {
     let mut sim = Sim::new(0, dir).await;
     sim.create();
@@ -1439,14 +1478,7 @@ fn scratch() -> PathBuf {
 /// Findings already reported, which a schedule may come to without the
 /// test failing, each with the test that reproduces it. Take one out when
 /// it's fixed.
-const KNOWN: &[(&str, &str)] = &[
-    (
-        "keeps a condition: error",
-        "a_settled_workspace_keeps_no_error",
-    ),
-    ("secrets went back", "secrets_never_go_back"),
-    ("holds secrets", "secrets_never_go_back"),
-];
+const KNOWN: &[(&str, &str)] = &[];
 
 #[test]
 fn schedules_keep_the_invariants_and_converge() {
@@ -1504,17 +1536,13 @@ fn seeds_replay() {
 }
 
 #[test]
-#[ignore = "reproduces a finding: a settled workspace keeps a stale error condition"]
 fn a_settled_workspace_keeps_no_error() {
-    let mut problems = simulated(stale_error(scratch().join("stale-error")));
-    problems.retain(|p| p.contains("condition"));
+    let problems = simulated(stale_error(scratch().join("stale-error")));
     assert_eq!(problems, Vec::<String>::new());
 }
 
 #[test]
-#[ignore = "reproduces a finding: a guest can be left with older secrets than iglud believes"]
 fn secrets_never_go_back() {
-    let mut problems = simulated(older_secrets(scratch().join("older-secrets")));
-    problems.retain(|p| p.contains("secrets"));
+    let problems = simulated(older_secrets(scratch().join("older-secrets")));
     assert_eq!(problems, Vec::<String>::new());
 }
