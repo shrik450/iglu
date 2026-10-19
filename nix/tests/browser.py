@@ -1434,24 +1434,31 @@ def main() -> None:
         try:
             result = STEPS[step](page, *args)
         except Exception:
-            SHOTS.mkdir(parents=True, exist_ok=True)
-            for index, open_page in enumerate(context.pages):
-                open_page.screenshot(path=SHOTS / f"{step}-{index}.png")
-            print("\n".join(["console:", *logged[-60:]]), file=sys.stderr)
-            for shown in page.locator("section[data-column]").all():
-                print(f"column {shown.get_attribute('data-column')}: {shown.inner_text()[:300]!r}", file=sys.stderr)
-            print(f"page: {page.locator('body').inner_text()[:1500]!r}", file=sys.stderr)
-            # What iglud has: each workspace's columns, and its sessions.
-            told = page.evaluate(
-                """async () => {
-                  const listed = await (await fetch('/v1/workspaces')).json();
-                  return Promise.all(listed.map(async (w) => ({
-                    name: w.name, columns: w.columns,
-                    sessions: await (await fetch(`/v1/workspaces/${w.id}/columns`)).json(),
-                  })));
-                }"""
-            )
-            print(f"iglud: {json.dumps(told)}", file=sys.stderr)
+            # What went wrong, as far as it can be seen. Nothing here may
+            # replace the step's own error, which is raised after.
+            try:
+                SHOTS.mkdir(parents=True, exist_ok=True)
+                for index, open_page in enumerate(context.pages):
+                    open_page.screenshot(path=SHOTS / f"{step}-{index}.png")
+                print("\n".join(["console:", *logged[-60:]]), file=sys.stderr)
+                for shown in page.locator("section[data-column]").all():
+                    print(f"column {shown.get_attribute('data-column')}: {shown.inner_text()[:300]!r}", file=sys.stderr)
+                print(f"page: {page.locator('body').inner_text()[:1500]!r}", file=sys.stderr)
+                # What iglud has: each workspace's columns, and its sessions.
+                # Asked with the person's cookies from outside any page,
+                # since the step may have left the page on a preview.
+                api = context.request
+                told = [
+                    {
+                        "name": w["name"],
+                        "columns": w["columns"],
+                        "sessions": api.get(f"{CONSOLE}/v1/workspaces/{w['id']}/columns").json(),
+                    }
+                    for w in api.get(f"{CONSOLE}/v1/workspaces").json()
+                ]
+                print(f"iglud: {json.dumps(told)}", file=sys.stderr)
+            except Exception as failed:
+                print(f"couldn't say more about the failure: {failed!r}", file=sys.stderr)
             raise
         finally:
             context.storage_state(path=STATE)

@@ -101,4 +101,6 @@ test("a paste's keys wait for a message that carries its text, not one that only
   assert.equal(pasteStep(Uint8Array.of(4, 1, 0, 0, 0, 0, 0, 0x76)), null);
   assert.equal(pasteStep(Uint8Array.of(5, 0, 0, 10, 0, 10)), null);
   assert.equal(pasteStep(Uint8Array.of(6, 0, 0)), null);
+  // An extended message cut off before its flags says nothing either.
+  assert.equal(pasteStep(cutText(-4).subarray(0, 10)), null);
 });

@@ -1,6 +1,6 @@
 # The e2e test's driver script. e2e.nix defines the constants it uses
-# (PKI, SELF, GIT_ADDRESS, HOST_IP, CONTROL_IP, IMAGE, HOSTD_CONFIG, PYTHON)
-# before it.
+# (PKI, SELF, GIT_ADDRESS, HOST_IP, CONTROL_IP, IMAGE, HOSTD_CONFIG, PYTHON
+# and BUSYBOX) before it.
 
 import json
 import re
@@ -414,10 +414,13 @@ try:
         assert "needs" in (waiting["class"] or ""), waiting
 
     with subtest("a port published in the browser is served behind preview sign-in"):
-        host.succeed(
-            f"incus exec {instance} --user 1000 --group 100 -- bash -lc "
-            "\"setsid bash -c 'while true; do printf \\\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\nConnection: close\\r\\n\\r\\nhello\\\" | nc -N -l 3000; done' >/dev/null 2>&1 &\""
-        )
+        # An app that takes connections at once, as real ones do: iglu checks
+        # the port is reachable while browsers load it. A loop around `nc -l`
+        # had no listener between connections, and one in three runs failed.
+        host.succeed(f"incus file push {BUSYBOX} {instance}/tmp/busybox --mode 0755")
+        guest("mkdir -p ~/site && printf hello > ~/site/index.html")
+        # httpd puts itself in the background.
+        guest("/tmp/busybox httpd -p 3000 -h ~/site")
         control.wait_until_succeeds(
             f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/live | "
             "jq -e '.listeners[] | select(.port == 3000) | .reachable and .route == null'",

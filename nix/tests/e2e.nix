@@ -494,6 +494,7 @@ in
       IMAGE = "${image}"
       HOSTD_CONFIG = "${lib.last (lib.splitString " " nodes.host.systemd.services.iglu-hostd.serviceConfig.ExecStart)}"
       PYTHON = "${lib.getExe pkgs.python3}"
+      BUSYBOX = "${pkgs.pkgsStatic.busybox}/bin/busybox"
     ''
     + builtins.readFile ./e2e.py;
 }
