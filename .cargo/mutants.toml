@@ -1,0 +1,42 @@
+# cargo-mutants: which code is mutated, and how each mutant is tested.
+# `just mutants` runs it; DEVELOPMENT.md explains the tiers and CI's runs.
+
+# Each mutant is built in a copy of the tree, which leaves out what Git
+# ignores: build output, node_modules, and .dev/, where the copies are made.
+gitignore = true
+
+# Code no `cargo test` can exercise, so every mutant in it would be missed.
+# The dev stack's checks and the VM test cover it instead.
+exclude_globs = [
+  # Binaries' entry points: argument parsing, logging and wiring.
+  "crates/*/src/main.rs",
+  "crates/*/src/bin/**",
+  # The runtime conformance suite and Incus's isolation checks are tests:
+  # a mutant that skips a check only makes them pass.
+  "crates/iglu-hostd/src/conformance.rs",
+  "crates/iglu-hostd/src/incus/checks.rs",
+  # The Incus runtime, which only the VM test runs; observe.rs, which parses
+  # what Incus reports, is pure and unit-tested, so it stays.
+  "crates/iglu-hostd/src/incus/build.rs",
+  "crates/iglu-hostd/src/incus/client.rs",
+  "crates/iglu-hostd/src/incus/exec.rs",
+  "crates/iglu-hostd/src/incus/guestfs.rs",
+  "crates/iglu-hostd/src/incus/mod.rs",
+  "crates/iglu-hostd/src/incus/policy.rs",
+  "crates/iglu-hostd/src/incus/reclaim.rs",
+  "crates/iglu-hostd/src/incus/tunnel.rs",
+  "crates/iglu-hostd/src/incus/upgrade.rs",
+  # hostd's HTTP surface. The conformance suite drives hostd's Host
+  # directly; what reaches the routes is iglud's simulation, in the shell
+  # tier's tests, which the runtime tier doesn't run.
+  "crates/iglu-hostd/src/server.rs",
+  # The simulators are test harness, like the conformance suite.
+  "crates/iglu-hostd/src/sim.rs",
+  "crates/iglud/src/sim.rs",
+]
+
+# Tests that wait on processes, such as the local runtime's conformance
+# suite, vary with the machine's load; a mutant that makes them wait out
+# every deadline is caught either way.
+timeout_multiplier = 3.0
+minimum_test_timeout = 60

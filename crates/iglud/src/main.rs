@@ -17,6 +17,8 @@ mod login;
 mod model;
 mod oidc;
 mod reconcile;
+#[cfg(test)]
+mod sim;
 mod terminal;
 mod views;
 
@@ -31,7 +33,7 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls_platform_verifier::BuilderVerifierExt;
+use rustls_platform_verifier::Verifier;
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
@@ -122,7 +124,14 @@ async fn main() -> anyhow::Result<()> {
     let db = db::Db::open(&config.database).context("opening the database")?;
     let sealer = crypto::Sealer::load(&config.secret_key_file).context("loading the secret key")?;
 
+    let verifier = verifier(&config)?;
     let http = reqwest::Client::builder()
+        .use_preconfigured_tls(
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(verifier.clone())
+                .with_no_client_auth(),
+        )
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(4000))
         .build()?;
@@ -139,9 +148,8 @@ async fn main() -> anyhow::Result<()> {
         config.oidc.preview.client_id.clone(),
         config.oidc.preview.secret()?,
         url::Url::parse(&format!(
-            "https://{}.{}/callback",
-            iglu_domain::label::PREVIEW_AUTH_LABEL,
-            config.preview_domain
+            "{}/callback",
+            config.preview_origin(iglu_domain::label::PREVIEW_AUTH_LABEL)
         ))?,
     );
     // Discover the provider now, so the first sign-in doesn't wait for it.
@@ -151,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::warn!(%error, "the identity provider isn't reachable yet");
         }
     });
-    let hosts = host_clients(&config)?;
+    let hosts = host_clients(&config, verifier)?;
 
     let assets = config.console_assets.clone();
     let listen = config.listen;
@@ -186,12 +194,31 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A client for each host. Hosts' certificates are checked against the
-/// system's trust store, and they check iglud's own.
-fn host_clients(config: &config::Config) -> anyhow::Result<Vec<Arc<hosts::HostClient>>> {
+/// How iglud checks the servers it calls: against the system's trust
+/// store, and the configured extra CAs.
+fn verifier(config: &config::Config) -> anyhow::Result<Arc<Verifier>> {
+    let extra = match &config.extra_ca_certificates {
+        Some(path) => CertificateDer::pem_file_iter(path)
+            .and_then(Iterator::collect)
+            .with_context(|| format!("reading {}", path.display()))?,
+        None => Vec::new(),
+    };
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .context("no TLS provider is installed")?
+        .clone();
+    Ok(Arc::new(Verifier::new_with_extra_roots(extra, provider)?))
+}
+
+/// A client for each host. Hosts' certificates are checked by `verifier`,
+/// and they check iglud's own.
+fn host_clients(
+    config: &config::Config,
+    verifier: Arc<Verifier>,
+) -> anyhow::Result<Vec<Arc<hosts::HostClient>>> {
     let tls = Arc::new(
         rustls::ClientConfig::builder()
-            .with_platform_verifier()?
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
             .with_client_auth_cert(
                 CertificateDer::pem_file_iter(&config.host_client.certificate)
                     .and_then(Iterator::collect)

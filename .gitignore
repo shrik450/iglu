@@ -6,3 +6,5 @@ node_modules/
 .env
 /.dev/
 __pycache__/
+# cargo-mutants run by hand, without `just mutants`'s --output.
+/mutants.out*/

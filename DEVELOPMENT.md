@@ -7,55 +7,252 @@ every change follows; read it first.
 
 ## Tools
 
-You need:
+You need [Nix](https://nixos.org) with flakes, on Linux or macOS. Every tool
+comes from the dev shell: run `nix develop`, then use `just`. Nothing is
+installed globally, no daemon runs outside the dev stack, and nothing needs
+root.
 
-- [Nix](https://nixos.org) with flakes. Every build tool comes from the dev
-  shell: run `nix develop`, then use `just`.
-- A Docker daemon, such as [Colima](https://github.com/abiosoft/colima). The
-  dev stack's shared services run in containers. The dev shell provides the
-  `docker` client and Compose.
-- macOS, for the dev stack as it stands. Trusting the dev CA uses the Keychain;
-  see [Local HTTPS and the dev CA](#local-https-and-the-dev-ca).
+## Tests and checks
 
-## Checks
+| Command               | What it does                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `just fmt`            | Formats Rust and Nix.                                                                              |
+| `just lint`           | rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint.                               |
+| `just test`           | Unit and property tests, the conformance suite on the local and simulated runtimes, and a short simulation. Fast. |
+| `just console`        | Type-checks, unit-tests and bundles the console.                                                   |
+| `just terminal-check` | Checks the console's terminal in Chromium and WebKit, without a stack.                             |
+| `just dev-check`      | Checks the console in a browser against the running dev stack.                                     |
+| `just e2e`            | The VM test. Needs x86_64-linux with KVM.                                                          |
+| `just check`          | Every flake check, including the VM test where it can run.                                         |
+| `just mutants`        | Mutation-tests the code changed against `main`.                                                    |
+| `just coverage`       | Measures coverage of every tier the dev shell runs.                                                |
 
-| Command        | What it does                                                     |
-| -------------- | ---------------------------------------------------------------- |
-| `just fmt`     | Formats Rust and Nix.                                            |
-| `just lint`    | rustfmt, clippy (pedantic, warnings are errors), nixfmt, actionlint. |
-| `just test`    | The unit tests, and the local runtime's conformance suite. Fast. |
-| `just console` | Type-checks and bundles the console.                             |
-| `just e2e`     | The VM test. Needs x86_64-linux with KVM, locally or as a remote builder. |
-| `just check`   | Every flake check, including the VM test where it can run.       |
+Each tier catches what the cheaper ones can't, and `AGENTS.md` says which
+tier a new test belongs in:
 
-CI runs every flake check except the VM test. Run `just lint test` before you
-push, and `just e2e` before merging changes to hostd, the guest tools, the
-console, or the NixOS modules.
+| Tier                                    | What it checks                                                          | Where it runs                                                                                  |
+| --------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Unit and property tests                 | Pure functions, on examples and generated inputs                        | `just test`; CI's flake checks; at 5,000 cases in the weekly deep run                          |
+| [Conformance suite](#the-conformance-suite) | What hostd needs from a runtime that the types can't say            | `just test` on the local and simulated runtimes; the VM test on Incus                          |
+| [Simulation](#the-simulation)           | iglud and hostd together, under faults, restarts and reordering         | `just test`, briefly; CI's flake checks; over 20,000 schedules in the weekly deep run          |
+| [Terminal tier](#the-terminal-tier)     | The console's terminal on its own                                       | `just terminal-check`; CI's flake checks, as `console-terminal`                                |
+| [dev-check](#seeing-and-checking-the-console) | The console with iglud and the local host around it               | `just dev-check`; CI's `console` job                                                           |
+| VM test                                 | iglu as deployed: the NixOS modules, the workspace image, Incus and its isolation | `just e2e`; CI's `e2e` job                                                         |
+| [Mutation testing](#mutation-testing)   | Whether the tests notice when the code changes                          | `just mutants`; on each pull request's changed lines, and in full on `main` and weekly         |
+| [Coverage](#coverage)                   | Which lines the tests run                                               | `just coverage`; on each pull request and push to `main`                                       |
+
+A pull request merges only when CI's three jobs (`.github/workflows/ci.yml`)
+and the mutation gate on its changed lines
+(`.github/workflows/mutation.yml`) pass. Coverage
+(`.github/workflows/coverage.yml`) and the weekly deep run
+(`.github/workflows/deep.yml`) report without gating. Run `just lint test`
+and `just mutants` before you push, and `just dev-check` when you change the
+console. The VM test needs KVM, which workspaces don't have, so CI is
+usually where it runs; it runs the conformance suite and Incus's isolation
+checks, and only the browser steps that need a real host or the workspace
+image.
+
+### The conformance suite
+
+`crates/iglu-hostd/src/conformance.rs` holds what every runtime owes hostd
+beyond its types, such as a frozen instance staying frozen, a new boot
+starting without secrets, a resize reaching the program, or an older secrets
+delivery leaving the newer one. Each runtime runs it in its own
+environment: the local runtime with real processes and zmx in `just test`,
+the simulated runtime in `just test` too, held to the checks that need no
+program in a guest, and Incus in the VM test. A behaviour a runtime must
+keep goes here, so every runtime is held to it.
+
+## The terminal tier
+
+Most of the console's bugs have been the terminal's: what it draws, the
+bytes it sends for a key or the wheel, the queries it answers. The terminal
+tier checks those in Chromium and WebKit without iglud, a workspace or a
+shell, in about a second a case:
+
+```sh
+just terminal-check                            # every case, in both engines
+just terminal-check --browser chromium mac-keys  # one case, in one
+```
+
+`console/test/terminal/run.py` bundles a page with the console's own
+`TerminalPane` on it, mounted as the workspace view mounts it, and plays the
+program in each column: it writes what the program would print to the
+pane's WebSocket and reads back exactly what the terminal sends. A case says
+which bytes reach a program, where a step through a shell can only say what
+the shell made of them.
+
+Its differential case checks wterm's renderer against Ghostty's terminal
+core, which holds the screen wterm draws: for output generated with
+fast-check, split anywhere and at sizes small enough to wrap, and for
+output recorded from nvim, vim, less and `git log` (`record.py` remakes
+those), what's drawn must be what the core holds. A failure prints its seed
+and the smallest output that shows it; `--seed` repeats a run. The flake
+check, `console-terminal`, runs a fixed seed, on Linux only; the recipe a
+new one each time.
+
+WebKit draws through EGL, which a workspace has no GPU for: the dev shell
+gives it Mesa through `IGLU_MESA_EGL`, and only WebKit is told.
+
+## The simulation
+
+The simulation runs iglud and hostd together in one process, for real: the
+API, the reconciler, the database, hostd's rules and the HTTP between them.
+Only the runtime is simulated, and every step it takes waits until a seeded
+driver resolves it: it finishes, fails before taking effect, or takes
+effect and fails anyway, as an Incus operation whose answer is lost does.
+The driver also chooses people's requests, reconciler passes, restarts of
+iglud, hostd and the host, and time passing. Time moves only when it moves
+it, so a seed always plays out the same way.
+
+After every event it checks invariants: hostd never takes a step the
+instance's state forbids, secrets never reach another person's guest or go
+back to an older generation, and iglud's records match the host. Once the
+faults stop, every workspace must converge on what its owner asked for. It
+finds what no example test reaches: orderings, lost answers and restarts
+mid-step.
+
+```sh
+cargo test -p iglud sim::                          # 8 schedules of 120 events; part of `just test`
+IGLU_SIM_SCHEDULES=2000 IGLU_SIM_STEPS=200 \
+  cargo test --release -p iglud sim::              # a longer run
+IGLU_SIM_SEED=6 IGLU_SIM_SCHEDULES=1 cargo test -p iglud sim::   # replay one seed
+```
+
+A failure prints its seed and the schedule's events. Keep a found bug as a
+seeded test in `crates/iglud/src/sim.rs` until it's fixed. The weekly deep
+run plays 20,000 schedules of 200 events. The simulated runtime is
+`crates/iglu-hostd/src/sim.rs`, and passes the conformance suite.
+
+It doesn't cover iglud's wall clock, so idle policy, session expiry and
+image pruning are out, nor previews, terminals or more than one host. Its
+guests are modelled, not run. The driver waits for everything under way to
+settle before each choice, so a new background task in iglud has to be
+known to it, or it shows as stuck.
+
+## Mutation testing
+
+Mutation testing checks the tests themselves. It changes the code in one
+small way at a time, such as turning a `<` into `<=` or making a function
+return a default, and runs the tests against each change, called a mutant. A
+mutant the tests don't notice points at behaviour that nothing checks.
+cargo-mutants mutates the Rust (`.cargo/mutants.toml`), and Stryker mutates the
+console (`console/stryker.config.mjs`).
+
+Code is mutated in tiers, by what tests it:
+
+| Tier      | What's mutated                                           | Tested by                                          | Gates pull requests |
+| --------- | -------------------------------------------------------- | -------------------------------------------------- | ------------------- |
+| `core`    | iglu-domain, iglu-proto and iglu-api                     | Their unit tests                                   | Yes                 |
+| `runtime` | hostd's host and rules, and the local runtime            | Their unit tests and the runtime conformance suite | Yes                 |
+| `console` | The console's state modules, and the vendored `wheel.ts` | The console's unit tests                           | Yes                 |
+| `shell`   | iglud, iglu-guest and iglu-cli                           | Their unit tests                                   | No, reported only   |
+
+The `shell` tier is reported but doesn't gate anything. Most of its code is
+meant to be tested end to end, by `just dev-check` and the VM test, which
+can't run once per mutant. Its score shows how much of it unit tests reach,
+and a pure function there that wants a unit test belongs in iglu-domain. Code
+that no `cargo test` can run, such as the Incus runtime and the binaries'
+entry points, isn't mutated at all. `.cargo/mutants.toml` lists it, with a
+reason for each.
+
+- `just mutants` mutates the lines changed against `main` in the gating tiers,
+  and fails if the tests miss a mutant. Give another base as an argument:
+  `just mutants origin/main`. CI runs it on every pull request
+  (`.github/workflows/mutation.yml`).
+- `just mutants-tier <tier>` mutates a whole tier, and passes any further
+  arguments to cargo-mutants or Stryker, such as `--shard 0/4` or `-j 2`. Full
+  runs of `runtime` and `shell` take hours, so CI runs every tier on pushes to
+  `main` and weekly, sharded. The run's summary has each package's score and
+  the mutants its tests missed.
+
+Results go to `.dev/mutants/`, and each mutant is built in a copy of the tree
+under `.dev/tmp/mutants/`. A timeout counts as caught, since the tests didn't
+pass.
+
+Some mutants can't be caught because they don't change what the code does,
+such as a regular expression's anchor on a string that's always one character
+long. Say so where the mutant is, rather than write a test that can't fail.
+For Rust, add the mutant to `exclude_re` in `.cargo/mutants.toml` with the
+reason. For the console, add a `// Stryker disable next-line <mutator>:
+<reason>` comment.
+
+## Coverage
+
+Coverage shows which lines any test runs, tier by tier. `dev/cover.py`
+measures every tier the dev shell can run:
+
+| Tier                 | Measured from                                                                    |
+| -------------------- | -------------------------------------------------------------------------------- |
+| Rust, unit           | `cargo test`, the local runtime's conformance suite included                     |
+| Rust, with dev-check | The above, plus iglud, the local host and its guest tools under `just dev-check` |
+| Console, unit        | The console's unit tests, in the files they load                                 |
+| Console, browsers    | The console as dev-check's Chromium runs it                                      |
+
+- `just coverage` runs every tier, starting a dev stack of its own, so stop
+  `just dev` first. It writes lcov for each tier, `summary.md`, and an HTML
+  report of the Rust under `.dev/coverage/`.
+- `just coverage-diff [base]` then shows coverage of the lines changed since
+  `base`, `main` by default.
+
+Rust is built with LLVM's source-based coverage into `target/coverage`, apart
+from your normal builds. Its programs write their counters to their profiles
+as they run, so processes that are killed rather than exit, such as the guest
+tools a terminal's detaching ends, still count. The browsers' coverage comes
+from V8 through the DevTools protocol, mapped back to the TypeScript through
+the dev bundle's source map. V8 forgets a page's counts when it navigates, so
+they're taken before each navigation the tools make; one a click makes, such
+as through sign-in, loses what ran since the last.
+
+CI measures coverage on every pull request and push to `main`
+(`.github/workflows/coverage.yml`), and doesn't gate on it. The run's summary
+has each tier's totals by crate and console area, the change from `main`,
+and, on pull requests, coverage of the lines the pull request changes. Each
+push to `main` appends its summary to `coverage/history.jsonl` on the
+`metrics` branch, which holds results alone.
+
+Two parts of iglu run only in the VM test, which isn't measured: the Incus
+runtime, and the NixOS modules' wiring. Instrumenting the VM test's programs
+would mean building them all a second time, so the Incus runtime's lines show
+as uncovered unless a unit test reaches them.
 
 ## The local dev stack
 
 The dev stack runs all of iglu on your machine, so you can work on the
 console and iglud's API, and use workspaces, without a real execution host.
-It runs:
+`just dev` runs it all from the dev shell, as its own child processes:
 
-- **iglud**, natively, built from your checkout. It serves the console from
+- **iglud**, built from your checkout. It serves the console from
   `console/dist`, which rebuilds whenever you save.
-- **iglu-devhost**, natively: hostd with workspaces as local processes
-  instead of Incus containers. See [The local host](#the-local-host).
-- **Authelia**, in Docker, as the identity provider. Its configuration follows
-  the VM test's.
-- **Caddy**, in Docker, in front of everything. It terminates TLS the way it
-  does on a real control box, and routes each hostname to the right service.
+- **iglu-devhost**: hostd with workspaces as local processes instead of
+  Incus containers. See [The local host](#the-local-host).
+- **Authelia**, as the identity provider. Its configuration follows the VM
+  test's.
+- **Caddy**, in front of everything. It terminates TLS the way it does on a
+  real control box, and routes each hostname to the right service.
 
 ```text
-browser ──► Caddy (443, TLS from the dev CA)
-              ├─ auth.localhost                      ──► Authelia
-              └─ iglu.localhost, *.preview.localhost ──► iglud (port 7100)
-                                                           └─► iglu-devhost (port 7200)
+browser ──► Caddy (port 7300, TLS from the dev CA)
+              ├─ auth.localhost                           ──► Authelia (port 7301)
+              ├─ git.localhost                            ──► fixture repositories
+              └─ iglu.localhost, *.preview.iglu.localhost ──► iglud (port 7100)
+                                                                └─► iglu-devhost (port 7200)
 ```
 
-Every hostname is under `localhost`, which browsers and macOS resolve to your
-own machine, so there's no DNS to set up.
+Every hostname is under `localhost`, which browsers, macOS and Linux resolve
+to your own machine, so there's no DNS to set up. Everything listens on
+loopback only, on ports above 1024, so nothing needs privileges.
+`dev/stack.py` runs the stack and holds its names, ports and addresses, which
+it passes to Caddy and Authelia.
+
+Previews are under the console's name because a deployment's previews share
+its console's registrable domain, and the preview rules in
+`iglu-domain/src/preview.rs` are there for what follows: browsers call a
+preview's requests to the console *same-site*. Browsers count `localhost` as
+the suffix, so `iglu.localhost` is a site, and under it the dev stack's
+previews are same-site with the console too. Under `preview.localhost` they
+were cross-site, which `SameSite` cookies block anyway, so the console's
+checks couldn't tell whether those rules work.
 
 ### The local host
 
@@ -64,16 +261,18 @@ over a local runtime instead of Incus. A workspace is a directory, and its
 processes run as you. Each workspace gets its own `HOME`, with the repository
 cloned into it, and its own `XDG_RUNTIME_DIR`, which holds its delivered
 secrets, attention status and terminal sessions. Terminals are real zmx
-sessions running your login shell, so they survive restarts of `just dev`.
+sessions, so they survive restarts of `just dev`. They run the dev shell's
+bash (`IGLU_DEV_SHELL`) rather than your login shell, so the checks type
+into the same shell on every machine; start yours from it.
 
 Workspaces use your machine's own tools. Your Nix profile is linked into
 each workspace's home, so a login shell finds your tools there, and the
 guest tools are on its `PATH`. Claude Code's hooks are set up in each home
 and report attention to the console as they do in a real workspace.
 
-Environments aren't built. Your Mac can't build a NixOS image for Linux, and
-local workspaces don't use one, so adding or rebuilding an environment just
-records it, and it's ready at once. Any flake reference works.
+Environments aren't built. Local workspaces don't use a NixOS image, and a
+Mac can't build one, so adding or rebuilding an environment just records it,
+and it's ready at once. Any flake reference works.
 
 What's different from a real host:
 
@@ -82,8 +281,8 @@ What's different from a real host:
   The devhost serves only on loopback, and hostd refuses to serve a runtime
   that doesn't isolate anywhere else.
 - **No memory metering.** The host always reports 64 GiB available. Lower
-  `memory_available` in `.dev/state/devhost.json` and restart to see
-  workspaces wait for room.
+  `memory_available` in `dev/stack.py` and restart to see workspaces wait
+  for room.
 - **Freezing** pauses a workspace's processes with `SIGSTOP`. A process that
   leaves the workspace's process tree and clears its environment escapes it.
 - **Browser columns need Linux.** A local browser column runs the dev
@@ -91,24 +290,12 @@ What's different from a real host:
   Linux's: on a Mac, environments have no browser. Only one local workspace
   can have one, since its debugging port, 9222, and its display's, 5900, are
   on the shared loopback. The VM test checks the browser.
-- **Restarting your Mac** stops every workspace, like a host restart. A
+- **Restarting your machine** stops every workspace, like a host restart. A
   workspace whose runtime directory is deleted while it runs reads as failed
   until you start it again, which ends what was left of it first.
 
-The runtime conformance suite checks that the local runtime behaves like
-Incus wherever hostd relies on it; `just test` runs it.
-
-### Setting it up
-
-Do this once per machine:
-
-```sh
-just dev-services   # creates the dev CA and Authelia's key, then starts Caddy and Authelia
-just dev-trust      # trusts the dev CA in your login Keychain; macOS asks for your password
-```
-
-Read [Local HTTPS and the dev CA](#local-https-and-the-dev-ca) before you run
-`just dev-trust`: it explains what you're trusting and why it's safe.
+[The conformance suite](#the-conformance-suite) checks that the local
+runtime behaves like Incus wherever hostd relies on it; `just test` runs it.
 
 ### Running it
 
@@ -116,31 +303,38 @@ Read [Local HTTPS and the dev CA](#local-https-and-the-dev-ca) before you run
 just dev
 ```
 
-Then open `https://iglu.localhost` and sign in as `alice`, `bob` or `carol`,
-all with the password `password`. Several people let you try the console as
-different owners; the dev tools never touch carol, so she sees iglu as someone
-new does.
+Then open `https://iglu.localhost:7300` and sign in as `alice`, `bob` or
+`carol`, all with the password `password`. Several people let you try the
+console as different owners; the dev tools never touch carol, so she sees
+iglu as someone new does.
 
-`just dev` builds iglud, the devhost and the guest tools, starts the
-console's watcher and the devhost, and runs iglud in the foreground. Stop
-them all with Ctrl-C. Edit anything under `console/src` and refresh the
-page; the bundle is unminified and has a source map. The page,
-`console/src/index.html`, is rewritten on each rebuild, so a change to it alone
-shows after the next one. A change to iglud or hostd needs a restart.
+`just dev` creates what's missing (the dev CA, Authelia's key, iglud's
+secrets), builds iglud, the devhost and the guest tools, and runs everything
+in the foreground. Ctrl-C stops it all. Caddy and Authelia log to
+`.dev/state/logs/`; the rest log to the terminal. Edit anything under
+`console/src` and refresh the page; the bundle is unminified and has a source
+map. The page, `console/src/index.html`, is rewritten on each rebuild, so a
+change to it alone shows after the next one. A change to iglud or hostd needs
+a restart.
+
+Your browser warns about the certificate until you trust the dev CA; see
+[Local HTTPS and the dev CA](#local-https-and-the-dev-ca). The dev tools
+don't need it.
 
 ### Where things are
 
 | What        | Value                                                      |
 | ----------- | ---------------------------------------------------------- |
-| Console     | `https://iglu.localhost`                                   |
-| Previews    | `https://<route>.preview.localhost`                        |
+| Console     | `https://iglu.localhost:7300`                              |
+| Previews    | `https://<route>.preview.iglu.localhost:7300`              |
 | iglud       | `127.0.0.1:7100`                                           |
 | Local host  | `127.0.0.1:7200`                                           |
 | State       | `.dev/state/` in the current worktree                      |
 | Workspaces  | `.dev/state/devhost/instances/<instance>/home`             |
 | Kept        | `.dev/state/devhost/kept/<person>`                         |
 | Sessions    | `~/.cache/iglu/<worktree hash>/<slot>/`                    |
-| Fixtures    | `https://git.localhost`, from `.dev/shared/git/`           |
+| Fixtures    | `https://git.localhost:7300`, from `.dev/shared/git/`      |
+| Logs        | `.dev/state/logs/`, for Caddy and Authelia                 |
 | Tours       | `.dev/tour/<label>/index.html`                             |
 
 iglud's state is its database, its secret-sealing key and the dev CLI's login,
@@ -156,9 +350,9 @@ are limited to about 100 bytes, which a path inside the worktree is too long
 for. The devhost refuses to start if your home directory is too long for the
 longest session name.
 
-Every worktree shares one Caddy, one Authelia and one dev CA. The CA and
-Authelia's key and data live in `.dev/shared/` of the main checkout, so every
-worktree uses the same ones. Authelia's data matters: it assigns each person
+Every worktree shares one dev CA, Caddy's certificates, and Authelia's key and
+data. They live in `.dev/shared/` of the main checkout, so every worktree uses
+the same ones. Authelia's data matters: it assigns each person
 the subject identifier iglud knows them by, so deleting it makes alice and bob
 new people to every worktree's iglud. If that happens, run `just dev-reset` in
 each.
@@ -166,10 +360,11 @@ each.
 ### The CLI
 
 `just dev-cli` runs the CLI against the dev stack, with a login kept in its
-state instead of your real `~/.config/iglu`:
+state instead of your real `~/.config/iglu`. It trusts the dev CA as your
+system does: on Linux it's told to, and on macOS it needs `just dev-trust`.
 
 ```sh
-just dev-cli login https://iglu.localhost
+just dev-cli login https://iglu.localhost:7300
 just dev-cli ls
 ```
 
@@ -183,15 +378,15 @@ way a person would:
 just dev-reset && just dev   # a fresh stack, in one terminal
 just dev-seed                # then, in another, fill it
 just dev-tour --quick        # screenshot every view; .dev/tour/<label>/index.html
-just dev-check               # the VM test's browser steps, against this stack
+just dev-check               # the console's browser checks, as CI runs them
 ```
 
 - **`just dev-seed`** makes fixture repositories and signs in as alice and
   bob to build workspaces in every state worth looking at: an agent waiting,
   working, done and crashed; uncommitted and unpushed work; a published
   preview; frozen, stopped, and a clone that fails. Caddy serves the fixture
-  repositories at `https://git.localhost` from `.dev/shared/git/`, and the
-  devhost has workspaces' Git trust the dev CA for `*.localhost` only.
+  repositories at `git.localhost` from `.dev/shared/git/`, and the devhost
+  has workspaces' Git trust the dev CA for `*.localhost` only.
 - **`just dev-tour`** visits every view, dialog and seeded workspace on
   desktop and phone, in dark and light, in Chromium and WebKit. For each it
   keeps a screenshot, console errors and horizontal overflow; for the
@@ -201,8 +396,14 @@ just dev-check               # the VM test's browser steps, against this stack
 - **`just dev-compare <before> <after>`** marks what changed between two
   tours, most changed first, so a change shows everything it touched.
 - **`just dev-check`** runs `nix/tests/browser.py`'s steps against the local
-  stack in about two minutes. A console fix gets a step there, which this
-  and the VM test both run.
+  stack in about two minutes, as CI does. A console fix that needs the
+  rest of iglu gets a step there, added to `dev/ui/check.py`; add it to the
+  VM test too only when it depends on a real host or the workspace image. A
+  fix to the terminal itself goes to [the terminal tier](#the-terminal-tier)
+  instead.
+
+The tools' browsers accept the dev stack's certificates without trusting the
+dev CA, so they work the same on every machine.
 
 Agents run in a shell, as anywhere: `claude`, or `claude --model
 claude-haiku-5-5` to try things cheaply. `dev/agents/scripted` is a stand-in
@@ -211,29 +412,15 @@ type, such as `wait Approve the migration` or `done Fixed it`, so agent
 states can be shown and tested without a real agent; it lists what it
 understands.
 
-### Shared services
-
-| Command                  | What it does                                              |
-| ------------------------ | --------------------------------------------------------- |
-| `just dev-services`      | Starts Caddy and Authelia, creating the CA and key if needed. |
-| `just dev-services-down` | Stops them. Caddy's certificates are discarded and reissued on the next start. |
-| `just dev-logs`          | Follows their logs. Add `caddy` or `authelia` for one.    |
-
-The services' configuration is in `dev/`. The client secrets in
-`dev/clients/` and the passwords in `dev/authelia/` are for local development
-only.
-
 ### Troubleshooting
 
-- **`UnknownIssuer` in iglud's log, or a certificate warning in the browser.**
-  The dev CA isn't trusted. Run `just dev-trust`.
-- **`the identity provider isn't reachable yet`.** The shared services aren't
-  running. Run `just dev-services`.
-- **Port 443 is in use.** Something else on your machine is serving HTTPS.
-  Stop it, or stop its containers.
-- **`chown: ... Read-only file system` in Authelia's log.** Harmless. Authelia's
-  entrypoint tries to take ownership of its configuration, which is mounted
-  read-only on purpose.
+- **`the identity provider isn't reachable yet`** in iglud's log, briefly at
+  start. Authelia is still starting. If it stays, read
+  `.dev/state/logs/authelia.log`.
+- **An address is in use.** Another dev stack, from another worktree, is
+  running, or something else uses port 7100, 7200, 7300 or 7301.
+- **A certificate warning in your browser.** The dev CA isn't trusted there.
+  Run `just dev-trust`, or accept the warning.
 - **iglud behaves strangely after switching branches.** Its database may be
   from another schema. Run `just dev-reset`.
 
@@ -242,20 +429,27 @@ only.
 The dev stack runs over HTTPS because iglu needs it, not for show:
 
 - iglud expects TLS to end in front of it, and its preview sign-in only accepts
-  `https` addresses on the default port.
+  `https` addresses.
 - Its cookies are `Secure`, and the preview cookie spans the preview domain.
 - Authelia refuses to run its sign-in over plain HTTP.
 
 Faking HTTPS away would mean a development-only path through iglu's security
-code, so the stack uses real certificates instead. Something has to issue them,
-and iglud and your browser both have to trust the issuer. On macOS, both check
-the Keychain.
+code, so the stack uses real certificates instead. Something has to issue
+them, and whatever connects has to trust the issuer:
+
+- **iglud** trusts it through `extra_ca_certificates` in its configuration,
+  a setting any deployment with a private CA can use.
+- **Workspaces' Git** trusts it for `https://*.localhost` only, so local
+  workspaces can clone fixtures.
+- **The dev tools' browsers** accept the stack's certificates without it.
+- **Your own browser** trusts it only if you choose to; see
+  [Trusting it](#trusting-it).
 
 ### What the CA can sign
 
-`just dev-setup` creates a certificate authority, the dev CA. Caddy issues
-every certificate in the stack from it. Its certificate limits what it can
-vouch for in three ways:
+`just dev` creates a certificate authority, the dev CA, the first time it
+runs. Caddy issues every certificate in the stack from it. Its certificate
+limits what it can vouch for in three ways:
 
 - **Names.** An X.509 name constraint permits only the DNS name `localhost`
   and names under it, such as `iglu.localhost`.
@@ -264,12 +458,12 @@ vouch for in three ways:
   A constraint on DNS names alone wouldn't cover addresses.
 - **Purpose.** Its extended key usage is TLS server authentication only.
 
-`just dev-trust` adds a matching limit on your side: the Keychain trusts the CA
+`just dev-trust` adds a matching limit on macOS: the Keychain trusts the CA
 for TLS only, not for signed email, code signing or anything else.
 
-These limits are what make trusting the CA safe, and macOS enforces them: with
-the CA trusted, a certificate it signs for `example.com` or for
-`192.168.1.1` fails verification. So if the CA's key ever leaked, it couldn't
+These limits are what make trusting the CA safe, and browsers and macOS
+enforce them: with the CA trusted, a certificate it signs for `example.com`
+or for `192.168.1.1` fails verification. So if the CA's key ever leaked, it couldn't
 be used to impersonate a real site to your machine. It could only vouch for
 TLS to names that already point at your own computer.
 
@@ -281,7 +475,7 @@ TLS to names that already point at your own computer.
 | Permits        | the DNS name `localhost` and its subdomains                |
 | Excludes       | every IP address, IPv4 and IPv6                            |
 | Key usage      | TLS server authentication                                  |
-| Keychain trust | TLS only (`-p ssl`)                                        |
+| Trust          | TLS only, where the system can limit it                    |
 | Path length    | 1, so Caddy can add its own intermediate                   |
 | Files          | `.dev/shared/ca/ca.crt` and `ca.key`, in the main checkout |
 
@@ -289,19 +483,18 @@ The key is created with the dev shell's OpenSSL, and only you can read it.
 
 ### Trusting it
 
+Only your own browser needs this, to show the dev console without a warning:
+
 ```sh
 just dev-trust
 ```
 
-This adds the CA to your login Keychain as a root trusted for TLS. macOS asks
-for your password. It's the only step of the setup that changes your system,
-and it isn't something Nix can declare.
-
-To check that the Keychain trusts it for TLS:
-
-```sh
-just dev-check-trust   # prints "certificate verification successful"
-```
+On macOS this adds the CA to your login Keychain as a root trusted for TLS,
+and asks for your password. On Linux it adds it to the NSS database in
+`~/.pki/nssdb`, which Chromium reads. Elsewhere, add `.dev/shared/ca/ca.crt`
+to your browser's trusted authorities yourself. This is the only step that
+changes anything outside the repository, and it isn't something Nix can
+declare.
 
 ### Removing it
 
@@ -309,18 +502,18 @@ just dev-check-trust   # prints "certificate verification successful"
 just dev-untrust
 ```
 
-This removes the CA and its trust setting from your Keychain. It finds the CA
-by name, so do it before you create a new one: with two CAs of the same name
-in the Keychain, it can't tell them apart.
+This removes the CA from where `just dev-trust` put it. It finds the CA by
+name, so do it before you create a new one: with two CAs of the same name,
+it can't tell them apart.
 
 ### Replacing it
 
-If you lose the key or want a new one:
+If you lose the key or want a new one, untrust the old CA, then:
 
 ```sh
 just dev-replace-ca
 ```
 
-This removes the old CA from the Keychain, if it's there, and deletes it.
-Then it creates a new one, trusts it, and restarts the shared services so
-Caddy reissues its certificates from it. macOS asks for your password.
+This deletes the CA and Caddy's certificates and creates a new CA. Caddy
+issues new certificates from it the next time `just dev` starts. Trust the new
+one with `just dev-trust` if you trusted the old one.

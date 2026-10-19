@@ -467,12 +467,16 @@ pub async fn cli_token(
 
 // ---- the preview gateway's own sign-in, on auth.<preview domain> ----
 
-/// Accepts only `https://<label>.<preview domain>/...` as a return address.
+/// Accepts only `https://<label>.<preview domain>/...`, on the console's
+/// port, as a return address.
 fn preview_return(app: &App, value: Option<String>) -> Option<String> {
     let url = url::Url::parse(&value?).ok()?;
     let host = url.host_str()?;
     let label = host.strip_suffix(&format!(".{}", app.config.preview_domain))?;
-    (url.scheme() == "https" && !label.contains('.')).then(|| url.to_string())
+    (url.scheme() == "https"
+        && !label.contains('.')
+        && url.port() == app.config.console_origin.port())
+    .then(|| url.to_string())
 }
 
 pub async fn preview_auth(
@@ -530,7 +534,20 @@ pub async fn preview_auth(
 
 #[cfg(test)]
 mod tests {
-    use super::sign_in_url;
+    use super::{escape, sign_in_url};
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Text put in a page is only ever text: it can't open a tag or
+        /// leave an attribute, and it reads back as it was.
+        #[test]
+        fn escaped_text_is_only_text(text in any::<String>()) {
+            let escaped = escape(&text);
+            prop_assert!(!escaped.contains(['<', '>', '"']));
+            let read = escaped.replace("&quot;", "\"").replace("&gt;", ">").replace("&lt;", "<").replace("&amp;", "&");
+            prop_assert_eq!(read, text);
+        }
+    }
 
     #[test]
     fn signing_in_comes_back_to_the_same_page() {

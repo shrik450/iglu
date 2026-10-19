@@ -96,7 +96,7 @@ pub fn from_label(text: &str, attempt: u32) -> Option<DnsLabel> {
     let text = if attempt == 0 {
         stem.to_owned()
     } else {
-        format!("{stem}-{}", attempt + 1)
+        format!("{stem}-{}", u64::from(attempt) + 1)
     };
     text.parse().ok()
 }

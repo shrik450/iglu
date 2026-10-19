@@ -1,37 +1,61 @@
-# iglu's packages. Each Rust package builds only its own crate, so a guest
-# image carries the guest tools and nothing else.
+# iglu's packages. The Rust ones come from one build of the workspace, and
+# each installs only its own binaries, so a guest image carries the guest
+# tools and nothing else.
 {
   lib,
-  rustPlatform,
+  craneLib,
+  runCommand,
   buildNpmPackage,
   zmx,
+  # The crates to build; all of them unless given.
+  crates ? null,
 }:
 
 let
-  workspace = import ./rust-workspace.nix { inherit lib; };
+  workspace = import ./rust-workspace.nix { inherit lib craneLib crates; };
   inherit (workspace) version;
+  inherit (workspace.common) cargoExtraArgs;
 
-  crate =
-    {
-      pname,
-      crateName,
-      description,
-      mainProgram,
-    }:
-    rustPlatform.buildRustPackage {
-      inherit pname version;
-      inherit (workspace) src cargoLock;
-      cargoBuildFlags = [
-        "--package"
-        crateName
-      ];
+  build = craneLib.buildPackage (
+    workspace.common
+    // {
+      cargoArtifacts = workspace.dependencies.release;
+      buildPhaseCargoCommand = ''
+        cargoBuildLog=$(mktemp cargoBuildLogXXXX.json)
+        cargoWithProfile build ${cargoExtraArgs} --message-format json-render-diagnostics >"$cargoBuildLog"
+      ''
+      + lib.optionalString (crates == null) ''
+        # The conformance suite's binary, built on its own so that hostd's
+        # binary doesn't take the feature.
+        cargoWithProfile build ${cargoExtraArgs} --features iglu-hostd/conformance \
+          --bin iglu-hostd-conformance --message-format json-render-diagnostics >>"$cargoBuildLog"
+      '';
       # The workspace test check runs every crate's tests once.
       doCheck = false;
-      meta = {
-        inherit description mainProgram;
-        license = lib.licenses.mit;
-      };
-    };
+    }
+  );
+
+  binaries =
+    {
+      pname,
+      bins,
+      description,
+    }:
+    runCommand "${pname}-${version}"
+      {
+        inherit pname version;
+        # For caches that keep what changes only with the lock files.
+        passthru.dependencies = workspace.dependencies.release;
+        meta = {
+          inherit description;
+          mainProgram = builtins.head bins;
+          license = lib.licenses.mit;
+        };
+      }
+      ''
+        mkdir -p $out/bin
+        cp ${lib.concatMapStringsSep " " (bin: "${build}/bin/${bin}") bins} $out/bin/
+      '';
 in
 {
   # The guest tools' terminal sessions. With ZMX_NO_CREATE set, `zmx attach`
@@ -47,53 +71,43 @@ in
     ];
   });
 
-  iglud = crate {
+  iglud = binaries {
     pname = "iglud";
-    crateName = "iglud";
+    bins = [ "iglud" ];
     description = "iglu's control plane: console, API, reconciler and preview gateway";
-    mainProgram = "iglud";
   };
 
-  hostd = crate {
+  hostd = binaries {
     pname = "iglu-hostd";
-    crateName = "iglu-hostd";
+    bins = [ "iglu-hostd" ];
     description = "iglu's execution host agent";
-    mainProgram = "iglu-hostd";
   };
 
   # The runtime conformance suite and Incus's isolation checks, which the
   # VM test runs on its execution host.
-  hostd-conformance = rustPlatform.buildRustPackage {
+  hostd-conformance = binaries {
     pname = "iglu-hostd-conformance";
-    inherit version;
-    inherit (workspace) src cargoLock;
-    cargoBuildFlags = [
-      "--package"
-      "iglu-hostd"
-      "--bin"
-      "iglu-hostd-conformance"
-    ];
-    buildFeatures = [ "conformance" ];
-    doCheck = false;
-    meta = {
-      description = "Checks an iglu execution host's runtime against hostd's contract";
-      license = lib.licenses.mit;
-      mainProgram = "iglu-hostd-conformance";
-    };
+    bins = [ "iglu-hostd-conformance" ];
+    description = "Checks an iglu execution host's runtime against hostd's contract";
   };
 
-  iglu = crate {
+  iglu = binaries {
     pname = "iglu";
-    crateName = "iglu-cli";
+    bins = [ "iglu" ];
     description = "The iglu command line";
-    mainProgram = "iglu";
   };
 
-  iglu-guest = crate {
+  iglu-guest = binaries {
     pname = "iglu-guest";
-    crateName = "iglu-guest";
+    bins = [
+      "iglu-guest"
+      "iglu-status"
+      "caffeinate"
+      "xclip"
+      "xsel"
+      "xdg-open"
+    ];
     description = "Tools iglu installs inside workspaces";
-    mainProgram = "iglu-guest";
   };
 
   console = buildNpmPackage {
@@ -110,7 +124,7 @@ in
         ../console/vendor
       ];
     };
-    npmDepsHash = "sha256-0QCamQhjUlVDehgz6JA+HhYnaVdIwlTRrcl6oWT9spE=";
+    npmDepsHash = "sha256-IiNkd9c40g67C/CpNNjrasfF6kHjPk/46aH+67ZjB1M=";
     installPhase = ''
       runHook preInstall
       cp -r dist $out

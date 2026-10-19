@@ -3,7 +3,7 @@
     python3 dev/ui/seed.py
 
 Run it against a fresh dev stack (`just dev-reset`, then `just dev`). It
-makes fixture repositories that Caddy serves at https://git.localhost, then
+makes fixture repositories that Caddy serves at git.localhost, then
 signs in as alice and bob and uses the console's API and terminals, as a
 person would, to reach each state. dev/agents/scripted, run in a shell,
 stands in for a real agent, reporting whichever attention state it's told.
@@ -19,9 +19,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from common import ROOT, Api, CONSOLE, launch, shared, sign_in, type_in  # noqa: E402
+from stack import GIT  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-GIT = "https://git.localhost"
 SCRIPTED = ROOT / "dev/agents/scripted"
 # The preview server's port. Local workspaces share this machine's loopback, so
 # it's one nothing else is likely to use.
@@ -153,7 +153,7 @@ def main() -> None:
             bob.create(project=general["id"], name="bobs-secret-work")
         context.browser.close()
 
-    print("seeded https://iglu.localhost: sign in as alice, bob or carol, password 'password'")
+    print(f"seeded {CONSOLE}: sign in as alice, bob or carol, password 'password'")
 
 
 if __name__ == "__main__":

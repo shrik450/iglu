@@ -14,7 +14,7 @@ use iglu_domain::id::{PrincipalId, WorkspaceId};
 use iglu_domain::lifecycle::SecretsGeneration;
 use iglu_domain::secret::{FetchTokens, SecretTarget, SecretValue, bundle};
 use iglu_hostd::config::Timeouts;
-use iglu_hostd::conformance::{self, Fixture};
+use iglu_hostd::conformance::{self, Fixture, Guests};
 use iglu_hostd::guest::GuestCommand;
 use iglu_hostd::host::Host;
 use iglu_hostd::runtime::Runtime;
@@ -59,6 +59,7 @@ async fn the_local_runtime_conforms() {
             .parse()
             .expect("valid source"),
         boot_timeout: Duration::from_secs(10),
+        guests: Guests::Programs,
     };
     let outcomes = conformance::run(&host, &fixture).await;
     for outcome in &outcomes {

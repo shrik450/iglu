@@ -9,6 +9,7 @@ use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 
+use iglu_domain::lifecycle::SecretsGeneration;
 use iglu_domain::secret::{GitCredential, HomePath, SecretBundle};
 use serde::Deserialize;
 
@@ -141,16 +142,47 @@ pub fn describe(error: &serde_json::Error) -> String {
     format!("{what} at line {} column {}", error.line(), error.column())
 }
 
+/// What installing a bundle did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Installed {
+    Replaced,
+    /// The guest holds a newer delivery, which stays: an older one landing
+    /// late, after a newer one, is already superseded.
+    Superseded {
+        offered: SecretsGeneration,
+        held: SecretsGeneration,
+    },
+}
+
 /// Replaces the delivered secrets with a new bundle: the environment, Git
 /// credentials, files and their links, and last the generation hosts read.
+/// A bundle older than the one this boot holds is left out. Installs take
+/// turns, so two landing at once can't both pass that check.
 ///
 /// # Errors
 ///
 /// When the bundle is unreadable or a file can't be written.
-pub fn install(dirs: &Dirs, request: &[u8]) -> Result<(), InstallError> {
+pub fn install(dirs: &Dirs, request: &[u8]) -> Result<Installed, InstallError> {
     let bundle = serde_json::from_slice::<InstallRequest>(request)
         .map_err(|e| InstallError::Bundle(describe(&e)))?
         .bundle;
+    let lock_path = dirs.secrets_lock();
+    let lock = fs::File::create(&lock_path).map_err(io_at(&lock_path))?;
+    lock.lock().map_err(io_at(&lock_path))?;
+    let generation = dirs.secrets_generation();
+    let held = fs::read(&generation)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| text.trim().parse().ok())
+        .map(SecretsGeneration::from_u64);
+    if !bundle.generation.replaces(held)
+        && let Some(held) = held
+    {
+        return Ok(Installed::Superseded {
+            offered: bundle.generation,
+            held,
+        });
+    }
     let home = dirs.home();
 
     let links_file = dirs.secret_links_file();
@@ -197,9 +229,9 @@ pub fn install(dirs: &Dirs, request: &[u8]) -> Result<(), InstallError> {
     let linked: Vec<&HomePath> = plan.links.iter().map(|(path, _)| path).collect();
     write_atomic(&links_file, &serde_json::to_vec(&linked)?).map_err(io_at(&links_file))?;
 
-    let generation = dirs.secrets_generation();
     write_atomic(&generation, bundle.generation.get().to_string().as_bytes())
-        .map_err(io_at(&generation))
+        .map_err(io_at(&generation))?;
+    Ok(Installed::Replaced)
 }
 
 /// Git credentials in `git credential-store`'s file format, which Git's
@@ -291,5 +323,39 @@ mod tests {
         assert_eq!(plan.stale, vec![".old".parse::<HomePath>().expect("valid")]);
         let names: Vec<_> = plan.links.iter().map(|(_, name)| name.as_str()).collect();
         assert_eq!(names, ["0", "1"]);
+    }
+
+    mod credentials {
+        use super::*;
+        use percent_encoding::percent_decode_str;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Git reads each line back as a URL; whatever a username or
+            /// password holds, it reads back the same credential for the host.
+            #[test]
+            fn every_credential_reads_back_as_stored(
+                username in "[!-9;-~]{1,40}",
+                password in prop::collection::vec(any::<char>(), 1..40).prop_map(String::from_iter),
+                name in "[a-z]([a-z0-9-]{0,9}[a-z0-9])?(\\.[a-z][a-z0-9]{0,8}){0,3}",
+                port in prop::option::of(1..u16::MAX),
+            ) {
+                let host = port.map_or_else(|| name.clone(), |port| format!("{name}:{port}"));
+                let credential = GitCredential {
+                    host: host.parse().expect("the pattern is a host"),
+                    username: username.parse().expect("the pattern is a username"),
+                    password: SecretValue::try_from(password.clone()).expect("a value"),
+                };
+                let store = credential_store(std::slice::from_ref(&credential));
+                let line = store.strip_suffix('\n').expect("one line per credential");
+                prop_assert!(!line.contains('\n'));
+                let url = url::Url::parse(line).expect("a credential line is a URL");
+                let decode = |s: &str| percent_decode_str(s).decode_utf8().map(std::borrow::Cow::into_owned).ok();
+                prop_assert_eq!(decode(url.username()), Some(username));
+                prop_assert_eq!(url.password().and_then(decode), Some(password));
+                prop_assert_eq!(url.host_str(), Some(name.as_str()));
+                prop_assert_eq!(url.port_or_known_default(), Some(port.unwrap_or(443)));
+            }
+        }
     }
 }

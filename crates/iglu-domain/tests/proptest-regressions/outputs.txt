@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7fd7c83fcba5e5433c8be492e871fad3df840160aa4ecaeae59ba90376c7fe40 # shrinks to targets = [File { path: HomePath("a") }, File { path: HomePath("a/a") }], generation = 0
+cc a98882f9638223d28bf16baa26da27dc6fe7e396e57ec49d81b8cac48d24d3f3 # shrinks to s = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa a"
+cc 87696a7a527807c77e3a72a2ba75c9111aac46e58015e84a78763356ac57d3a1 # shrinks to s = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{3000}a"

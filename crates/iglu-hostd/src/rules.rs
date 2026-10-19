@@ -468,4 +468,119 @@ mod tests {
         assert_eq!(readiness_of(&offline, true), Readiness::System);
         assert_eq!(readiness_of(&running, true), Readiness::Network);
     }
+
+    /// Where a runtime that does each step leaves the instance.
+    fn after(step: Step<'_>) -> Option<State> {
+        match step {
+            Step::Create(_) | Step::Stop => Some(State::Stopped),
+            Step::Start | Step::Thaw | Step::Upgrade(_) => Some(RUNNING),
+            Step::Freeze => Some(State::Frozen),
+            Step::Delete => None,
+        }
+    }
+
+    #[test]
+    fn a_command_carried_out_takes_no_more_steps() {
+        let spec = spec();
+        let commands = [
+            Step::Create(&spec),
+            Step::Start,
+            Step::Freeze,
+            Step::Thaw,
+            Step::Stop,
+            Step::Delete,
+        ];
+        let found = |state: Option<State>| state.map(|state| Ok(observed(state)));
+        for command in commands {
+            for start in std::iter::once(None).chain(ALL.map(Some)) {
+                let Ok(steps) = decide(command, found(start).as_ref()) else {
+                    continue;
+                };
+                let end = steps.iter().fold(start, |_, &step| after(step));
+                // A transition settles before anything else happens to it.
+                if end == Some(State::Transitioning) {
+                    continue;
+                }
+                assert_eq!(
+                    decide(command, found(end).as_ref()),
+                    Ok(vec![]),
+                    "{command:?} from {start:?} took {steps:?} to {end:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_foreign_or_damaged_instance_is_never_touched() {
+        let spec = spec();
+        let upgrade = UpgradeSpec {
+            image: spec.image.clone(),
+            user: spec.user.clone(),
+        };
+        for ownership in [Ownership::Foreign, Ownership::Damaged("x".into(), "y")] {
+            for command in [
+                Step::Create(&spec),
+                Step::Start,
+                Step::Freeze,
+                Step::Thaw,
+                Step::Stop,
+                Step::Delete,
+                Step::Upgrade(&upgrade),
+            ] {
+                let claim: Claim = Err(ownership.clone());
+                assert_eq!(
+                    decide(command, Some(&claim)).map_err(|e| e.code),
+                    Err(ErrorCode::Conflict)
+                );
+            }
+            assert!(guest(Some(&Err(ownership.clone()))).is_err());
+        }
+    }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn facts() -> impl Strategy<Value = BootFacts> {
+            (any::<bool>(), prop::option::of(0..4u64), any::<bool>()).prop_map(
+                |(ready, secrets, columns_opened)| BootFacts {
+                    ready,
+                    secrets: secrets.map(SecretsGeneration::from_u64),
+                    columns_opened,
+                },
+            )
+        }
+
+        proptest! {
+            /// Reads of one boot can arrive in any order, and any twice:
+            /// merging them gives the same facts however they come.
+            #[test]
+            fn boot_facts_merge_in_any_order(a in facts(), b in facts(), c in facts()) {
+                prop_assert_eq!(a.merge(b), b.merge(a));
+                prop_assert_eq!(a.merge(b).merge(c), a.merge(b.merge(c)));
+                prop_assert_eq!(a.merge(a), a);
+                prop_assert_eq!(a.merge(BootFacts::default()), a);
+            }
+
+            #[test]
+            fn only_old_unkept_images_go(
+                // One image per fingerprint, as a runtime holds them.
+                images in prop::collection::btree_map(0..8u8, prop::option::of(0..20_000_000i64), 0..8),
+                keep in prop::collection::vec(0..8u8, 0..4),
+                older_than in 0..10_000u32,
+                now in 0..20_000_000i64,
+            ) {
+                let images: Vec<StoredImage> = images.into_iter().map(|(n, built)| image(n, built)).collect();
+                let keep: Vec<ImageFingerprint> = keep.into_iter().map(|n| image(n, None).fingerprint).collect();
+                let older_than = Millis::from_secs(older_than);
+                let now = Timestamp::from_unix_millis(now);
+                let gone = unkept(&images, &keep, older_than, now);
+                for image in &images {
+                    let old = image.built.is_none_or(|built| now.since(built) >= older_than);
+                    let goes = !keep.contains(&image.fingerprint) && old;
+                    prop_assert_eq!(gone.contains(&image.fingerprint), goes, "{:?}", image);
+                }
+            }
+        }
+    }
 }

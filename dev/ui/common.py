@@ -6,7 +6,7 @@ real browsers from the dev shell, and its API with that person's session.
 
 import json
 import os
-import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -14,30 +14,28 @@ from typing import Any
 
 from playwright.sync_api import BrowserContext, Page, Playwright
 
-CONSOLE = "https://iglu.localhost"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import cover  # noqa: E402
+from stack import CONSOLE, ROOT, shared  # noqa: E402, F401
+
 PASSWORD = "password"
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def shared() -> Path:
-    """The dev stack's shared directory: the dev CA and fixture repositories,
-    in the main checkout, as the justfile's `dev_shared`."""
-    common = subprocess.run(
-        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    return Path(common).parent / ".dev/shared"
-
-
-# Browsers trust the dev CA through the Keychain; Playwright's API requests
-# go through Node, which needs to be told.
-os.environ.setdefault("NODE_EXTRA_CA_CERTS", str(shared() / "ca/ca.crt"))
 
 
 def launch(playwright: Playwright, engine: str = "chromium", **context: Any) -> BrowserContext:
-    """A fresh browser and context. Close the context's browser when done."""
-    browser = getattr(playwright, engine).launch()
-    made = browser.new_context(**context)
+    """A fresh browser and context. Close the context's browser when done.
+    It accepts the dev stack's certificates without trusting the dev CA,
+    which every engine would need its own way to do on each system.
+    Chromium's flag also covers contexts that nix/tests/browser.py's steps
+    make for themselves."""
+    if into := os.environ.get(cover.BROWSER_ENV):
+        cover.watch_browsers(Path(into))
+    args = ["--ignore-certificate-errors"] if engine == "chromium" else []
+    # The dev shell's browsers bring their own libraries; ones the machine
+    # puts on the library path can be built against another glibc.
+    env = {key: value for key, value in os.environ.items() if key != "LD_LIBRARY_PATH"}
+    browser = getattr(playwright, engine).launch(args=args, env=env)
+    made = browser.new_context(ignore_https_errors=True, **context)
     made.set_default_timeout(30_000)
     return made
 

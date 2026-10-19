@@ -14,7 +14,12 @@ ts-rs = { version = "12.0.1", default-features = false, optional = true }
 uuid.workspace = true
 
 [dev-dependencies]
+proptest = "1"
+# States each parser's documented grammar independently of its code.
+regex = "1"
 serde_json.workspace = true
+# Resolves return paths as a browser would, to check they stay on the console.
+url = "2"
 
 [lints]
 workspace = true

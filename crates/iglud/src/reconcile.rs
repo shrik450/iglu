@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use iglu_domain::activity::ActivityKind;
 use iglu_domain::capacity::Room;
@@ -19,6 +19,7 @@ use iglu_proto::{
     Command, CommandError, CommandOutcome, CreateSpec, ErrorCode, InstanceReport, Inventory,
     Limits, ProvisionSpec, PruneImages, SessionSpec, UpgradeSpec,
 };
+use tokio::time::Instant;
 
 use crate::app::{App, now, open_secrets};
 use crate::db;
@@ -74,6 +75,17 @@ impl Reconciler {
                 .insert(id)
     }
 
+    /// The workspaces with an effect under way.
+    #[cfg(test)]
+    pub(crate) fn in_flight(&self) -> Vec<WorkspaceId> {
+        self.busy
+            .lock()
+            .expect("the busy lock is never held across a panic")
+            .iter()
+            .copied()
+            .collect()
+    }
+
     fn release(&self, id: WorkspaceId, succeeded: bool) {
         self.busy
             .lock()
@@ -100,27 +112,7 @@ pub async fn run(app: Arc<App>) {
     let mut last_cleanup = Instant::now();
     let mut last_prune: Option<Instant> = None;
     loop {
-        for host in &app.hosts {
-            // Observations are dated from when they were asked for.
-            let asked_at = now();
-            match host.inventory().await {
-                Ok(inventory) => {
-                    app.host_seen
-                        .lock()
-                        .expect("the host lock is never held across a panic")
-                        .insert(host.id.clone(), now());
-                    if let Err(error) =
-                        reconcile_host(&app, &reconciler, host, inventory, asked_at).await
-                    {
-                        tracing::error!(host = %host.id, %error, "reconciling failed");
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(host = %host.id, %error, "host unreachable");
-                    mark_offline(&app, host).await;
-                }
-            }
-        }
+        pass(&app, &reconciler).await;
         if last_prune.is_none_or(|at| at.elapsed() > PRUNE_EVERY) {
             prune_images(&app).await;
             last_prune = Some(Instant::now());
@@ -132,6 +124,31 @@ pub async fn run(app: Arc<App>) {
         tokio::select! {
             () = tokio::time::sleep(INTERVAL) => {}
             () = reconciler.kick.notified() => {}
+        }
+    }
+}
+
+/// One look at every host: observe it, plan each of its workspaces, and
+/// start what the plans say. Effects run on in the background.
+pub(crate) async fn pass(app: &Arc<App>, reconciler: &Arc<Reconciler>) {
+    for host in &app.hosts {
+        // Observations are dated from when they were asked for.
+        let asked_at = now();
+        match host.inventory().await {
+            Ok(inventory) => {
+                app.host_seen
+                    .lock()
+                    .expect("the host lock is never held across a panic")
+                    .insert(host.id.clone(), now());
+                if let Err(error) = reconcile_host(app, reconciler, host, inventory, asked_at).await
+                {
+                    tracing::error!(host = %host.id, %error, "reconciling failed");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(host = %host.id, %error, "host unreachable");
+                mark_offline(app, host).await;
+            }
         }
     }
 }
@@ -372,11 +389,11 @@ async fn act(
             tracing::info!(workspace = %id, "workspace deleted");
             Ok(true)
         }
+        // Nothing is left to do, so nothing holds the workspace up and no
+        // failure still matters: a step whose answer was lost may have
+        // taken effect anyway. The activity log keeps what happened.
         Plan::Stable => {
-            let resolved = matches!(
-                ws.condition,
-                Some(Condition::Capacity { .. } | Condition::RuntimeFailed)
-            );
+            let resolved = ws.condition.is_some();
             if resolved {
                 app.db
                     .call(move |tx| db::set_condition(tx, id, None))

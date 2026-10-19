@@ -1,13 +1,16 @@
-"""Runs the VM test's browser steps against the local dev stack.
+"""Runs nix/tests/browser.py's steps against the local dev stack.
 
     python3 dev/ui/check.py
 
-The steps are nix/tests/browser.py's, so a fix to the console gets one test
-that runs here in about a minute and in the VM test (`just e2e`) against a
-real host. It signs in as alice, adds a project for a fixture repository,
-and drives a workspace through terminals, attention, a published preview and
-a hostile preview page. It deletes what it made, so it can run again; run it
-with `just dev` up.
+The steps check the console with the rest of iglu around it: sessions,
+iglud, and the console's own views. The VM test (`just e2e`) runs those that
+need a real host. A fix to the terminal itself gets a case in the terminal
+tier, console/test/terminal, instead.
+
+It signs in as alice, adds a project for a fixture repository, and drives a
+workspace through terminals, attention, a published preview and a hostile
+preview page. It deletes what it made, so it can run again; run it with
+`just dev` up.
 """
 
 import os
@@ -68,24 +71,12 @@ def main() -> None:
             step("refused-environment", browser.refused_environment, page)
             step("create", browser.create, page, "default", repo, NAME)
             step("terminal", browser.terminal, page, NAME, "printf 'one-%s\\n' 42", "one-42")
-            step("answers-queries", browser.answers_queries, page, NAME)
-            step("draws-blocks", browser.draws_blocks, page, NAME)
-            step("draws-icons", browser.draws_icons, page, NAME)
-            step("wheels-pager", browser.wheels_pager, page, NAME)
-            step("wheels-rows", browser.wheels_rows, page, NAME)
-            step("copies-out", browser.copies_out, page, NAME)
             step("finds-output", browser.finds_output, page, NAME)
             step("keeps-history", browser.keeps_history, page, NAME)
-            step("inserts-text", browser.inserts_text, page, NAME)
-            step("opens-links", browser.opens_links, page, NAME)
             step("copies-from-programs", browser.copies_from_programs, page, NAME)
             step("opens-from-programs", browser.opens_from_programs, page, NAME)
-            step("copies-history", browser.copies_history, page, NAME)
-            step("mac-keys", browser.mac_keys, page, NAME)
-            step("selected-keys", browser.selected_keys, page, NAME)
             step("styles-terminal", browser.styles_terminal, page, NAME)
             step("grants-access", browser.grants_access, page, NAME)
-            step("names-itself", browser.names_itself, page, NAME)
             step("pastes-files", browser.pastes_files, page, NAME)
             added = step("new-column", browser.new_column, page, NAME, "printf 'two-%s\\n' 42", "two-42")["added"]
             step("attention", browser.terminal, page, NAME, "iglu-status set waiting Check needs you; printf 'set-%s\\n' 42", "set-42")

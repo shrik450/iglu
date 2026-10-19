@@ -12,7 +12,6 @@ BROWSER_SHOTS. BROWSER_RESOLVER_RULES is only for where DNS doesn't resolve
 the console.
 """
 
-import io
 import json
 import os
 import re
@@ -21,7 +20,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image
 from playwright.sync_api import Locator, Page, expect, sync_playwright
 
 CONSOLE = os.environ.get("IGLU_CONSOLE", "https://iglu.example.test")
@@ -238,302 +236,12 @@ def new_column(page: Page, name: str, command: str, expected: str) -> Any:
     return {"columns": columns(page), "added": added, "screen": run_in_column(page, added, command, expected)}
 
 
-# Asks the terminal for its device attributes and background colour, as
-# fish does after every command, and the secondary attributes and cursor
-# colour, which the console answers itself since wterm doesn't. It prints
-# the answers without their ESC after a mark, so an earlier run's answers on
-# screen don't count.
-QUERIES = (
-    "bash -c 'ask() {{ printf \"$1\" >/dev/tty; IFS= read -rs -t 5 -d \"$2\" a </dev/tty; printf \" %s\" \"${{a#?}}\"; }}; "
-    "printf answers-{mark}; ask \"\\e[c\" c; ask \"\\e[>c\" c; "
-    "ask \"\\e]12;?\\a\" $(printf \"\\a\"); ask \"\\e]11;?\\a\" $(printf \"\\a\"); echo'"
-)
-
-
-def answers_queries(page: Page, name: str) -> Any:
-    """The terminal answers the queries shells wait on; fish held every
-    keystroke for ten seconds after each command when it didn't."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    shown = run_in_column(page, first, QUERIES.format(mark=mark), f"answers-{mark} [?62;22;52 [>1;10;0 ]12;rgb:")
-    answers = re.search(rf"answers-{mark} (\S+ \S+ \]12;rgb:[0-9a-f/]+ \]11;rgb:[0-9a-f/]+)", shown.replace("\n", ""))
-    assert answers, f"the console's own answers never came: {shown!r}"
-    return {"column": first, "answers": answers and answers[1]}
-
-
-# Four quadrants in red that meet in a square across two cells and two
-# rows, and box crosses, light and double, in green, written as octal UTF-8
-# so typing them is plain ASCII in any shell; then dim and concealed text on
-# a blue background.
-BLOCKS = (
-    "clear; printf '\\e[38;2;255;0;0m\\342\\226\\227\\342\\226\\226\\n\\342\\226\\235\\342\\226\\230 "
-    "\\e[38;2;0;255;0m\\342\\225\\266\\342\\224\\200\\342\\224\\274\\342\\224\\200\\342\\225\\264\\342\\225\\254\\e[0m\\n"
-    "\\e[2;48;2;0;0;200m dim \\e[0m \\e[8;48;2;0;0;200m hid \\e[0m\\nblocks-%s\\n' {mark}"
-)
-
-
-def draws_blocks(page: Page, name: str) -> Any:
-    """Block glyphs that meet across cells meet without a seam, and box
-    strokes are whole pixels: wterm split quadrants at 8.5px, so Claude
-    Code's logo showed a faint line under each eye and arm, and drew 1px
-    strokes across two pixels at half strength. Dim and concealed text keep
-    their background, which faded and vanished with the text."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    run_in_column(page, first, BLOCKS.format(mark=mark), f"blocks-{mark}")
-    # The screen's first two rows, below any history, hold only the glyphs.
-    rows = column(page, first).locator(".term-row:not(.term-scrollback-row)")
-    pixels = [px for row in (0, 1) for px in Image.open(io.BytesIO(rows.nth(row).screenshot())).convert("RGB").getdata()]
-    # Every pixel the glyph touches is its colour exactly; a blended one is
-    # an edge drawn between two pixels.
-    found = {}
-    for label, ink, touched in (
-        ("quadrants", (255, 0, 0), lambda r, g, b: r - max(g, b) > 24),
-        ("box", (0, 255, 0), lambda r, g, b: g - max(r, b) > 24),
-    ):
-        hits = [px for px in pixels if touched(*px)]
-        blended = [px for px in hits if px != ink]
-        assert hits, f"no {label} drawn"
-        assert not blended, {label: len(blended), "of": len(hits), "some": sorted(set(blended))[:5]}
-        found[label] = len(hits)
-    # Ten cells of background, less the dim text's ink.
-    backed = Image.open(io.BytesIO(rows.nth(2).screenshot())).convert("RGB").getdata()
-    found["backgrounds"] = sum(px == (0, 0, 200) for px in backed)
-    cell = rows.nth(2).evaluate("(r) => r.getBoundingClientRect().height") * 8
-    assert found["backgrounds"] > 7.5 * cell, found
-    return found
-
-
-# Font Awesome's house, a nerd-font icon, in red, followed by green text:
-# first after a blank cell, then right against it.
-ICONS = (
-    "clear; printf '\\e[38;2;255;0;0m\\357\\200\\225 \\e[38;2;0;255;0mab\\n"
-    "\\e[38;2;255;0;0m\\357\\200\\225\\e[38;2;0;255;0mab\\e[0m\\nicons-%s\\n' {mark}"
-)
-
-# How wide a character is at 100px in the icon font, falling back to
-# `monospace`, and in `monospace` alone.
-ICON_FONT_WIDTH = """(text) => {
-    const context = document.createElement("canvas").getContext("2d");
-    const width = (font) => { context.font = `100px ${font}`; return context.measureText(text).width; };
-    return [width("'Symbols Nerd Font Mono', monospace"), width("monospace")];
-}"""
-
-
-def draws_icons(page: Page, name: str) -> Any:
-    """Nerd-font icons show without a nerd font installed, from the one the
-    console serves, as Ghostty shows them from its own. Each fits its cell,
-    or two when a blank follows, so it neither covers the text after it nor
-    moves it: at its own width, an em, it spilled over most of the next cell.
-    The font has a few characters that aren't icons, such as a prompt's ❯,
-    which it drew an em wide over the text after it: they're left to the
-    device's fonts, as before."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    run_in_column(page, first, ICONS.format(mark=mark), f"icons-{mark}")
-    page.wait_for_function("[...document.fonts].some((f) => f.family.replaceAll('\"', '') === 'Symbols Nerd Font Mono' && f.status === 'loaded')")
-    cell = float(column(page, first).locator(".wterm").evaluate("(w) => parseFloat(getComputedStyle(w).getPropertyValue('--term-cell-width'))"))
-    rows = column(page, first).locator(".term-row:not(.term-scrollback-row)")
-    found = {}
-    for row, label, cells in ((0, "spaced", 2), (1, "against", 1)):
-        image = Image.open(io.BytesIO(rows.nth(row).screenshot())).convert("RGB")
-        inked = [(x, image.getpixel((x, y))) for x in range(image.width) for y in range(image.height)]
-        icon = [x for x, (r, g, b) in inked if r - max(g, b) > 24]
-        text = [x for x, (r, g, b) in inked if g - max(r, b) > 24]
-        assert icon and text, {label: {"icon": len(icon), "text": len(text)}}
-        found[label] = {"cell": cell, "icon": [min(icon), max(icon)], "text": min(text)}
-        assert max(icon) < cells * cell, found
-        assert min(text) >= cells * cell, found
-    # The house is wider than a cell: given two, it takes them.
-    assert found["spaced"]["icon"][1] >= cell, found
-    house, prompt = page.evaluate(ICON_FONT_WIDTH, "\uf015"), page.evaluate(ICON_FONT_WIDTH, "\u276f")
-    found["widths"] = {"house": house, "prompt": prompt}
-    assert house[0] == 100, found
-    assert prompt[0] == prompt[1], found
-    return found
-
-
-# A program on the alternate screen that doesn't track the mouse, like a
-# pager: it shows a mark, then prints what the next six bytes it reads were.
-PAGER = (
-    "bash -c 'printf \"\\e[?1049hready-%s\" {mark}; IFS= read -rsn6 -t 20 k; "
-    "printf \"\\e[?1049l\"; printf \"wheel-%s %q\\n\" {mark} \"$k\"'"
-)
-
-
-# Tracks the mouse for three seconds, then says how many wheel reports came:
-# each SGR report ends in the one M.
-MOUSE = (
-    "bash -c 'printf \"\\e[?1049h\\e[?1000h\\e[?1006hready-%s\" {mark}; IFS= read -rs -d \"\" -t 3 k; "
-    "printf \"\\e[?1006l\\e[?1000l\\e[?1049l\"; n=${{k//[^M]/}}; printf \"reports-%s-%s\\n\" {mark} ${{#n}}'"
-)
-
-
-def wheels_rows(page: Page, name: str) -> Any:
-    """A program tracking the mouse gets a wheel report for each row a swipe
-    travels: a trackpad's many small deltas were a report each, and
-    scrolled it many times too far."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    run_in_column(page, first, MOUSE.format(mark=mark), f"ready-{mark}")
-    box = column(page, first).locator(".term-host").bounding_box()
-    assert box
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    row = float(column(page, first).locator(".wterm").evaluate("(w) => parseFloat(getComputedStyle(w).getPropertyValue('--term-row-height'))"))
-    for _ in range(13):
-        page.mouse.wheel(0, row / 4)
-    return {"screen": shows(page, f"reports-{mark}-3")}
-
-
-def wheels_pager(page: Page, name: str) -> Any:
-    """On the alternate screen, the wheel sends arrow keys unless the
-    program tracks the mouse, so pagers and editors scroll with it; it did
-    nothing there, with no history to scroll."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    run_in_column(page, first, PAGER.format(mark=mark), f"ready-{mark}")
-    box = column(page, first).locator(".term-host").bounding_box()
-    assert box
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    row = float(column(page, first).locator(".wterm").evaluate("(w) => parseFloat(getComputedStyle(w).getPropertyValue('--term-row-height'))"))
-    page.mouse.wheel(0, row)
-    page.mouse.wheel(0, -row)
-    return {"screen": shows(page, f"wheel-{mark} $'\\E[B\\E[A'")}
-
-
-def copies_history(page: Page, name: str) -> Any:
-    """A selection dragged through the history, scrolling as it goes, copies
-    every line in it: rows scrolled out of the page while it was made were
-    left out of the copy."""
-    page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    run_in_column(page, first, f"printf '\\e[3J\\e[2J\\e[H'; seq 1 1000; printf 'end-%s\\n' {mark}", f"end-{mark}")
-    box = column(page, first).locator(".wterm").bounding_box()
-    assert box
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    page.mouse.wheel(0, -2500)
-    time.sleep(0.3)
-    start = next(
-        row
-        for row in (r.bounding_box() for r in column(page, first).locator(".term-scrollback-row").all())
-        if row and row["y"] > box["y"] + 4
-    )
-    bottom = box["y"] + box["height"] - 20
-    page.mouse.move(start["x"] + 1, start["y"] + 8)
-    page.mouse.down()
-    page.mouse.move(start["x"] + 150, bottom, steps=10)
-    page.mouse.wheel(0, 1700)
-    time.sleep(0.5)
-    page.mouse.move(start["x"] + 180, bottom, steps=4)
-    page.mouse.up()
-    page.evaluate("document.execCommand('copy')")
-    copied = str(page.evaluate("navigator.clipboard.readText()"))
-    numbers = [int(line) for line in copied.split("\n") if line.strip().isdigit()]
-    rows = int(box["height"] // 17)
-    assert len(numbers) > rows, {"copied": len(numbers), "screen": rows}
-    missing = [n for n in range(numbers[0], numbers[-1] + 1) if n not in numbers]
-    assert not missing and numbers == sorted(numbers), {"missing": missing[:20], "first": numbers[0], "last": numbers[-1]}
-    assert not any(line.endswith(" ") for line in copied.split("\n")), {"padding": repr(copied[-40:])}
-    return {"from": numbers[0], "to": numbers[-1]}
-
-
-def opens_links(page: Page, name: str) -> Any:
-    """A URL printed as plain text opens in a new tab on a modifier-click,
-    though it wraps across rows: programs print most links as text, and
-    those couldn't be opened at all."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    # Long enough to wrap, and put together by the shell, so only the output holds it whole.
-    tail = "x" * 120
-    url = f"{CONSOLE}/links-{mark}/{tail}"
-    run_in_column(page, first, f"printf '%s/links-%s/%s\\n' {CONSOLE} {mark} {tail}; printf 'end-%s\\n' {mark}", f"end-{mark}")
-    rows = column(page, first).locator(".term-row:not(.term-scrollback-row)")
-    start = rows.filter(has_text=f"links-{mark}").last
-    # The row after it continues the URL.
-    wrapped = start.locator("xpath=following-sibling::div[contains(@class, 'term-row')][1]")
-    with page.context.expect_page() as opened:
-        wrapped.click(position={"x": 20, "y": 8}, modifiers=["ControlOrMeta"])
-    tab = opened.value
-    try:
-        assert tab.url == url, {"opened": tab.url, "printed": url}
-    finally:
-        tab.close()
-    return {"url": url}
-
-
-def inserts_text(page: Page, name: str) -> Any:
-    """Text that arrives without key presses, as dictation, an input method
-    or a phone's keyboard sends it, reaches the terminal; it was dropped."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    at_prompt(page, first)
-    mark = str(time.time_ns())
-    page.keyboard.insert_text(f"echo inserted-{mark}")
-    page.keyboard.press("Enter")
-    return {"screen": shows(page, f"inserted-{mark}", 2)}
-
-
 # Puts the terminal in raw mode and prints the next three bytes it reads,
 # giving up after 20 seconds without one.
 RAW_READ = (
     "bash -c 'stty raw -echo min 0 time 200; printf ready-%s {mark}; k=$(dd bs=1 count=3 2>/dev/null); "
     "stty sane; printf \"\\r\\nread-%s %q\\r\\n\" {mark} \"$k\"'"
 )
-
-
-def select_text(page: Page, name: str) -> None:
-    """Drags across the start of a column's screen, below its history, and
-    checks the terminal kept the keyboard."""
-    box = column(page, name).locator(".term-row:not(.term-scrollback-row)").first.bounding_box()
-    assert box
-    page.mouse.move(box["x"] + 10, box["y"] + 5)
-    page.mouse.down()
-    page.mouse.move(box["x"] + 160, box["y"] + 40, steps=8)
-    page.mouse.up()
-    assert page.evaluate("getSelection().toString()"), "nothing selected"
-    assert focused_column(page) == name, focused_column(page)
-
-
-# RAW_READ for a program using the kitty keyboard protocol's first level.
-KITTY_READ = (
-    "bash -c 'printf \"\\\\e[>1u\"; stty raw -echo min 0 time 200; printf ready-%s {mark}; k=$(dd bs=1 count=3 2>/dev/null); "
-    "stty sane; printf \"\\\\e[<u\\\\r\\\\nread-%s %q\\\\r\\\\n\" {mark} \"$k\"'"
-)
-
-
-def selected_keys(page: Page, name: str) -> Any:
-    """With text selected, Escape only clears the selection, since a stray
-    interrupt costs an agent's work; and a modifier tapped meanwhile isn't
-    held for later keys, which then reached a kitty-keyboard program as Alt
-    and Shift arrows. Ctrl+Alt and a letter is Meta with its control byte,
-    and with any other key is left to type, as AltGr does: it sent C-M-[,
-    a second Escape, for AltGr+8."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    run_in_column(page, first, KITTY_READ.format(mark=mark), f"ready-{mark}")
-    select_text(page, first)
-    page.keyboard.press("Escape")
-    assert not page.evaluate("getSelection().toString()"), "still selected"
-    select_text(page, first)
-    page.keyboard.press("Shift")
-    page.keyboard.press("Alt")
-    page.keyboard.press("ArrowUp")
-    shows(page, f"read-{mark} $'\\E[A'")
-    mark = str(time.time_ns())
-    run_in_column(page, first, RAW_READ.format(mark=mark), f"ready-{mark}")
-    page.keyboard.press("Control+Alt+q")
-    page.keyboard.press("Control+Alt+Digit8")
-    page.keyboard.type("x")
-    return {"screen": shows(page, f"read-{mark} $'\\E\\021x'")}
 
 
 # The terminal's background, as a program asks for it, and its size, as the
@@ -653,8 +361,14 @@ def filled(screen: Locator) -> None:
     """Waits for the browser's display to fill its screen: drawn in the
     screen's device pixels, at the column's size, so a point on the screen
     is the same point in the browser. A dialog above it takes room while
-    it's open, and the display takes a moment to follow."""
-    fit = "c => Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1"
+    it's open, and the display takes a moment to follow: a display still at
+    its last size draws in its own pixels too, smaller than the screen, and
+    a click as it grew landed where the page no longer was."""
+    fit = (
+        "c => { const s = c.closest('.browser-screen').getBoundingClientRect(), b = c.getBoundingClientRect();"
+        " return Math.abs(b.width - s.width) <= 1 && Math.abs(b.height - s.height) <= 1"
+        " && Math.abs(c.height / devicePixelRatio - c.clientHeight) <= 1 && Math.abs(c.width / devicePixelRatio - c.clientWidth) <= 1; }"
+    )
     screen.page.wait_for_function(fit, arg=screen.element_handle(), timeout=10_000)
 
 
@@ -682,16 +396,24 @@ def click_above_bottom(screen: Locator, height: int) -> None:
     screen.click(position={"x": 100, "y": box["height"] - height})
 
 
-def browses(page: Page, name: str) -> Any:
+def opens_browser(page: Page, name: str) -> Any:
     """A browser column shows the workspace's browser, which draws its own
-    tabs and address bar: an address typed there is gone to. Agents in the
-    workspace drive the same browser."""
+    tabs and address bar."""
     open_workspace(page, name)
     page.get_by_role("button", name="Add a column").click()
     with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/columns"), timeout=90_000) as added:
         page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser").click()
     assert added.value.ok, f"{added.value.status} {added.value.text()}"
-    screen = shown_screen(page)
+    shown_screen(page)
+    return {}
+
+
+def browses(page: Page, name: str) -> Any:
+    """An address typed in the browser column's address bar is gone to.
+    Agents in the workspace drive the same browser. Type only once its
+    first page has loaded: that page's load clears the address bar, and on
+    a slow machine it ate the start of the address."""
+    screen = browser_screen(page, name)
     screen.click()
     page.keyboard.press("Control+l")
     page.keyboard.type(PAGE)
@@ -712,20 +434,24 @@ def browser_answers(page: Page, name: str) -> Any:
     return {}
 
 
+# Enter pressed, as RFB's KeyEvent sends it to the browser's display.
+ENTER_DOWN = bytes([4, 1, 0, 0, 0, 0, 0xFF, 0x0D])
+
+
 def browser_keeps(page: Page, name: str) -> Any:
-    """A download lands in the workspace's Downloads, and is saved from
-    there; copying and pasting go through this computer's clipboard."""
+    """Copying and pasting go through this computer's clipboard, and a
+    download lands in the workspace's Downloads, and is saved from there.
+    What the browser only selects isn't copied: selecting a field's text
+    before pasting over it took the clipboard, and pasted that text back. A
+    paste reaches the browser before the keys after it, however slow the
+    display is to ask for its text: they went after half a second
+    regardless, and pasted what the browser had. The clipboard goes first:
+    the download's notice resizes the screen, and a click as it does misses
+    the field."""
+    sent: list[bytes] = []
+    page.on("websocket", lambda socket: socket.on("framesent", lambda frame: sent.append(frame) if isinstance(frame, bytes) else None))
     screen = browser_screen(page, name)
     browser = column(page, "browser")
-    click_above_bottom(screen, DOWNLOAD)
-    done = browser.get_by_role("status", name="Downloaded")
-    expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)
-    with page.expect_download() as saving:
-        done.get_by_role("link", name="Save to this computer").click()
-    assert saving.value.suggested_filename == "note.txt", saving.value.suggested_filename
-    assert Path(saving.value.path()).read_text() == "saved here"
-    expect(done).to_have_count(0)
-    filled(screen)
     page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
     click_above_bottom(screen, FIELD)
     page.keyboard.press("Control+a")
@@ -735,9 +461,29 @@ def browser_keeps(page: Page, name: str) -> Any:
         assert time.monotonic() < deadline, page.evaluate("navigator.clipboard.readText()")
         time.sleep(0.2)
     page.evaluate("navigator.clipboard.writeText('pasted')")
+    # Changed, then selected, as a person selects what they'll paste over,
+    # and given as long as a person takes, for a selection to come back.
+    click_above_bottom(screen, FIELD)
+    page.keyboard.press("End")
+    page.keyboard.type("more")
     page.keyboard.press("Control+a")
+    page.wait_for_timeout(2000)
+    assert page.evaluate("navigator.clipboard.readText()") == "pasted", page.evaluate("navigator.clipboard.readText()")
     page.keyboard.press("Control+v")
     page.keyboard.press("Enter")
+    # The keys wait for the paste: gone once Enter is, before this page closes.
+    deadline = time.monotonic() + 30
+    while ENTER_DOWN not in sent:
+        assert time.monotonic() < deadline, "Enter never reached the browser"
+        page.wait_for_timeout(100)
+    click_above_bottom(screen, DOWNLOAD)
+    done = browser.get_by_role("status", name="Downloaded")
+    expect(done).to_contain_text("Downloaded note.txt.", timeout=10_000)
+    with page.expect_download() as saving:
+        done.get_by_role("link", name="Save to this computer").click()
+    assert saving.value.suggested_filename == "note.txt", saving.value.suggested_filename
+    assert Path(saving.value.path()).read_text() == "saved here"
+    expect(done).to_have_count(0)
     # A second browser would want the same port: asking again goes to this one.
     page.get_by_role("button", name="Add a column").click()
     expect(page.get_by_role("group", name="Add a column").get_by_role("button", name="Browser")).to_contain_text("open")
@@ -769,42 +515,6 @@ def browser_hides(page: Page, name: str) -> Any:
     return {}
 
 
-# A query's answer, read back raw from the terminal, then printed quoted on
-# one line that the command as typed can't be mistaken for.
-ANSWER = (
-    "bash -c 'printf \"{query}\" >/dev/tty; IFS= read -rs -t 5 {until} a </dev/tty; "
-    "printf \"answer-%s %q.\\n\" {mark} \"$a\"'"
-)
-
-
-def names_itself(page: Page, name: str) -> Any:
-    """A program's title shows in its column's header. Asked what it is,
-    the terminal says it can set the clipboard, which nvim checks before
-    copying through it, and gives its name to programs that ask."""
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    # Shells set their own title at each prompt, so it's looked for while
-    # the command runs.
-    at_prompt(page, first)
-    page.keyboard.type(f"printf '\\033]2;title-%s\\007' {mark}; sleep 4; printf 'set-%s\\n' {mark}")
-    page.keyboard.press("Enter")
-    expect(column(page, first).locator("header .ct")).to_have_text(f"title-{mark}")
-    shows(page, f"set-{mark}")
-    answers = {}
-    # Up to the final `c`; the version's answer, which ends in a backslash
-    # no shell passes on easily, by its length.
-    for asked, query, until in (("attributes", "\\e[c", "-d c"), ("version", "\\e[>q", "-N 10")):
-        mark = str(time.time_ns())
-        shown = run_in_column(page, first, ANSWER.format(query=query, until=until, mark=mark), f"answer-{mark} ")
-        found = re.search(rf"answer-{mark} (\S+)\.", shown.replace("\n", ""))
-        assert found, shown
-        answers[asked] = found[1]
-    assert "62;22;52" in answers["attributes"], answers
-    assert "iglu" in answers["version"], answers
-    return answers
-
-
 def grants_access(page: Page, name: str) -> Any:
     """What a workspace may do from inside shows in its details, starting
     with working on its own columns; a toggle there changes it, as iglud
@@ -828,37 +538,6 @@ def grants_access(page: Page, name: str) -> Any:
     assert "operate" not in access()
     page.get_by_role("button", name="Details", exact=True).click()
     return {"granted": granted}
-
-
-def mac_keys(page: Page, name: str) -> Any:
-    """On a Mac, where Cmd copies and pastes, Ctrl+C and Ctrl+V reach the
-    program even with text selected: the terminal ate Ctrl+C while anything
-    was selected and kept Ctrl+V for a paste that never came. Ctrl+Option
-    and a letter is Meta with its control byte, which sent nothing, and an
-    Option that isn't Meta types its character, which went as Meta anyway."""
-    kept = preferences(page)
-    keep_preferences(page, {**kept, "keyboard": {**kept["keyboard"], "option_as_meta": "off"}})
-    mac = page.context.new_page()
-    mac.add_init_script("Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' })")
-    try:
-        open_workspace(mac, name)
-        first = columns(mac)[0]
-        mark = str(time.time_ns())
-        run_in_column(mac, first, RAW_READ.format(mark=mark), f"ready-{mark}")
-        select_text(mac, first)
-        mac.keyboard.press("Control+c")
-        select_text(mac, first)
-        mac.keyboard.press("Control+v")
-        mac.keyboard.press("Escape")
-        shows(mac, f"read-{mark} $'\\003\\026\\E'")
-        mark = str(time.time_ns())
-        run_in_column(mac, first, RAW_READ.format(mark=mark), f"ready-{mark}")
-        mac.keyboard.press("Control+Alt+b")
-        mac.keyboard.press("Alt+b")
-        return {"screen": shows(mac, f"read-{mark} $'\\E\\002b'")}
-    finally:
-        keep_preferences(page, kept)
-        mac.close()
 
 
 def keeps_history(page: Page, name: str) -> Any:
@@ -922,25 +601,6 @@ def finds_output(page: Page, name: str) -> Any:
     return {"column": first}
 
 
-def copies_out(page: Page, name: str) -> Any:
-    """A program's copy (OSC 52) reaches the page's clipboard, and a large
-    one passes without stopping output: a 150 KB copy once wedged the
-    terminal until a reload."""
-    page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=CONSOLE)
-    open_workspace(page, name)
-    first = columns(page)[0]
-    mark = str(time.time_ns())
-    # base64 of "copied-<mark>", made by the shell, so typing it is plain ASCII.
-    run_in_column(page, first, f"printf '\\e]52;c;%s\\a' $(printf copied-{mark} | base64); echo small-{mark}", f"small-{mark}")
-    deadline = time.monotonic() + 10
-    while page.evaluate("navigator.clipboard.readText()") != f"copied-{mark}":
-        assert time.monotonic() < deadline, page.evaluate("navigator.clipboard.readText()")
-        time.sleep(0.2)
-    run_in_column(page, first, f"printf '\\e]52;c;%s\\a' $(head -c 150000 /dev/zero | tr '\\0' A); echo large-{mark}", f"large-{mark}")
-    run_in_column(page, first, f"echo after-{mark}", f"after-{mark}")
-    return {"column": first}
-
-
 def copies_from_programs(page: Page, name: str) -> Any:
     """A program that copies by running xclip or xsel, as gh copies its
     sign-in code, reaches the page's clipboard. Neither reads it back: a
@@ -972,7 +632,11 @@ def opens_from_programs(page: Page, name: str) -> Any:
     open_workspace(page, name)
     first = columns(page)[0]
     mark = str(time.time_ns())
-    url = f"{CONSOLE}/opened-{mark}"
+    # An address off the machine, answered here, so it opens the same
+    # whether the console is on the Internet or, as in the dev stack, on
+    # this machine's own loopback.
+    url = f"https://example.org/opened-{mark}"
+    page.context.route(url, lambda route: route.fulfill(body="opened"))
     run_in_column(page, first, f"xdg-open {url} && echo web-$((6*7))", "web-42")
     offer = column(page, first).get_by_role("group", name="A program asks to open an address")
     expect(offer).to_contain_text(url)
@@ -1714,26 +1378,15 @@ STEPS: dict[str, Callable[..., Any]] = {
     "refused-environment": refused_environment,
     "terminal": terminal,
     "new-column": new_column,
-    "answers-queries": answers_queries,
-    "draws-blocks": draws_blocks,
-    "draws-icons": draws_icons,
-    "wheels-pager": wheels_pager,
-    "wheels-rows": wheels_rows,
-    "copies-out": copies_out,
     "finds-output": finds_output,
     "keeps-history": keeps_history,
-    "inserts-text": inserts_text,
-    "opens-links": opens_links,
     "copies-from-programs": copies_from_programs,
     "opens-from-programs": opens_from_programs,
     "opens-in-workspace": opens_in_workspace,
-    "copies-history": copies_history,
-    "mac-keys": mac_keys,
-    "selected-keys": selected_keys,
     "styles-terminal": styles_terminal,
     "grants-access": grants_access,
-    "names-itself": names_itself,
     "pastes-files": pastes_files,
+    "opens-browser": opens_browser,
     "browses": browses,
     "browser-answers": browser_answers,
     "browser-keeps": browser_keeps,
@@ -1781,24 +1434,31 @@ def main() -> None:
         try:
             result = STEPS[step](page, *args)
         except Exception:
-            SHOTS.mkdir(parents=True, exist_ok=True)
-            for index, open_page in enumerate(context.pages):
-                open_page.screenshot(path=SHOTS / f"{step}-{index}.png")
-            print("\n".join(["console:", *logged[-60:]]), file=sys.stderr)
-            for shown in page.locator("section[data-column]").all():
-                print(f"column {shown.get_attribute('data-column')}: {shown.inner_text()[:300]!r}", file=sys.stderr)
-            print(f"page: {page.locator('body').inner_text()[:1500]!r}", file=sys.stderr)
-            # What iglud has: each workspace's columns, and its sessions.
-            told = page.evaluate(
-                """async () => {
-                  const listed = await (await fetch('/v1/workspaces')).json();
-                  return Promise.all(listed.map(async (w) => ({
-                    name: w.name, columns: w.columns,
-                    sessions: await (await fetch(`/v1/workspaces/${w.id}/columns`)).json(),
-                  })));
-                }"""
-            )
-            print(f"iglud: {json.dumps(told)}", file=sys.stderr)
+            # What went wrong, as far as it can be seen. Nothing here may
+            # replace the step's own error, which is raised after.
+            try:
+                SHOTS.mkdir(parents=True, exist_ok=True)
+                for index, open_page in enumerate(context.pages):
+                    open_page.screenshot(path=SHOTS / f"{step}-{index}.png")
+                print("\n".join(["console:", *logged[-60:]]), file=sys.stderr)
+                for shown in page.locator("section[data-column]").all():
+                    print(f"column {shown.get_attribute('data-column')}: {shown.inner_text()[:300]!r}", file=sys.stderr)
+                print(f"page: {page.locator('body').inner_text()[:1500]!r}", file=sys.stderr)
+                # What iglud has: each workspace's columns, and its sessions.
+                # Asked with the person's cookies from outside any page,
+                # since the step may have left the page on a preview.
+                api = context.request
+                told = [
+                    {
+                        "name": w["name"],
+                        "columns": w["columns"],
+                        "sessions": api.get(f"{CONSOLE}/v1/workspaces/{w['id']}/columns").json(),
+                    }
+                    for w in api.get(f"{CONSOLE}/v1/workspaces").json()
+                ]
+                print(f"iglud: {json.dumps(told)}", file=sys.stderr)
+            except Exception as failed:
+                print(f"couldn't say more about the failure: {failed!r}", file=sys.stderr)
             raise
         finally:
             context.storage_state(path=STATE)
