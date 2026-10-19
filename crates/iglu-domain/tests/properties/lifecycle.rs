@@ -382,6 +382,65 @@ proptest! {
     }
 }
 
+/// Every workspace there can be, by its desired state and what's observed.
+fn every_case() -> Vec<(DesiredState, Instance)> {
+    let mut runtimes = vec![
+        Runtime::Stopped,
+        Runtime::Frozen,
+        Runtime::Transitioning,
+        Runtime::Failed,
+    ];
+    for readiness in [Readiness::Booting, Readiness::System, Readiness::Network] {
+        for secrets in [None, Some(SecretsGeneration::from_u64(1))] {
+            for columns in [Columns::Pending, Columns::Opened] {
+                runtimes.push(Runtime::Running(Running {
+                    readiness,
+                    secrets,
+                    columns,
+                }));
+            }
+        }
+    }
+    let mut instances = vec![Instance::Absent];
+    for runtime in runtimes {
+        for provisioning in [Provisioning::Pending, Provisioning::Complete] {
+            instances.push(Instance::Present(Present {
+                runtime,
+                provisioning,
+            }));
+        }
+    }
+    STATES
+        .iter()
+        .flat_map(|&state| instances.iter().map(move |&instance| (state, instance)))
+        .collect()
+}
+
+/// Running means the person can use it: provisioned, booted at least to
+/// its system, holding its secrets, with its columns open.
+#[test]
+fn a_workspace_is_running_exactly_when_it_is_up_with_its_secrets_and_columns() {
+    for (state, instance) in every_case() {
+        let up = state == DesiredState::Running
+            && matches!(
+                instance,
+                Instance::Present(Present {
+                    runtime: Runtime::Running(Running {
+                        readiness: Readiness::System | Readiness::Network,
+                        secrets: Some(_),
+                        columns: Columns::Opened
+                    }),
+                    provisioning: Provisioning::Complete,
+                })
+            );
+        assert_eq!(
+            phase(state, instance) == Phase::Running,
+            up,
+            "{state:?} {instance:?}"
+        );
+    }
+}
+
 fn facts() -> impl Strategy<Value = Facts> {
     (
         prop::sample::select(&PHASES[..]),

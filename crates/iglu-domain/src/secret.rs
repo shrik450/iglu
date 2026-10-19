@@ -144,7 +144,8 @@ impl FromStr for HomePath {
                 && part.len() <= 255
                 && part.chars().all(is_printable)
         });
-        if s.is_empty() || s.len() > 1024 || s.starts_with('/') || !components_ok {
+        // An empty or absolute path has an empty component.
+        if s.len() > 1024 || !components_ok {
             return Err(ParseError::new(
                 "home path",
                 "must be a relative path inside the home directory",
@@ -513,7 +514,17 @@ mod tests {
             tokens.nix_setting().as_deref(),
             Some("access-tokens = github.com=ghp_abc gitlab.com=PAT:glpat=x")
         );
-        assert!(!format!("{tokens:?}").contains("ghp_abc"));
+        let shown = format!("{tokens:?}");
+        assert!(
+            !shown.contains("ghp_abc") && shown.contains("AccessToken(<redacted>)"),
+            "{shown}"
+        );
+        // The host builds with what iglud sends it.
+        let sent = serde_json::to_string(&tokens).expect("tokens serialize");
+        assert_eq!(
+            serde_json::from_str::<FetchTokens>(&sent).ok(),
+            Some(tokens)
+        );
         assert_eq!(FetchTokens::from_secrets([]).nix_setting(), None);
     }
 

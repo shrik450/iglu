@@ -117,6 +117,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sizes_are_in_binary_units() {
+        assert_eq!(Bytes::mib(1).get(), 1 << 20);
+        assert_eq!(Bytes::gib(1).get(), 1 << 30);
+        assert_eq!(Bytes::gib(3), Bytes::mib(3 * 1024));
+    }
+
+    #[test]
     fn admits_when_reservation_and_headroom_fit() {
         assert_eq!(
             admit(Bytes::gib(4), Bytes::gib(2), Bytes::gib(1)),

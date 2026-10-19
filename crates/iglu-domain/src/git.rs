@@ -137,7 +137,9 @@ mod tests {
     fn only_clean_branches_come_off_the_wire() {
         assert!(serde_json::from_str::<ObservedBranch>(r#""fix-login""#).is_ok());
         assert!(serde_json::from_str::<ObservedBranch>(r#""""#).is_err());
-        assert!(serde_json::from_str::<ObservedBranch>(r#""main[31m""#).is_err());
+        // Escaped, so it's the name that's refused and not the JSON.
+        assert!(serde_json::from_str::<ObservedBranch>(r#""main\u001b[31m""#).is_err());
+        assert!(serde_json::from_str::<ObservedBranch>(r#"" main""#).is_err());
     }
 
     #[test]
@@ -153,6 +155,13 @@ mod tests {
             Some(Unsaved {
                 uncommitted: 3,
                 unpushed: Unpushed::Commits { count: 2 }
+            })
+        );
+        assert_eq!(
+            unsaved(&state(Some("fix"), Some("origin/fix"), 0, 1)),
+            Some(Unsaved {
+                uncommitted: 1,
+                unpushed: Unpushed::None
             })
         );
         assert_eq!(

@@ -47,6 +47,21 @@ proptest! {
         let name: FileName = name.parse().expect("the pattern is a file name");
         let ws = workspace.to_string();
 
+        for (made, last) in [
+            (path::commands(workspace), "commands"),
+            (path::git(workspace), "git"),
+            (path::listeners(workspace), "listeners"),
+            (path::terminals(workspace), "terminals"),
+        ] {
+            let url = read(&made);
+            prop_assert_eq!(segments(&url), ["v1", "workspaces", &ws, last]);
+            prop_assert_eq!(url.query(), None);
+        }
+        let terminal = read(&path::terminal(workspace, &session));
+        prop_assert_eq!(segments(&terminal), ["v1", "workspaces", &ws, "terminals", session.as_str()]);
+        let input = read(&path::input(workspace, &session));
+        prop_assert_eq!(segments(&input), ["v1", "workspaces", &ws, "terminals", session.as_str(), "input"]);
+
         let attach = read(&path::attach(workspace, &session));
         prop_assert_eq!(segments(&attach), ["v1", "workspaces", &ws, "terminals", session.as_str(), "attach"]);
         prop_assert_eq!(attach.query(), None);

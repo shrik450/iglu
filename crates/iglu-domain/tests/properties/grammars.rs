@@ -3,11 +3,12 @@
 //! must accept everything the grammar allows and nothing else. Inputs
 //! crowd the length limits, where an off-by-one hides.
 
+use iglu_domain::auth::Subject;
 use iglu_domain::column::{Arg, Argv};
 use iglu_domain::env::{FlakeAttr, ImageFingerprint, UnixUser};
 use iglu_domain::label::DnsLabel;
 use iglu_domain::pasted::FileName;
-use iglu_domain::preferences::{KeyCode, PastedTheme, ThemeName};
+use iglu_domain::preferences::{FontName, KeyCode, PastedTheme, ThemeName};
 use iglu_domain::repo::{CheckoutDir, GitHost};
 use iglu_domain::secret::{EnvVarName, GitUsername, HomePath, SecretName, SecretValue};
 use iglu_domain::terminal::{SessionName, TerminalInput, TerminalSize};
@@ -16,9 +17,29 @@ use proptest::prelude::*;
 use regex::Regex;
 
 /// Text from `alphabet`, as long as the limit or either side of it, or short.
+/// Half of it is the alphabet's first character, which every grammar here
+/// allows, with at most two others: text past the limit that's otherwise
+/// valid, which random text almost never is.
 fn near(alphabet: &'static [char], limit: usize) -> impl Strategy<Value = String> {
     prop_oneof![0..6usize, limit.saturating_sub(2)..=limit + 2].prop_flat_map(move |length| {
-        prop::collection::vec(prop::sample::select(alphabet), length).prop_map(String::from_iter)
+        let mostly_valid = prop::collection::vec(
+            (any::<prop::sample::Index>(), prop::sample::select(alphabet)),
+            0..3,
+        )
+        .prop_map(move |others| {
+            let mut chars = vec![alphabet[0]; length];
+            for (at, other) in others {
+                if length > 0 {
+                    chars[at.index(length)] = other;
+                }
+            }
+            String::from_iter(chars)
+        });
+        prop_oneof![
+            prop::collection::vec(prop::sample::select(alphabet), length)
+                .prop_map(String::from_iter),
+            mostly_valid,
+        ]
     })
 }
 
@@ -33,6 +54,12 @@ const PRINTABLE: &[char] = &[
 
 fn matches(pattern: &str, s: &str) -> bool {
     Regex::new(pattern).expect("a valid pattern").is_match(s)
+}
+
+/// No control characters, and none of the line or direction marks that
+/// make text read differently from what it is.
+fn printable(s: &str) -> bool {
+    !s.chars().any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
 }
 
 proptest! {
@@ -122,15 +149,37 @@ proptest! {
     }
 
     #[test]
+    fn home_paths_are_at_most_1024_bytes(length in 1020..1030usize, part in 1..=254usize) {
+        let mut path = String::new();
+        while length - path.len() > part + 1 {
+            path.push_str(&"a".repeat(part));
+            path.push('/');
+        }
+        path.push_str(&"a".repeat(length - path.len()));
+        prop_assert_eq!(path.parse::<HomePath>().is_ok(), length <= 1024, "{} bytes", path.len());
+    }
+
+    #[test]
     fn download_names(s in prop_oneof![near(PRINTABLE, 255), near(&['a', '/', '.'], 4)]) {
-        let printable = !s.chars().any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'));
+        let printable = printable(&s);
         let grammar = !s.is_empty() && s != "." && s != ".." && s.len() <= 255 && !s.contains('/') && printable;
         prop_assert_eq!(s.parse::<DownloadName>().is_ok(), grammar, "{:?}", s);
     }
 
     #[test]
+    fn subjects(s in near(PRINTABLE, 255)) {
+        prop_assert_eq!(s.parse::<Subject>().is_ok(), (1..=255).contains(&s.len()) && printable(&s), "{:?}", s);
+    }
+
+    #[test]
+    fn font_names(s in near(&['a', 'Z', '0', 'é', '.', '_', '-', ' ', '\t', '/'], 64)) {
+        let grammar = matches(r"^[\p{Alphabetic}\p{N}._-]+( [\p{Alphabetic}\p{N}._-]+)*$", &s) && s.chars().count() <= 64;
+        prop_assert_eq!(s.parse::<FontName>().is_ok(), grammar, "{:?}", s);
+    }
+
+    #[test]
     fn theme_names(s in near(PRINTABLE, 64)) {
-        let printable = !s.chars().any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'));
+        let printable = printable(&s);
         prop_assert_eq!(s.parse::<ThemeName>().is_ok(), (1..=64).contains(&s.chars().count()) && printable, "{:?}", s);
     }
 

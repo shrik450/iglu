@@ -6,10 +6,12 @@ use iglu_domain::auth::{DisplayName, Email, Issuer, Permission, PrincipalStatus,
 use iglu_domain::column::{Arg, ColumnLabel, ColumnWidth};
 use iglu_domain::display::DisplayScale;
 use iglu_domain::download::DownloadName;
-use iglu_domain::env::{EnvSource, FlakeAttr, FlakeRef, GuestPath, ImageFingerprint, UnixUser};
+use iglu_domain::env::{
+    EnvSource, FlakeAttr, FlakeRef, GuestPath, ImageFingerprint, Uid, UnixUser,
+};
 use iglu_domain::id::{InstanceName, WorkspaceId};
 use iglu_domain::label::{DnsLabel, HostId, ProjectName, RouteName, WorkspaceName};
-use iglu_domain::lifecycle::{DesiredState, Phase};
+use iglu_domain::lifecycle::{DesiredState, Phase, Revision, SecretsGeneration};
 use iglu_domain::names::WorkspaceLabel;
 use iglu_domain::pasted::FileName;
 use iglu_domain::port::GuestPort;
@@ -93,12 +95,15 @@ macro_rules! normalizes {
     )*};
 }
 
-/// Types whose `as_str` is their text, as it's shown.
+/// Types whose `as_str` is their text, as it's shown. A type that random
+/// text rarely parses as names text in its grammar too, so the check runs.
 macro_rules! say_their_text {
-    ($($test:ident: $ty:ty,)*) => {$(
+    (@text) => { text() };
+    (@text $valid:expr) => { prop_oneof![text(), $valid] };
+    ($($test:ident: $ty:ty $(= $valid:expr)?,)*) => {$(
         proptest! {
             #[test]
-            fn $test(s in text()) {
+            fn $test(s in say_their_text!(@text $($valid)?)) {
                 if let Ok(value) = s.parse::<$ty>() {
                     prop_assert_eq!(value.as_str(), value.to_string());
                 }
@@ -113,29 +118,29 @@ say_their_text! {
     session_name_text: SessionName,
     terminal_input_text: TerminalInput,
     download_name_text: DownloadName,
-    issuer_text: Issuer,
+    issuer_text: Issuer = "https?://[a-z]{1,8}\\.example(/[a-z]{1,8})?",
     subject_text: Subject,
-    email_text: Email,
+    email_text: Email = "[a-zA-Z0-9.]{1,12}@[a-z]{1,8}\\.example",
     display_name_text: DisplayName,
-    secret_name_text: SecretName,
-    env_var_name_text: EnvVarName,
+    secret_name_text: SecretName = "[a-z0-9][a-z0-9._-]{0,63}",
+    env_var_name_text: EnvVarName = "[A-Z_][A-Z0-9_]{0,40}",
     home_path_text: HomePath,
     git_username_text: GitUsername,
     flake_ref_text: FlakeRef,
     flake_attr_text: FlakeAttr,
-    image_fingerprint_text: ImageFingerprint,
-    unix_user_text: UnixUser,
+    image_fingerprint_text: ImageFingerprint = "[0-9a-f]{64}",
+    unix_user_text: UnixUser = "[a-z_][a-z0-9_-]{0,31}",
     guest_path_text: GuestPath,
     git_host_text: GitHost,
-    repo_url_text: RepoUrl,
+    repo_url_text: RepoUrl = "(https://[a-z]{1,8}\\.example|git@[a-z]{1,8}\\.example:)[a-z]{1,8}/[a-z]{1,8}(\\.git)?",
     checkout_dir_text: CheckoutDir,
     branch_name_text: BranchName,
     arg_text: Arg,
     column_label_text: ColumnLabel,
-    thread_key_text: ThreadKey,
+    thread_key_text: ThreadKey = "[A-Za-z0-9_-]{1,64}",
     summary_text: Summary,
     workspace_label_text: WorkspaceLabel,
-    return_path_text: ReturnPath,
+    return_path_text: ReturnPath = "/[a-z0-9/?=&%-]{0,40}",
 }
 
 normalizes! {
@@ -289,7 +294,7 @@ proptest! {
     }
 
     #[test]
-    fn display_scales_stay_between_one_and_four(value in any::<f64>()) {
+    fn display_scales_stay_between_one_and_four(value in prop_oneof![any::<f64>(), 0.5f64..4.5]) {
         if let Ok(scale) = DisplayScale::try_from(value) {
             prop_assert!((100..=400).contains(&scale.hundredths()));
             prop_assert_eq!(DisplayScale::try_from(f64::from(scale)).ok(), Some(scale));
@@ -322,6 +327,23 @@ proptest! {
             prop_assert_eq!(parsed.get(), lines);
             round_trips(&parsed)?;
         }
+    }
+
+    #[test]
+    fn uids_are_every_user_but_root(uid in prop_oneof![any::<u32>(), 0..3u32]) {
+        let parsed = Uid::try_from(uid);
+        prop_assert_eq!(parsed.is_ok(), uid != 0);
+        if let Ok(parsed) = parsed {
+            prop_assert_eq!((parsed.get(), u32::from(parsed)), (uid, uid));
+            let sent = serde_json::to_string(&parsed)?;
+            prop_assert_eq!(serde_json::from_str::<Uid>(&sent).ok(), Some(parsed));
+        }
+    }
+
+    #[test]
+    fn revisions_and_generations_read_back_as_made(n in any::<u64>()) {
+        prop_assert_eq!(Revision::from_u64(n).get(), n);
+        prop_assert_eq!(SecretsGeneration::from_u64(n).get(), n);
     }
 
     #[test]

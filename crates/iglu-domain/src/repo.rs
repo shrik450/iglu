@@ -334,9 +334,26 @@ mod tests {
             "https://user:pass@github.com/acme/app",
             "https://github.com/a b",
             "ext::sh/repo",
+            // Only the host and the last component are parsed as names, so
+            // these are refused for what's in the rest.
+            "https://github.com/a b/app.git",
+            "https://github.com/a\u{7f}/app.git",
+            "https://github.com/a?b/app.git",
+            "https://github.com/a#b/app.git",
+            "https://you?x@github.com/acme/app.git",
         ] {
             assert!(url.parse::<RepoUrl>().is_err(), "{url}");
         }
+        let long = |length: usize| {
+            let start = "https://github.com/";
+            let end = "/app.git";
+            format!(
+                "{start}{}{end}",
+                "a".repeat(length - start.len() - end.len())
+            )
+        };
+        assert!(long(1024).parse::<RepoUrl>().is_ok());
+        assert!(long(1025).parse::<RepoUrl>().is_err());
     }
 
     #[test]

@@ -101,5 +101,7 @@ mod tests {
         assert!(!same_browser(None, "abc"));
         assert!(!same_browser(Some("abd"), "abc"));
         assert!(!same_browser(Some("ab"), "abc"));
+        // Off in two places by the same bit, which mustn't cancel out.
+        assert!(!same_browser(Some("`c"), "ab"));
     }
 }

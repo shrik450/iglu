@@ -51,6 +51,8 @@ proptest! {
             prop_assert_eq!(branch.as_str(), branch.as_str().trim());
             let accepted = ObservedBranch::try_from(branch.as_str().to_owned()).ok();
             prop_assert_eq!(accepted.as_ref(), Some(&branch));
+            let sent = serde_json::to_string(&branch)?;
+            prop_assert_eq!(serde_json::from_str::<ObservedBranch>(&sent).ok(), Some(branch.clone()));
         }
     }
 
@@ -222,6 +224,21 @@ proptest! {
     fn a_sign_in_finishes_only_with_its_own_state(cookie in prop::option::of(text()), state in text()) {
         prop_assert_eq!(same_browser(cookie.as_deref(), &state), cookie.as_deref() == Some(state.as_str()));
         prop_assert!(same_browser(Some(&state), &state));
+    }
+
+    /// Random strings rarely differ in more than one place by the same bits,
+    /// which is where a comparison that lets differences cancel goes wrong.
+    #[test]
+    fn a_state_off_in_several_places_by_the_same_bits_is_refused(
+        state in "[ -~]{2,64}", at in prop::collection::vec(any::<prop::sample::Index>(), 1..5), bits in 1u8..0x80,
+    ) {
+        let mut cookie = state.clone().into_bytes();
+        let at: std::collections::BTreeSet<usize> = at.iter().map(|i| i.index(cookie.len())).collect();
+        for &i in &at {
+            cookie[i] ^= bits;
+        }
+        let cookie = String::from_utf8(cookie).expect("ASCII stays ASCII");
+        prop_assert!(!same_browser(Some(&cookie), &state), "{cookie:?} passed for {state:?}");
     }
 
     #[test]

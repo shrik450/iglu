@@ -471,6 +471,26 @@ mod tests {
     }
 
     #[test]
+    fn a_column_shows_its_state_as_the_api_names_it() {
+        for state in [ColumnState::Open, ColumnState::Ended, ColumnState::Adopted] {
+            assert_eq!(
+                serde_json::to_value(state).ok(),
+                Some(serde_json::Value::String(state.to_string()))
+            );
+        }
+    }
+
+    #[test]
+    fn a_shell_column_runs_the_login_shell_and_a_browser_column_the_browser() {
+        assert_eq!(command(&ColumnKind::Shell), None);
+        let browser = command(&ColumnKind::Browser).map(Vec::<Arg>::from);
+        let argv: Option<Vec<&str>> = browser
+            .as_ref()
+            .map(|args| args.iter().map(Arg::as_str).collect());
+        assert_eq!(argv, Some(vec!["iglu-guest", "browser"]));
+    }
+
+    #[test]
     fn joining_marks_ended_and_adopted_sessions() {
         let n = |s: &str| -> SessionName { s.parse().expect("name") };
         let joined = join(
