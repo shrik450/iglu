@@ -157,7 +157,7 @@ jobs:
             for tier in core runtime shell; do
               compgen -G "results/mutants-$tier-*/outcomes.json" > /dev/null || continue
               jq -rs --arg tier "$tier" '
-                [.[].outcomes[] | select(.scenario.Mutant) | {p: .scenario.Mutant.package, s: .summary}]
+                [.[].outcomes[] | select(.scenario | type == "object") | {p: .scenario.Mutant.package, s: .summary}]
                 | group_by(.p)[]
                 | {p: .[0].p,
                    c: map(select(.s == "CaughtMutant")) | length,
