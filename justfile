@@ -73,8 +73,9 @@ mutants-tier tier *args:
     #!/usr/bin/env bash
     set -euo pipefail
     shift
-    # Each mutant is built in a copy of the tree, made here rather than in /tmp.
-    mkdir -p .dev/tmp/mutants
+    # Results go under .dev/mutants, and each mutant is built in a copy of
+    # the tree, made here rather than in /tmp.
+    mkdir -p .dev/mutants .dev/tmp/mutants
     export TMPDIR="$PWD/.dev/tmp/mutants"
     case "{{ tier }}" in
         core) exec cargo mutants -p iglu-domain -p iglu-proto -p iglu-api "$@" ;;
