@@ -149,7 +149,7 @@ try:
         state = found(r"[?&]state=([^&]+)", authorize)
         # Another browser, without the sign-in cookie, follows the callback.
         page = control.succeed(f"curl -sS -i '{CONSOLE}/auth/callback?code=stolen&state={state}'")
-        assert "browser that started it" in page, page
+        assert "browser that started the sign-in" in page, page
         # A person sees a page, not the API's JSON.
         assert "content-type: text/html" in page.lower(), page
 
@@ -166,7 +166,7 @@ try:
     with subtest("an environment builds on the host"):
         iglu(f"env add example 'path:{SELF}#example'")
         control.wait_until_succeeds(
-            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"example\") | .latest.status == \"ready\"'",
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"example\") | .latest.status == \"Ready\"'",
             timeout=900,
         )
 
@@ -187,7 +187,7 @@ try:
     with subtest("a private environment can't be fetched without its owner's Git credential"):
         iglu(f"env add private 'github:alice/env?host={GIT_ADDRESS}#private'")
         control.wait_until_succeeds(
-            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"failed\"'",
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"Failed\"'",
             timeout=300,
         )
         private = next(e for e in iglu("env ls") if e["name"] == "private")
@@ -243,7 +243,7 @@ try:
     with subtest("the same Git credential lets the host fetch the private environment"):
         iglu("env build private")
         control.wait_until_succeeds(
-            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"ready\"'",
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"Ready\"'",
             timeout=600,
         )
         # Only in the build's environment: not in its arguments, on disk, or in the logs.
@@ -347,7 +347,7 @@ try:
         terminal = json.loads(
             control.succeed(
                 f"{api} -X POST -H 'Content-Type: application/json' "
-                f"-d '{{\"kind\": {{\"kind\": \"shell\"}}}}' {CONSOLE}/v1/workspaces/{ws['id']}/columns"
+                f"-d '{{\"kind\": {{\"kind\": \"Shell\"}}}}' {CONSOLE}/v1/workspaces/{ws['id']}/columns"
             )
         )["name"]
         attach = f"wss://iglu.example.test/v1/workspaces/{ws['id']}/columns/{terminal}/attach?cols=80&rows=24"
@@ -484,7 +484,7 @@ try:
     with subtest("a workspace upgrades in place to its environment's newest build, keeping its files"):
         host.succeed(f"cp -r {CHANGING_ENV} /var/lib/changing-env && chmod -R a+rX,u+w /var/lib/changing-env")
         iglu("env add changing 'path:/var/lib/changing-env#changing'")
-        ready = "jq -e '.[] | select(.name == \"changing\") | .latest.status == \"ready\"'"
+        ready = "jq -e '.[] | select(.name == \"changing\") | .latest.status == \"Ready\"'"
         control.wait_until_succeeds(f"{IGLU} --json env ls | {ready}", timeout=600)
         iglu("project add changing --env changing")
         updating = iglu("new changing --name updating --wait")
@@ -602,7 +602,7 @@ try:
         )
         iglu("new app-https --name waits")
         control.wait_until_succeeds(
-            f"{IGLU} --json show waits | jq -e '.condition.kind == \"capacity\"'", timeout=120
+            f"{IGLU} --json show waits | jq -e '.condition.kind == \"Capacity\"'", timeout=120
         )
         browser("card", "waits", "Waiting for room")
         host.succeed("systemctl stop hog")
