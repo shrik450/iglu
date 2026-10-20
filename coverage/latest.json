@@ -1,0 +1,156 @@
+{
+  "commit": "97ed9f77fff53ff51b101d8be12709e7f9f03b8c",
+  "date": "2026-10-20T17:12:46+00:00",
+  "tiers": {
+    "rust-unit": {
+      "found": 21113,
+      "hit": 13897,
+      "areas": {
+        "crates/iglu-api": {
+          "found": 55,
+          "hit": 55
+        },
+        "crates/iglu-cli": {
+          "found": 1123,
+          "hit": 43
+        },
+        "crates/iglu-devhost": {
+          "found": 973,
+          "hit": 852
+        },
+        "crates/iglu-domain": {
+          "found": 3423,
+          "hit": 3416
+        },
+        "crates/iglu-guest": {
+          "found": 2330,
+          "hit": 1685
+        },
+        "crates/iglu-hostd": {
+          "found": 5085,
+          "hit": 2761
+        },
+        "crates/iglu-proto": {
+          "found": 83,
+          "hit": 83
+        },
+        "crates/iglud": {
+          "found": 8041,
+          "hit": 5002
+        }
+      }
+    },
+    "rust": {
+      "found": 21113,
+      "hit": 16876,
+      "areas": {
+        "crates/iglu-api": {
+          "found": 55,
+          "hit": 55
+        },
+        "crates/iglu-cli": {
+          "found": 1123,
+          "hit": 812
+        },
+        "crates/iglu-devhost": {
+          "found": 973,
+          "hit": 876
+        },
+        "crates/iglu-domain": {
+          "found": 3423,
+          "hit": 3419
+        },
+        "crates/iglu-guest": {
+          "found": 2330,
+          "hit": 1843
+        },
+        "crates/iglu-hostd": {
+          "found": 5085,
+          "hit": 2971
+        },
+        "crates/iglu-proto": {
+          "found": 83,
+          "hit": 83
+        },
+        "crates/iglud": {
+          "found": 8041,
+          "hit": 6817
+        }
+      }
+    },
+    "console-unit": {
+      "found": 1388,
+      "hit": 1361,
+      "areas": {
+        "console/src/state": {
+          "found": 1358,
+          "hit": 1331
+        },
+        "console/vendor/wterm-dom": {
+          "found": 30,
+          "hit": 30
+        }
+      }
+    },
+    "console-browser": {
+      "found": 11487,
+      "hit": 8993,
+      "areas": {
+        "console/src": {
+          "found": 1495,
+          "hit": 957
+        },
+        "console/src/api": {
+          "found": 120,
+          "hit": 116
+        },
+        "console/src/components": {
+          "found": 909,
+          "hit": 830
+        },
+        "console/src/state": {
+          "found": 938,
+          "hit": 794
+        },
+        "console/src/views": {
+          "found": 1889,
+          "hit": 1630
+        },
+        "console/vendor/wterm-dom": {
+          "found": 6136,
+          "hit": 4666
+        }
+      }
+    },
+    "console": {
+      "found": 12039,
+      "hit": 9672,
+      "areas": {
+        "console/src": {
+          "found": 1495,
+          "hit": 957
+        },
+        "console/src/api": {
+          "found": 120,
+          "hit": 116
+        },
+        "console/src/components": {
+          "found": 909,
+          "hit": 830
+        },
+        "console/src/state": {
+          "found": 1473,
+          "hit": 1456
+        },
+        "console/src/views": {
+          "found": 1889,
+          "hit": 1630
+        },
+        "console/vendor/wterm-dom": {
+          "found": 6153,
+          "hit": 4683
+        }
+      }
+    }
+  }
+}
