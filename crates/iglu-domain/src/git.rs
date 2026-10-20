@@ -81,12 +81,8 @@ pub struct Unsaved {
 
 /// Commits only this checkout has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(tag = "kind", rename_all = "snake_case")
-)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(tag = "kind"))]
 pub enum Unpushed {
     None,
     /// Commits the upstream doesn't have.

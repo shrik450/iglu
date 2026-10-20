@@ -193,7 +193,7 @@ def create(page: Page, environment: str, repo: str, name: str) -> Any:
     named = repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
     expect(form.get_by_label("Project").locator("option:checked")).to_have_text(named)
     # What it's called names it.
-    form.get_by_label("Call it").fill(name)
+    form.get_by_label("Label", exact=True).fill(name)
     form.get_by_role("button", name="Create").click()
     page.wait_for_url(f"{CONSOLE}/w/{name}")
     expect(page.get_by_role("heading", name=name)).to_be_visible()
@@ -203,7 +203,7 @@ def create(page: Page, environment: str, repo: str, name: str) -> Any:
 
 def refused_environment(page: Page) -> Any:
     """Adds an environment whose flake has no #attribute; iglu refuses it,
-    and the console shows why by the Flake input."""
+    and the console says what the Flake input takes, by it."""
     page.goto(f"{CONSOLE}/settings")
     form = page.get_by_role("form", name="Add an environment")
     form.get_by_label("Name").fill("broken")
@@ -212,7 +212,7 @@ def refused_environment(page: Page) -> Any:
     form.get_by_role("button", name="Add").click()
     expect(flake).to_have_attribute("aria-invalid", "true")
     expect(flake).to_be_focused()
-    expect(flake).to_have_accessible_description(re.compile("invalid environment source"))
+    expect(flake).to_have_accessible_description(re.compile("flake#name"))
     return {"error": form.locator(".field-err").inner_text()}
 
 
@@ -521,7 +521,7 @@ def grants_access(page: Page, name: str) -> Any:
     keeps it."""
     open_workspace(page, name)
     page.get_by_role("button", name="Details", exact=True).click()
-    own = page.get_by_role("group", name="What it may do to This workspace")
+    own = page.get_by_role("group", name="Permissions on This workspace")
     for label, pressed in (("See", "true"), ("Type", "true"), ("Start/stop", "false")):
         expect(own.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-pressed", pressed)
 
@@ -652,7 +652,7 @@ def opens_from_programs(page: Page, name: str) -> Any:
     run_in_column(page, first, f"xdg-open {local} && echo local-$((6*7))", "local-42")
     expect(offer).to_contain_text(local)
     expect(offer.get_by_role("link", name="Open")).to_have_count(0)
-    offer.get_by_role("button", name="Don't open it").click()
+    offer.get_by_role("button", name="Don't open").click()
     expect(offer).to_have_count(0)
     return {"url": url, "local": local}
 
@@ -836,7 +836,7 @@ def focus_returns(page: Page, name: str) -> Any:
     cases: dict[str, Callable[[], None]] = {
         "palette": lambda: asks("Slash", page.get_by_role("combobox", name="Search")),
         "shortcuts": lambda: asks("Shift+Slash", page.get_by_role("dialog", name="Keyboard shortcuts").get_by_role("button", name="Close")),
-        "rename": lambda: asks("r", page.get_by_role("textbox", name="What to call it")),
+        "rename": lambda: asks("r", page.get_by_role("textbox", name="Label", exact=True)),
         "add a column": lambda: asks("c", page.get_by_role("group", name="Add a column").get_by_role("button", name="Shell")),
         "end the column": lambda: asks("x", page.get_by_role("button", name=f"End {first}", exact=True)),
         "width button": width.click,
@@ -1006,7 +1006,7 @@ def goes_back(page: Page, name: str, other: str | None = None) -> Any:
     open_workspace(page, name)
     if other is None:
         prefix(page, "Semicolon")
-        expect(page.get_by_text("There's no other workspace to go back to yet.")).to_be_visible()
+        expect(page.get_by_text("There isn't another workspace to go back to yet.")).to_be_visible()
         return {"back": None}
     page.get_by_role("link", name="iglu, overview").click()
     page.get_by_role("link", name=other, exact=True).first.click()
@@ -1176,7 +1176,7 @@ def rings(page: Page, name: str) -> Any:
 def loads_quietly(page: Page, name: str) -> Any:
     """A page loaded straight at a workspace waits for iglu's first word
     rather than saying there's no such workspace, then shows it: it said
-    "No workspace called" until the list came."""
+    "There isn't a workspace called" until the list came."""
     # iglu's first word is held back a moment, so the page has time to say
     # the wrong thing if it would.
     held = []
@@ -1192,7 +1192,7 @@ def loads_quietly(page: Page, name: str) -> Any:
                 held.pop().continue_()
         text = page.locator("main").inner_text() if page.locator("main").count() else ""
         seen.append(text[:80])
-        assert "No workspace called" not in text, seen
+        assert "There isn't a workspace called" not in text, seen
         time.sleep(0.05)
     page.unroute("**/v1/events")
     return {"polls": len(seen)}
@@ -1207,7 +1207,7 @@ def labels(page: Page, name: str, project: str) -> Any:
 
     def call(old: str, new: str) -> None:
         page.get_by_role("button", name=old, exact=True).click()
-        field = page.get_by_role("textbox", name="What to call it")
+        field = page.get_by_role("textbox", name="Label", exact=True)
         field.fill(new)
         field.press("Enter")
         expect(page.get_by_role("heading", name=new or name, exact=True)).to_be_visible()
@@ -1223,7 +1223,7 @@ def labels(page: Page, name: str, project: str) -> Any:
     made = form.get_by_label("Name, in URLs and the CLI")
     form.get_by_label("Branch", exact=True).fill("su/login-fix")
     expect(made).to_have_attribute("placeholder", "login-fix…")
-    form.get_by_label("Call it").fill("More UI tweaks")
+    form.get_by_label("Label", exact=True).fill("More UI tweaks")
     expect(made).to_have_attribute("placeholder", "more-ui-tweaks…")
     form.get_by_role("button", name="Cancel").click()
     return {"called": called}
@@ -1242,7 +1242,7 @@ def drafts_survive(page: Page, project: str) -> Any:
     before = idle.input_value()
     previews = form.get_by_label("Previews")
     previews.fill("18480")
-    idle.select_option("never" if before != "never" else "default")
+    idle.select_option("Never" if before != "Never" else "Default")
     theirs.get_by_role("button", name="Save").click()
     notice = form.get_by_role("status")
     expect(notice).to_contain_text("saved elsewhere")
@@ -1266,7 +1266,7 @@ def adds_at_once(page: Page, name: str) -> Any:
           const me = await (await fetch('/v1/me')).json();
           const ws = (await (await fetch('/v1/workspaces')).json()).find((w) => w.name === name);
           const headers = { 'content-type': 'application/json' };
-          const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'shell' } }) });
+          const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'Shell' } }) });
           const answers = await Promise.all([add(), add()]);
           const made = await Promise.all(answers.map(async (a) => (a.ok ? (await a.json()).name : `${a.status} ${await a.text()}`)));
           for (const a of answers.keys()) if (answers[a].ok) await fetch(`/v1/workspaces/${ws.id}/columns/${made[a]}`, { method: 'DELETE', headers });

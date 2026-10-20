@@ -6,6 +6,7 @@ import type { AttentionView } from "../generated/AttentionView.ts";
 import type { Condition } from "../generated/Condition.ts";
 import type { Phase } from "../generated/Phase.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
+import { m } from "../messages.tsx";
 import { cursor } from "../state/store.ts";
 import { unreachable } from "../state/unsaved.ts";
 
@@ -88,7 +89,7 @@ export function WorkspaceLink({ ws, class: className, label, children }: { ws: W
 }
 
 export function inTrouble(condition: Condition | null): boolean {
-  return condition?.kind === "error" || condition?.kind === "runtime_failed";
+  return condition?.kind === "Error" || condition?.kind === "RuntimeFailed";
 }
 
 export function attentionGlyph(attention: AttentionView | null): GlyphKind {
@@ -141,24 +142,21 @@ export function lookOf(phase: Phase): Look {
 
 /** The phase, when it's worth saying: running goes without saying. */
 export function phaseText(phase: Phase): string | null {
-  return phase === "running" ? null : phase;
-}
-
-/** What a count of workspaces that need you says after the number. */
-export function needYou(count: number): string {
-  return count === 1 ? "needs you" : "need you";
+  return phase === "running" ? null : m.phase(phase);
 }
 
 export function attentionText(attention: AttentionView): { tone: string; text: string } {
   switch (attention.state) {
     case "waiting":
-      return { tone: "s-waiting", text: "needs you" };
+      return { tone: "s-waiting", text: m.attention.waiting };
     case "done":
-      return { tone: "s-done", text: attention.seen === "unseen" ? "done · new" : "done" };
+      return { tone: "s-done", text: m.attention.done(attention.seen === "Unseen") };
     case "working":
-      return { tone: "s-working", text: "working" };
+      return { tone: "s-working", text: m.attention.working };
     case "idle":
-      return { tone: "", text: "idle" };
+      return { tone: "", text: m.attention.idle };
+    default:
+      return unreachable(attention.state);
   }
 }
 
@@ -203,7 +201,7 @@ export function buildRows(phase: Phase): number {
   return phase === "creating" ? 2 : phase === "starting" ? 4 : 5;
 }
 
-export function Frost({ label, hint }: { label: string; hint?: string }) {
+export function Frost({ label, hint }: { label: string; hint?: string | undefined }) {
   return (
     <div class="frost">
       <div class="frost-label">

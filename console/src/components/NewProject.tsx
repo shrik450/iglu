@@ -2,13 +2,14 @@
 
 import { api } from "../api/client.ts";
 import type { CreateProject } from "../generated/CreateProject.ts";
+import { m } from "../messages.tsx";
 import { environments, newIn, overlay } from "../state/store.ts";
 import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
 import { DialogHead, Modal } from "./Modal.tsx";
 
 export function NewProject() {
   const close = () => (overlay.value = null);
-  const add = useForm(async (data) => {
+  const add = useForm<CreateProject>(async (data) => {
     const text = textOf(data);
     const environment = text("environment");
     if (!environment) return;
@@ -20,25 +21,25 @@ export function NewProject() {
     const added = await api.createProject(body);
     newIn.value = added.id;
     overlay.value = "new";
-  });
+  }, m.newProject.rules);
   return (
     <Modal labelledby="project-h" onClose={close}>
       <form class="nbox" aria-labelledby="project-h" onSubmit={add.onSubmit}>
-        <DialogHead id="project-h" title="New project" onClose={close} />
-        {environments.value.length === 0 ? <p class="field-err">Add an environment first, in <a href="/settings">Settings</a>.</p> : null}
+        <DialogHead id="project-h" title={m.newProject.title} onClose={close} />
+        {environments.value.length === 0 ? <p class="field-err">{m.newProject.noEnvironment((text) => <a href="/settings">{text}</a>)}</p> : null}
         <label>
-          Repository
-          <input name="repo" inputMode="url" placeholder="https://github.com/you/app.git…" autocomplete="off" spellcheck={false} autofocus {...invalid(add, "repo")} />
+          {m.newProject.repo}
+          <input name="repo" inputMode="url" placeholder={m.newProject.repoHint} autocomplete="off" spellcheck={false} autofocus {...invalid(add, "repo")} />
           <FieldError form={add} input="repo" />
         </label>
         <div class="two">
           <label>
-            Name
-            <input name="name" placeholder="Named after the repository…" autocomplete="off" spellcheck={false} {...invalid(add, "name")} />
+            {m.newProject.name}
+            <input name="name" placeholder={m.newProject.nameHint} autocomplete="off" spellcheck={false} {...invalid(add, "name")} />
             <FieldError form={add} input="name" />
           </label>
           <label>
-            Environment
+            {m.newProject.environment}
             <select name="environment" required {...invalid(add, "environment")}>
               {environments.value.map((env) => (
                 <option key={env.name} value={env.name}>
@@ -52,10 +53,10 @@ export function NewProject() {
         <FormError form={add} />
         <div class="nbtns">
           <button type="button" class="btn" onClick={close}>
-            Cancel
+            {m.newProject.cancel}
           </button>
           <button type="submit" class="btn primary" disabled={add.busy || environments.value.length === 0}>
-            {add.busy ? "Adding…" : "Add"}
+            {m.newProject.add(add.busy)}
           </button>
         </div>
       </form>

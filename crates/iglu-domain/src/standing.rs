@@ -26,8 +26,7 @@ pub enum NeedsYou {
 
 /// Why a workspace needs its person.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename_all = "snake_case"))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Need {
     /// A thread finished and nobody has looked yet.
     Done,

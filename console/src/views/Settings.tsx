@@ -3,14 +3,16 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { attempt, signOut } from "../actions.ts";
-import { api } from "../api/client.ts";
+import { api, type SecretPath } from "../api/client.ts";
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { type Form, FieldError, FormError, invalid, textOf, useForm } from "../components/forms.tsx";
 import { mac } from "../keyboard.ts";
-import { type ShownLook, keyboard, look, setKeyboard, setLook, setTermStyle, termStyle } from "../preferences.ts";
+import { m } from "../messages.tsx";
+import { COLOURS, type ShownLook, keyboard, look, setKeyboard, setLook, setTermStyle, termStyle } from "../preferences.ts";
 import { enableNotifications } from "../notify.ts";
 import type { EnvironmentView } from "../generated/EnvironmentView.ts";
 import type { ProjectView } from "../generated/ProjectView.ts";
+import type { PutSecret } from "../generated/PutSecret.ts";
 import type { SecretTarget } from "../generated/SecretTarget.ts";
 import type { SecretView } from "../generated/SecretView.ts";
 import { repoLabel } from "../state/groups.ts";
@@ -29,7 +31,7 @@ const when = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle
 export function Settings() {
   return (
     <div class="settings">
-      <h1 class="sr-only">Settings</h1>
+      <h1 class="sr-only">{m.settings.heading}</h1>
       <Environments />
       <Projects />
       <Secrets />
@@ -42,35 +44,36 @@ export function Settings() {
 
 function buildText(env: EnvironmentView): string {
   const latest = env.latest;
-  if (!latest) return "never built";
+  if (!latest) return m.settings.build(null);
   switch (latest.status) {
-    case "building":
-      return "building…";
-    case "ready":
-      return `built ${when.format(latest.created_at)}`;
-    case "failed":
-      return "build failed";
+    case "Building":
+    case "Failed":
+      return m.settings.build({ status: latest.status });
+    case "Ready":
+      return m.settings.build({ status: "Ready", at: when.format(latest.created_at) });
+    default:
+      return unreachable(latest);
   }
 }
 
 function Environments() {
   return (
     <section class="set" aria-labelledby="envs-h">
-      <h2 id="envs-h">Environments</h2>
+      <h2 id="envs-h">{m.settings.environments}</h2>
       <ul class="set-list">
         {environments.value.map((env) => (
           <li key={env.name}>
             <div class="set-row">
               <b translate={false}>{env.name}</b>
               <code translate={false}>{env.source}</code>
-              <span class={`state${env.latest?.status === "failed" ? " s-trouble" : ""}`}>{buildText(env)}</span>
-              <button type="button" class="btn" disabled={env.latest?.status === "building"} onClick={() => void attempt(() => api.buildEnvironment(env.name))}>
-                Rebuild
+              <span class={`state${env.latest?.status === "Failed" ? " s-trouble" : ""}`}>{buildText(env)}</span>
+              <button type="button" class="btn" disabled={env.latest?.status === "Building"} onClick={() => void attempt(() => api.buildEnvironment(env.name))}>
+                {m.settings.rebuild}
               </button>
             </div>
-            {env.latest?.status === "failed" ? (
+            {env.latest?.status === "Failed" ? (
               <details class="log">
-                <summary>Build log</summary>
+                <summary>{m.settings.log}</summary>
                 <pre translate={false}>{env.latest.log_tail}</pre>
               </details>
             ) : null}
@@ -85,7 +88,7 @@ function Environments() {
 function Projects() {
   return (
     <section class="set" aria-labelledby="projects-h">
-      <h2 id="projects-h">Projects</h2>
+      <h2 id="projects-h">{m.settings.projects}</h2>
       <ul class="set-list">
         {projects.value.map((p) => (
           <ProjectRow key={p.id} project={p} />
@@ -107,9 +110,9 @@ function ProjectRow({ project }: { project: ProjectView }) {
           <b>{project.name}</b>
         </a>
         <span class="muted" translate={false}>
-          {project.repo ? repoLabel(project.repo) : "no repository"} · {project.environment}
+          {m.project.source(project.repo ? repoLabel(project.repo) : null, project.environment)}
         </span>
-        <span class="state">{live === 1 ? "1 workspace" : `${live} workspaces`}</span>
+        <span class="state">{m.settings.workspaces(live)}</span>
       </div>
     </li>
   );
@@ -118,9 +121,9 @@ function ProjectRow({ project }: { project: ProjectView }) {
 type TargetKind = SecretTarget["kind"];
 
 const KINDS: Readonly<Record<TargetKind, string>> = {
-  env: "Environment variable",
-  file: "File in home",
-  git_credential: "Git credential",
+  env: m.settings.target("env"),
+  file: m.settings.target("file"),
+  git_credential: m.settings.target("git_credential"),
 };
 
 function targetText(target: SecretTarget): string {
@@ -154,21 +157,21 @@ function targetOf(kind: TargetKind, text: (key: string) => string | undefined): 
 
 /** The inputs for where a secret goes. iglu names them all `target`, and so
  * does the form's kind select; the error shows by the last of them. */
-function TargetFields({ kind, form }: { kind: TargetKind; form: Form }) {
+function TargetFields({ kind, form }: { kind: TargetKind; form: Form<PutSecret & SecretPath> }) {
   switch (kind) {
     case "env":
       return (
         <label>
-          Variable
-          <input name="env" required placeholder="CLAUDE_CODE_OAUTH_TOKEN…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
+          {m.settings.variable}
+          <input name="env" required placeholder={m.settings.variableHint} autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
           <FieldError form={form} input="target" />
         </label>
       );
     case "file":
       return (
         <label>
-          Path
-          <input name="path" required placeholder=".ssh/id_ed25519…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
+          {m.settings.path}
+          <input name="path" required placeholder={m.settings.pathHint} autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
           <FieldError form={form} input="target" />
         </label>
       );
@@ -176,12 +179,12 @@ function TargetFields({ kind, form }: { kind: TargetKind; form: Form }) {
       return (
         <>
           <label>
-            Host
-            <input name="host" required placeholder="github.com…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
+            {m.settings.host}
+            <input name="host" required placeholder={m.settings.hostHint} autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
           </label>
           <label>
-            Username
-            <input name="username" required placeholder="x-access-token…" autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
+            {m.settings.username}
+            <input name="username" required placeholder={m.settings.usernameHint} autocomplete="off" spellcheck={false} {...invalid(form, "target")} />
             <FieldError form={form} input="target" />
           </label>
         </>
@@ -200,7 +203,7 @@ function Secrets() {
     if (got) setSecrets(got.value);
   };
   useEffect(() => void load(), []);
-  const add = useForm(async (data, form) => {
+  const add = useForm<PutSecret & SecretPath>(async (data, form) => {
     const text = textOf(data);
     const name = text("name");
     const value = data.get("value");
@@ -209,12 +212,12 @@ function Secrets() {
     await api.putSecret(name, { target, value });
     form.reset();
     await load();
-    say(`Saved ${name}. New terminals get it.`);
-  });
+    say(m.settings.secretSaved(name));
+  }, m.settings.secretRules);
   return (
     <section class="set" aria-labelledby="secrets-h">
-      <h2 id="secrets-h">Secrets</h2>
-      <p class="muted">Every workspace you own gets these. Values are never shown again.</p>
+      <h2 id="secrets-h">{m.settings.secrets}</h2>
+      <p class="muted">{m.settings.secretsAbout}</p>
       <ul class="set-list">
         {(secrets ?? []).map((secret) => (
           <li key={secret.id}>
@@ -236,15 +239,15 @@ function Secrets() {
                         })
                       }
                     >
-                      Delete {secret.name}
+                      {m.settings.deleteSecret(secret.name)}
                     </button>
                     <button type="button" class="btn" onClick={() => setRemoving(null)}>
-                      Keep
+                      {m.settings.keep}
                     </button>
                   </>
                 ) : (
                   <button type="button" class="btn" onClick={() => setRemoving(secret.name)}>
-                    Delete
+                    {m.settings.delete}
                   </button>
                 )}
               </span>
@@ -252,14 +255,14 @@ function Secrets() {
           </li>
         ))}
       </ul>
-      <form class="set-form" aria-label="Add or replace a secret" onSubmit={add.onSubmit}>
+      <form class="set-form" aria-label={m.settings.addSecret} onSubmit={add.onSubmit}>
         <label>
-          Name
-          <input name="name" required placeholder="anthropic…" autocomplete="off" spellcheck={false} {...invalid(add, "name")} />
+          {m.settings.secretName}
+          <input name="name" required placeholder={m.settings.secretNameHint} autocomplete="off" spellcheck={false} {...invalid(add, "name")} />
           <FieldError form={add} input="name" />
         </label>
         <label>
-          Goes to
+          {m.settings.goesTo}
           <select name="target" value={kind} onChange={(e) => setKind(oneOf(KINDS, e.currentTarget.value) ?? kind)}>
             {Object.entries(KINDS).map(([k, label]) => (
               <option key={k} value={k}>
@@ -270,12 +273,12 @@ function Secrets() {
         </label>
         <TargetFields kind={kind} form={add} />
         <label class="grow">
-          Value
+          {m.settings.value}
           <input name="value" type="password" required autocomplete="new-password" spellcheck={false} {...invalid(add, "value")} />
           <FieldError form={add} input="value" />
         </label>
         <button type="submit" class="btn" disabled={add.busy}>
-          {add.busy ? "Saving…" : "Save"}
+          {m.settings.save(add.busy)}
         </button>
         <FormError form={add} />
       </form>
@@ -310,17 +313,16 @@ function Keyboard() {
     setRefused(false);
     setRecording(false);
   };
-  const meta: Record<OptionAsMeta, string> = { left: "Left Option", both: "Both Options", off: "Neither" };
   return (
     <section class="set" aria-labelledby="keyboard-h">
-      <h2 id="keyboard-h">Keyboard</h2>
+      <h2 id="keyboard-h">{m.settings.keyboard}</h2>
       <div class="set-row">
-        <span>Prefix, to reach iglu from a terminal</span>
+        <span>{m.settings.prefix}</span>
         <button
           type="button"
           class="btn"
           aria-pressed={recording}
-          aria-label={recording ? "Press a Ctrl chord for the prefix" : `Prefix: ${chordLabel(prefs.prefix, mac)}. Change it`}
+          aria-label={recording ? m.settings.prefixRecording : m.settings.prefixLabel(chordLabel(prefs.prefix, mac))}
           onClick={() => {
             setRecording(true);
             setRefused(false);
@@ -328,23 +330,25 @@ function Keyboard() {
           onKeyDown={recording ? record : undefined}
           onBlur={cancel}
         >
-          {recording ? "Press a Ctrl chord…" : <kbd>{chordLabel(prefs.prefix, mac)}</kbd>}
+          {recording ? m.settings.prefixPress : <kbd>{chordLabel(prefs.prefix, mac)}</kbd>}
         </button>
-        {refused ? <span class="field-err" role="alert">Use Ctrl with a letter, Space, [, ] or \.</span> : null}
+        {refused ? (
+          <span class="field-err" role="alert">
+            {m.settings.prefixRefused}
+          </span>
+        ) : null}
       </div>
       <label class="set-row">
         <input type="checkbox" checked={prefs.alt_moves} onChange={(e) => setKeyboard({ ...prefs, alt_moves: e.currentTarget.checked })} />
-        <span>
-          {mac ? "⌥H ⌥J ⌥K ⌥L" : "Alt+H Alt+J Alt+K Alt+L"} move between columns and workspaces, even in a terminal
-        </span>
+        <span>{m.settings.altMoves(mac ? "⌥H ⌥J ⌥K ⌥L" : "Alt+H Alt+J Alt+K Alt+L")}</span>
       </label>
       {mac ? (
         <label class="set-row">
-          <span>Option as Meta in terminals</span>
+          <span>{m.settings.optionAsMeta}</span>
           <select value={prefs.option_as_meta} onChange={(e) => setKeyboard({ ...prefs, option_as_meta: e.currentTarget.value as OptionAsMeta })}>
-            {(["left", "both", "off"] as const).map((o) => (
+            {(["Left", "Both", "Off"] as const).map((o) => (
               <option key={o} value={o}>
-                {meta[o]}
+                {m.settings.meta(o)}
               </option>
             ))}
           </select>
@@ -372,11 +376,11 @@ function Terminal() {
   if (!sizes.some((s) => s.width === size.width)) sizes.push(size), sizes.sort((a, b) => a.width - b.width);
   return (
     <section class="set" aria-labelledby="terminal-h">
-      <h2 id="terminal-h">Terminal</h2>
-      <Colours look="dark" />
-      <Colours look="light" />
+      <h2 id="terminal-h">{m.settings.terminal}</h2>
+      <Colours look="Dark" />
+      <Colours look="Light" />
       <label class="set-row">
-        <span>Font</span>
+        <span>{m.settings.font}</span>
         <input
           value={font}
           placeholder="JetBrains Mono"
@@ -389,20 +393,20 @@ function Terminal() {
         />
         {fontRefused ? (
           <span class="field-err" role="alert">
-            A font's name is letters, digits, spaces, dots, dashes and underscores.
+            {m.settings.fontRefused}
           </span>
         ) : fontTrouble.value && prefs.font ? (
           <span class="field-err" role="status">
-            {prefs.font} {fontTrouble.value === "missing" ? "isn't installed in this browser" : "isn't monospaced"}, so terminals show JetBrains Mono.
+            {m.settings.fontTrouble(prefs.font, fontTrouble.value === "missing")}
           </span>
         ) : null}
       </label>
       <label class="set-row">
-        <span>Size</span>
+        <span>{m.settings.size}</span>
         <select value={String(pixels(size))} onChange={(e) => set({ size: Number(e.currentTarget.value) })}>
           {sizes.map((s) => (
             <option key={s.width} value={String(pixels(s))}>
-              {pixels(s)}px
+              {m.settings.pixels(pixels(s))}
             </option>
           ))}
         </select>
@@ -415,8 +419,8 @@ function Terminal() {
 /** The terminal's colours in one look. */
 function Colours({ look }: { look: ShownLook }) {
   const prefs = termStyle.value;
-  const colours = prefs[look];
-  const set = (change: Partial<TerminalColours>, typing = false) => setTermStyle({ ...prefs, [look]: { ...colours, ...change } }, typing);
+  const colours = prefs[COLOURS[look]];
+  const set = (change: Partial<TerminalColours>, typing = false) => setTermStyle({ ...prefs, [COLOURS[look]]: { ...colours, ...change } }, typing);
   const names = Object.keys(THEMES);
   const pasted = colours.theme === "pasted" ? parseTheme(colours.pasted) : null;
   const choose = (theme: string) => {
@@ -428,11 +432,11 @@ function Colours({ look }: { look: ShownLook }) {
   return (
     <>
       <label class="set-row">
-        <span>{look === "dark" ? "Dark colours" : "Light colours"}</span>
+        <span>{m.settings.colours(look)}</span>
         <select value={colours.theme} onChange={(e) => choose(e.currentTarget.value)}>
-          <option value="iglu">iglu's own</option>
+          <option value="iglu">{m.settings.ownColours}</option>
           {[false, true].map((light) => (
-            <optgroup key={String(light)} label={light ? "Light" : "Dark"}>
+            <optgroup key={String(light)} label={light ? m.settings.light : m.settings.dark}>
               {names
                 .filter((name) => isLight(THEMES[name]!) === light)
                 .map((name) => (
@@ -442,15 +446,13 @@ function Colours({ look }: { look: ShownLook }) {
                 ))}
             </optgroup>
           ))}
-          <option value="pasted">Pasted from Ghostty</option>
+          <option value="pasted">{m.settings.pastedColours}</option>
         </select>
       </label>
       {pasted ? (
         <div class="set-form">
           <label class="grow">
-            <span>
-              A {look} theme in Ghostty's format: a theme file, or <code>ghostty +show-config</code>
-            </span>
+            <span>{m.settings.pasteAbout(look)}</span>
             <textarea
               class="theme-paste"
               rows={8}
@@ -464,7 +466,7 @@ function Colours({ look }: { look: ShownLook }) {
           </label>
           {"error" in pasted ? (
             <span id={error} class="field-err">
-              {pasted.error} Until it reads, terminals keep iglu's own colours.
+              {m.settings.themeProblem(pasted.error)}
             </span>
           ) : null}
         </div>
@@ -505,13 +507,13 @@ function Sample() {
 function Account() {
   return (
     <section class="set" aria-labelledby="account-h">
-      <h2 id="account-h">Account</h2>
+      <h2 id="account-h">{m.settings.account}</h2>
       <div class="set-row">
         <span translate={false}>{me.value?.email ?? me.value?.name ?? ""}</span>
-        <div class="seg" role="group" aria-label="Look">
-          {(["auto", "dark", "light"] as const).map((l) => (
+        <div class="seg" role="group" aria-label={m.settings.look}>
+          {(["Auto", "Dark", "Light"] as const).map((l) => (
             <button key={l} type="button" aria-pressed={look.value === l} onClick={() => setLook(l)}>
-              {l === "auto" ? "System" : l === "dark" ? "Polar night" : "Snowfield"}
+              {m.settings.lookName(l)}
             </button>
           ))}
         </div>
@@ -519,12 +521,12 @@ function Account() {
           <button
             type="button"
             class="btn"
-            onClick={() => void enableNotifications().then((p) => say(p === "granted" ? "Notifications are on." : "Notifications are blocked in this browser."))}
+            onClick={() => void enableNotifications().then((p) => say(m.notifications.answer(p)))}
           >
-            Notifications
+            {m.notifications.button}
           </button>
           <button type="button" class="btn" onClick={() => void signOut()}>
-            Sign out
+            {m.settings.signOut}
           </button>
         </span>
       </div>

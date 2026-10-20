@@ -5,8 +5,10 @@ use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message as Browser, WebSocket};
 use futures_util::{SinkExt, StreamExt};
+use iglu_api::Closed;
 use iglu_domain::auth::{self, Action, Decision, Resource, authorize};
 use iglu_domain::terminal::{SessionName, TerminalControl, TerminalSize};
+use iglu_proto::ErrorCode;
 use tokio_tungstenite::tungstenite::Message as Host;
 
 use crate::app::{App, Caller, now, session_valid};
@@ -21,13 +23,13 @@ pub const LEASE: Duration = Duration::from_secs(5);
 const THAW: Duration = Duration::from_secs(60);
 
 /// The close code for a terminal iglud ended on purpose. The frame's reason
-/// says why, for the console and CLI to show.
+/// says why, for the console and CLI to say.
 const REFUSED: u16 = 4000;
 
-pub fn refusal(reason: &str) -> Browser {
+pub fn refusal(why: Closed) -> Browser {
     Browser::Close(Some(CloseFrame {
         code: REFUSED,
-        reason: iglu_domain::terminal::close_reason(reason).into(),
+        reason: why.as_str().into(),
     }))
 }
 
@@ -99,17 +101,22 @@ pub async fn relay(
     let (mut to_browser, mut from_browser) = browser.split();
     // Opening a frozen workspace thaws it.
     if !crate::idle::thaw(&app, &ws, THAW).await {
-        let _ = to_browser
-            .send(refusal("the workspace isn't running"))
-            .await;
+        let _ = to_browser.send(refusal(Closed::NotRunning)).await;
         return;
     }
     let upstream = match host.attach(ws.id, &session, size).await {
         Ok(socket) => socket,
         Err(error) => {
             tracing::warn!(workspace = %ws.id, %error, "attach failed");
-            let reason = crate::api::host_error(error).to_string();
-            let _ = to_browser.send(refusal(&reason)).await;
+            let why = match error.into_command_error().code {
+                ErrorCode::NotFound | ErrorCode::InvalidState => Closed::NotRunning,
+                ErrorCode::Conflict
+                | ErrorCode::ImageMissing
+                | ErrorCode::GuestFailed
+                | ErrorCode::Timeout
+                | ErrorCode::Runtime => Closed::HostFailed,
+            };
+            let _ = to_browser.send(refusal(why)).await;
             return;
         }
     };
@@ -157,9 +164,7 @@ pub async fn relay(
     }
     let _ = to_host.close().await;
     if revoked {
-        let _ = to_browser
-            .send(refusal("access to this workspace ended"))
-            .await;
+        let _ = to_browser.send(refusal(Closed::AccessEnded)).await;
     } else {
         let _ = to_browser.close().await;
     }

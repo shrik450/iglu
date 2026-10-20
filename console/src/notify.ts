@@ -5,6 +5,7 @@ import { effect } from "@preact/signals";
 
 import type { Need } from "./generated/Need.ts";
 import type { WorkspaceView } from "./generated/WorkspaceView.ts";
+import { m } from "./messages.tsx";
 import { called } from "./state/naming.ts";
 import { situation } from "./state/situation.ts";
 import { unreachable } from "./state/unsaved.ts";
@@ -22,13 +23,28 @@ function mark(ws: WorkspaceView): string {
 /** What to tell the person, for the reason the core gave. */
 function notice(ws: WorkspaceView, need: Need): { title: string; body: string } {
   switch (need) {
-    case "waiting":
-      return { title: `${called(ws)} needs you`, body: ws.attention?.summary ?? "" };
-    case "done":
-      return { title: `${called(ws)} is done`, body: ws.attention?.summary ?? "" };
-    case "trouble": {
+    case "Waiting":
+      return { title: m.notice.waiting(called(ws)), body: ws.attention?.summary ?? "" };
+    case "Done":
+      return { title: m.notice.done(called(ws)), body: ws.attention?.summary ?? "" };
+    case "Trouble": {
       const now = situation(ws);
-      return { title: `${called(ws)} is in trouble`, body: "detail" in now ? `${now.title}. ${now.detail}` : "" };
+      switch (now.kind) {
+        case "stuck":
+        case "broken":
+        case "held": {
+          const { title, detail } = m.situation.trouble(now);
+          return { title: m.notice.trouble(called(ws)), body: m.notice.troubleBody(title, detail) };
+        }
+        case "building":
+        case "frozen":
+        case "stopped":
+        case "leaving":
+        case "running":
+          return { title: m.notice.trouble(called(ws)), body: "" };
+        default:
+          return unreachable(now);
+      }
     }
     default:
       return unreachable(need);
@@ -76,7 +92,7 @@ function favicon(dot: boolean): string {
 effect(() => {
   const count = waiting.value.length;
   const page = current.value?.name;
-  document.title = `${count ? `(${count}) ` : ""}${page ? `${page} · ` : ""}iglu`;
+  document.title = m.frame.tab(count, page ?? null);
   let link = document.querySelector<HTMLLinkElement>("link[rel=icon]");
   if (!link) {
     link = document.createElement("link");

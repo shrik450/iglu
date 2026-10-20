@@ -3,4 +3,4 @@
 /**
  * Why a workspace needs its person.
  */
-export type Need = "done" | "waiting" | "trouble";
+export type Need = "Done" | "Waiting" | "Trouble";

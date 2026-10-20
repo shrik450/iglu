@@ -61,7 +61,7 @@ def signs_in(page: Page, cli: Cli) -> None:
     browser.approve_cli(page, url.group(1))
     assert login.wait(timeout=60) == 0, login.stdout.read()
     identity = cli.json("whoami")
-    assert identity["kind"] == "person" and identity["email"] == "alice@example.org", identity
+    assert identity["kind"] == "Person" and identity["email"] == "alice@example.org", identity
 
 
 def reads(cli: Cli, name: str, project: str, port: str) -> None:

@@ -2,12 +2,14 @@
 
 import { AddEnvironment } from "../components/AddEnvironment.tsx";
 import { Card } from "../components/Card.tsx";
-import { attentionGlyph, Glyph, Icon, Igloo, needYou, WorkspaceLink } from "../components/bits.tsx";
+import { attentionGlyph, Glyph, Icon, Igloo, WorkspaceLink } from "../components/bits.tsx";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
+import { m } from "../messages.tsx";
 import { situation } from "../state/situation.ts";
 import { repoLabel } from "../state/groups.ts";
 import { collapsed, groups, newIn, overlay, projects, waiting, workspaces } from "../state/store.ts";
 import { called } from "../state/naming.ts";
+import { unreachable } from "../state/unsaved.ts";
 
 function toggle(key: string): void {
   const next = new Set(collapsed.value);
@@ -19,7 +21,20 @@ function toggle(key: string): void {
 /** What's wrong with a workspace in trouble, in a few words. */
 function troubleText(ws: WorkspaceView): string {
   const now = situation(ws);
-  return "title" in now ? now.title : "";
+  switch (now.kind) {
+    case "stuck":
+    case "broken":
+    case "held":
+      return m.situation.trouble(now).title;
+    case "building":
+    case "frozen":
+    case "stopped":
+    case "leaving":
+    case "running":
+      return "";
+    default:
+      return unreachable(now);
+  }
 }
 
 /** What someone new sees: what iglu is, and the first step, right here. */
@@ -27,21 +42,21 @@ function Welcome() {
   return (
     <div class="welcome">
       <Igloo />
-      <h1>Welcome to iglu</h1>
-      <p class="lede">Each piece of work gets its own machine: a NixOS workspace whose terminals, agents and previews live in your browser.</p>
+      <h1>{m.welcome.title}</h1>
+      <p class="lede">{m.welcome.lede}</p>
       <ol class="steps">
         <li class="now">
-          <b>Add an environment</b>
-          <span>The NixOS system your workspaces run, from a flake that uses iglu's workspace module.</span>
+          <b>{m.welcome.environment}</b>
+          <span>{m.welcome.environmentAbout}</span>
           <AddEnvironment first />
         </li>
         <li>
-          <b>Add a project</b>
-          <span>A repository to work on, and how its workspaces start. You can skip this: general has no repository.</span>
+          <b>{m.welcome.project}</b>
+          <span>{m.welcome.projectAbout}</span>
         </li>
         <li>
-          <b>Start a workspace</b>
-          <span>A branch to work on, with terminals to run your agents in.</span>
+          <b>{m.welcome.workspace}</b>
+          <span>{m.welcome.workspaceAbout}</span>
         </li>
       </ol>
     </div>
@@ -52,9 +67,9 @@ export function Overview() {
   if (projects.value.length === 0) return <Welcome />;
   return (
     <div class="overview">
-      <h1 class="sr-only">Workspaces</h1>
+      <h1 class="sr-only">{m.overview.heading}</h1>
       {waiting.value.length ? (
-        <ul class="needs-strip" aria-label="Waiting on you">
+        <ul class="needs-strip" aria-label={m.overview.waiting}>
           {waiting.value.map((ws) => (
             <li key={ws.id}>
               <WorkspaceLink ws={ws} class="nchip">
@@ -70,11 +85,9 @@ export function Overview() {
       ) : null}
       {workspaces.value.length === 0 ? (
         <div class="first-ws">
-          <p>
-            <b>Ready.</b> Start a workspace: a branch to work on, with terminals and the agents you start in it.
-          </p>
+          <p>{m.overview.ready}</p>
           <button type="button" class="btn primary" onClick={() => (overlay.value = "new")}>
-            New workspace
+            {m.overview.newWorkspace}
           </button>
         </div>
       ) : null}
@@ -85,7 +98,7 @@ export function Overview() {
           return (
             <section key={group.key} aria-label={group.label} class={group.workspaces.length === 0 ? "g-empty" : undefined}>
               <header class="g-head">
-                <button type="button" class="chev" aria-expanded={!closed} aria-label={`${closed ? "Expand" : "Collapse"} ${group.label}`} onClick={() => toggle(group.key)}>
+                <button type="button" class="chev" aria-expanded={!closed} aria-label={closed ? m.overview.expand(group.label) : m.overview.collapse(group.label)} onClick={() => toggle(group.key)}>
                   <Icon name="chevron" size={12} />
                 </button>
                 <h2 translate={false}>
@@ -103,8 +116,8 @@ export function Overview() {
                 <button
                   type="button"
                   class="g-add"
-                  aria-label={`New workspace in ${group.label}`}
-                  title={`New workspace in ${group.label}`}
+                  aria-label={m.overview.newIn(group.label)}
+                  title={m.overview.newIn(group.label)}
                   onClick={() => {
                     newIn.value = group.project.id;
                     overlay.value = "new";
@@ -114,13 +127,11 @@ export function Overview() {
                 </button>
                 {closed ? (
                   <span class="sum">
-                    {group.workspaces.length}
+                    {m.overview.count(group.workspaces.length)}
                     {need ? (
                       <>
                         {" · "}
-                        <b>
-                          {need} {needYou(need)}
-                        </b>
+                        <b>{m.overview.needYou(need)}</b>
                       </>
                     ) : null}
                   </span>
@@ -138,7 +149,7 @@ export function Overview() {
         })}
       </div>
       <button type="button" class="btn new-project" onClick={() => (overlay.value = "project")}>
-        New project
+        {m.overview.newProject}
       </button>
     </div>
   );

@@ -12,6 +12,7 @@ import type { CreateWorkspace } from "./generated/CreateWorkspace.ts";
 import type { DesiredState } from "./generated/DesiredState.ts";
 import type { RouteView } from "./generated/RouteView.ts";
 import type { WorkspaceView } from "./generated/WorkspaceView.ts";
+import { m } from "./messages.tsx";
 import { layoutOf, moved, placed, type Shown, shown, stepIndex, widened } from "./state/layout.ts";
 import {
   activeColumn,
@@ -83,7 +84,7 @@ export function nextWaiting(): void {
   const at = list.findIndex((ws) => ws.id === current.value?.id);
   const next = list[(at + 1) % Math.max(1, list.length)];
   if (next) open(next);
-  else say("Nothing needs you.");
+  else say(m.workspace.nothingWaiting);
 }
 
 export async function setState(ws: WorkspaceView, state: DesiredState): Promise<void> {
@@ -101,7 +102,7 @@ export async function remove(ws: WorkspaceView): Promise<void> {
 /** Upgrades a workspace in place to its environment's newest build. */
 export async function update(ws: WorkspaceView): Promise<void> {
   const updated = await attempt(() => api.update(ws.id));
-  if (updated) say(`Updating ${called(ws)} to the newest build of ${ws.environment}. It restarts once it's ready.`);
+  if (updated) say(m.workspace.updating(called(ws), ws.environment));
 }
 
 export async function toggleFreeze(ws: WorkspaceView): Promise<void> {
@@ -138,7 +139,7 @@ export async function labelColumn(ws: WorkspaceView, column: string, label: stri
 /** Asks for a column's name; a session nobody asked iglu for has no column to name. */
 export function labelOrSay(ws: WorkspaceView, column: string): void {
   if (ws.columns.some((c) => c.name === column)) ask(ws, { kind: "label", column });
-  else say(`${column} was opened inside the workspace, not by iglu, so it can't be renamed.`);
+  else say(m.workspace.notOurs(column));
 }
 
 /** Creates a workspace; throws what iglu refused, for the form to show. */
@@ -152,7 +153,7 @@ export async function create(body: CreateWorkspace): Promise<void> {
   if (overlay.peek() === "new") {
     overlay.value = null;
     open(ws);
-  } else say(`${called(ws)} is being made; it's in the list.`);
+  } else say(m.newWorkspace.made(called(ws)));
 }
 
 /** Publishes a port; throws what iglu refused, for a form to show. Says so
@@ -163,11 +164,7 @@ export async function publish(ws: WorkspaceView, port: number): Promise<void> {
   const route = await api.publish(ws.id, port);
   settle(ws, "port");
   const listening = inside.value[ws.id]?.listeners.some((l) => l.port === route.port) ?? true;
-  say(
-    listening
-      ? `Published :${route.port} as ${route.name}; its link is beside the name.`
-      : `Published :${route.port} as ${route.name}. Nothing listens there yet; it opens once something does.`,
-  );
+  say(m.workspace.published(route.port, route.name, listening));
   await loadLive(ws);
 }
 
@@ -192,7 +189,7 @@ export async function saveOpening(ws: WorkspaceView): Promise<void> {
       idle: project.idle,
     }),
   );
-  if (saved) say(`New workspaces in ${saved.value.name} open like this.`);
+  if (saved) say(m.workspace.openingSaved(saved.value.name));
 }
 
 /** Asks the host what's listening and where the checkout stands. Polled:
@@ -277,7 +274,7 @@ export function toggleZoom(ws: WorkspaceView): void {
 export function lastWorkspace(): void {
   const ws = workspaces.value.find((w) => w.id === previous.value);
   if (ws) open(ws);
-  else say("There's no other workspace to go back to yet.");
+  else say(m.workspace.noLast);
 }
 
 export function focusColumn(ws: WorkspaceView, name: string): void {
@@ -342,7 +339,7 @@ export async function addColumn(ws: WorkspaceView, kind: ColumnKind): Promise<vo
 /** Opens `address` in the workspace's browser, and shows it: in the browser
  * column, which is opened first if there isn't one. */
 export async function openInBrowser(ws: WorkspaceView, address: string): Promise<void> {
-  const column = columnsOf(ws).find((c) => c.kind.kind === "browser");
+  const column = columnsOf(ws).find((c) => c.kind.kind === "Browser");
   const pane = column && panes.get(`${ws.id}/${column.name}`);
   if (column && pane instanceof BrowserPane) {
     pane.open(address);
@@ -350,11 +347,11 @@ export async function openInBrowser(ws: WorkspaceView, address: string): Promise
     return;
   }
   openOnceShown(ws.id, address);
-  if (column && column.state !== "ended") {
+  if (column && column.state !== "Ended") {
     focusColumn(ws, column.name);
     return;
   }
-  const started = await attempt(() => (column ? api.restartColumn(ws.id, column.name) : openColumn(ws, { kind: "browser" })));
+  const started = await attempt(() => (column ? api.restartColumn(ws.id, column.name) : openColumn(ws, { kind: "Browser" })));
   // A browser that didn't start mustn't open it when one next does.
   if (!started) openOnceShown(ws.id, null);
   else if (column) await loadColumns(ws);

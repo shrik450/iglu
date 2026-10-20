@@ -4,4 +4,4 @@ import type { DownloadName } from "./DownloadName";
 /**
  * What iglu tells the console of the browser, beside what VNC carries.
  */
-export type BrowserEvent = { "type": "display", hardware: boolean, } | { "type": "downloaded", name: DownloadName | null, path: string, };
+export type BrowserEvent = { "type": "Display", hardware: boolean, } | { "type": "Downloaded", name: DownloadName | null, path: string, };

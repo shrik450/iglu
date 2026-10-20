@@ -5,9 +5,9 @@ import type { ColumnSpec } from "../generated/ColumnSpec.ts";
 import { inView, moved, nextWidth, placed, scrollTarget, shown, stepIndex, titleOf, widened } from "./layout.ts";
 
 const columns: ColumnSpec[] = [
-  { name: "shell", kind: { kind: "shell" }, width: "half", label: null },
-  { name: "claude", kind: { kind: "shell" }, width: "two-thirds", label: null },
-  { name: "server", kind: { kind: "browser" }, width: "third", label: "preview" },
+  { name: "shell", kind: { kind: "Shell" }, width: "half", label: null },
+  { name: "claude", kind: { kind: "Shell" }, width: "two-thirds", label: null },
+  { name: "server", kind: { kind: "Browser" }, width: "third", label: "preview" },
 ];
 
 test("widths cycle through every preset", () => {
@@ -27,17 +27,18 @@ test("asked-for columns keep their order, unknown until the host says", () => {
 
 test("missing sessions are ended and unasked ones come last as shells", () => {
   const statuses = [
-    { name: "adhoc", state: "adopted" as const, clients: 0 },
-    { name: "server", state: "open" as const, clients: 1 },
-    { name: "shell", state: "open" as const, clients: 0 },
+    { name: "adhoc", state: "Adopted" as const, clients: 0 },
+    { name: "server", state: "Open" as const, clients: 1 },
+    { name: "shell", state: "Open" as const, clients: 0 },
+    { name: "gone", state: "Ended" as const, clients: 0 },
   ];
   assert.deepEqual(
-    shown(columns, statuses).map((c) => [c.name, c.state, c.kind.kind]),
+    shown(columns, statuses).map((c) => [c.name, c.state, c.kind.kind, c.width]),
     [
-      ["shell", "open", "shell"],
-      ["claude", "ended", "shell"],
-      ["server", "open", "browser"],
-      ["adhoc", "adopted", "shell"],
+      ["shell", "Open", "Shell", "half"],
+      ["claude", "Ended", "Shell", "two-thirds"],
+      ["server", "Open", "Browser", "third"],
+      ["adhoc", "Adopted", "Shell", "half"],
     ],
   );
 });

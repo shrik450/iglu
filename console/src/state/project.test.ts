@@ -1,20 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { opensWith, parsePorts } from "./project.ts";
+import { parsePorts } from "./project.ts";
 
 test("ports parse from a loose list", () => {
   assert.deepEqual(parsePorts("5173, 3000 3000"), { ports: [3000, 5173] });
   assert.deepEqual(parsePorts("  "), { ports: [] });
-  assert.deepEqual(parsePorts("3000, http"), { error: "http isn't a port number." });
+  assert.deepEqual(parsePorts("3000, http"), { notANumber: "http" });
+  assert.deepEqual(parsePorts("3000x"), { notANumber: "3000x" });
+  assert.deepEqual(parsePorts("x3000"), { notANumber: "x3000" });
   // Out of range is iglu's to refuse, beside the input.
   assert.deepEqual(parsePorts("70000"), { ports: [70000] });
-});
-
-test("a new workspace opens its project's columns, by name or kind", () => {
-  const shell = { kind: { kind: "shell" as const }, width: "half" as const };
-  const notes = { name: "notes", kind: { kind: "shell" as const }, width: "half" as const };
-  const browser = { kind: { kind: "browser" as const }, width: "half" as const };
-  assert.deepEqual(opensWith({ opening: [shell, notes, browser] }), ["Shell", "notes", "Browser"]);
-  assert.deepEqual(opensWith({ opening: [] }), []);
 });

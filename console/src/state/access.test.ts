@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { holds, named, toggled } from "./access.ts";
+import type { Permission } from "../generated/Permission.ts";
+import { holds, named, PERMISSIONS, toggled } from "./access.ts";
 
 test("a permission is given and taken away, and an emptied workspace drops out", () => {
   const given = toggled([], "b", "view");
@@ -30,4 +31,10 @@ test("other workspaces' grants are left as they were", () => {
 test("the workspace itself comes first, even with nothing granted on it", () => {
   assert.deepEqual(named([{ workspace: "b", permissions: ["view"] }], "a"), ["a", "b"]);
   assert.deepEqual(named([{ workspace: "a", permissions: ["view"] }], "a"), ["a"]);
+});
+
+test("the console offers every permission, once", () => {
+  // A new permission is a type error here until it's listed.
+  const every: Record<Permission, true> = { view: true, read_output: true, send_input: true, manage_columns: true, publish_routes: true, operate: true };
+  assert.deepEqual([...PERMISSIONS].sort(), Object.keys(every).sort());
 });

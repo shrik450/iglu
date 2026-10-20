@@ -210,7 +210,7 @@ pub enum Provisioning {
 
 /// One step the host can take. The shell attaches the payload each step needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Effect {
     /// Create the instance from its image, stopped, with limits and policy applied.
     Create,
@@ -265,7 +265,7 @@ pub enum Blocker {
 
 /// Why the control plane should change its own intent to match reality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum AdoptReason {
     /// A frozen workspace's memory lives in RAM and swap, which don't survive
     /// a host restart. The workspace is stopped now; restarting it just to

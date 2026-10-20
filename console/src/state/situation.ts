@@ -1,100 +1,61 @@
-// What a workspace is doing, in words, so its card and its view tell the same
-// story. Pure.
+// What a workspace is doing, so its card and its view tell the same story.
+// messages.tsx says it in words. Pure.
 
+import type { Condition } from "../generated/Condition.ts";
+import type { Effect } from "../generated/Effect.ts";
+import type { Failure } from "../generated/Failure.ts";
+import type { Phase } from "../generated/Phase.ts";
 import type { WorkspaceView } from "../generated/WorkspaceView.ts";
 import { unreachable } from "./unsaved.ts";
 
 export type Situation =
   /** Being made or started, and going fine. */
-  | { kind: "building"; label: string }
+  | { kind: "building"; phase: "creating" | "starting" }
   /** A step keeps failing; iglu retries it. */
-  | { kind: "stuck"; title: string; detail: string }
+  | { kind: "stuck"; phase: Phase; step: Effect; failure: Failure }
   /** The runtime gave up on it; only stopping or deleting helps. */
-  | { kind: "broken"; title: string; detail: string }
+  | { kind: "broken" }
   /** Held up by something outside it, which iglu waits out. */
-  | { kind: "held"; title: string; detail: string }
-  | { kind: "frozen"; label: string }
-  | { kind: "stopped"; label: string }
+  | { kind: "held"; condition: Extract<Condition, { kind: "HostOffline" | "Capacity" }> }
+  | { kind: "frozen"; freezing: boolean }
+  | { kind: "stopped" }
   /** Stopping or being deleted. */
-  | { kind: "leaving"; label: string }
+  | { kind: "leaving"; deleting: boolean }
   | { kind: "running" };
-
-/** Bytes in binary gigabytes, as the core says memory: "1.5 GiB". */
-export function gibibytes(bytes: number): string {
-  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
-}
-
-/** The first letter up, for a message that starts mid-sentence. */
-function sentence(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function failing(phase: WorkspaceView["phase"]): string {
-  switch (phase) {
-    case "creating":
-      return "Can't create it yet";
-    case "starting":
-      return "Can't start it yet";
-    case "freezing":
-      return "Can't freeze it yet";
-    case "stopping":
-      return "Can't stop it yet";
-    case "deleting":
-    case "deleted":
-      return "Can't delete it yet";
-    case "running":
-    case "frozen":
-    case "stopped":
-      return "Something keeps failing";
-    default:
-      return unreachable(phase);
-  }
-}
 
 export function situation(ws: Pick<WorkspaceView, "phase" | "condition">): Situation {
   const condition = ws.condition;
   if (condition) {
     switch (condition.kind) {
-      case "error":
-        return { kind: "stuck", title: failing(ws.phase), detail: `${sentence(condition.message)}. iglu keeps trying.` };
-      case "runtime_failed":
-        return { kind: "broken", title: "It's broken", detail: "The host can't run it any more. Stop it to try again, or delete it." };
-      case "host_offline":
-        return { kind: "held", title: "The host isn't answering", detail: "It carries on when the host is back." };
-      case "capacity":
-        return {
-          kind: "held",
-          title: "Waiting for room",
-          detail: `It needs ${gibibytes(condition.needed)} and the host has ${gibibytes(condition.available)} free. It starts when another workspace frees some.`,
-        };
+      case "Error":
+        return { kind: "stuck", phase: ws.phase, step: condition.step, failure: condition.failure };
+      case "RuntimeFailed":
+        return { kind: "broken" };
+      case "HostOffline":
+      case "Capacity":
+        return { kind: "held", condition };
       default:
         return unreachable(condition);
     }
   }
   switch (ws.phase) {
     case "creating":
-      return { kind: "building", label: "Creating…" };
     case "starting":
-      return { kind: "building", label: "Starting…" };
+      return { kind: "building", phase: ws.phase };
     case "freezing":
-      return { kind: "frozen", label: "Freezing…" };
+      return { kind: "frozen", freezing: true };
     case "frozen":
-      return { kind: "frozen", label: "Frozen" };
+      return { kind: "frozen", freezing: false };
     case "stopping":
-      return { kind: "leaving", label: "Stopping…" };
+      return { kind: "leaving", deleting: false };
     case "stopped":
-      return { kind: "stopped", label: "Stopped. Its files are kept; its processes ended." };
+      return { kind: "stopped" };
     case "deleting":
     case "deleted":
-      return { kind: "leaving", label: "Deleting…" };
+      return { kind: "leaving", deleting: true };
     case "running":
       return { kind: "running" };
     default:
       return unreachable(ws.phase);
   }
-}
-
-/** What a workspace without agent threads runs, for its card: "shell · server". */
-export function runs(columns: readonly { name: string }[]): string {
-  return columns.map((c) => c.name).join(" · ");
 }

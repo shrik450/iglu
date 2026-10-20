@@ -3,4 +3,4 @@
 /**
  * Whether a column's session is there, compared with what was asked for.
  */
-export type ColumnState = "open" | "ended" | "adopted";
+export type ColumnState = "Open" | "Ended" | "Adopted";

@@ -2,12 +2,13 @@
 // Both read the keymap's own table, so they can't disagree with it.
 
 import { armed, mac } from "../keyboard.ts";
+import { m } from "../messages.tsx";
 import { keyboard } from "../preferences.ts";
 import { type Binding, BINDINGS, chordLabel, onKeyboard } from "../state/keys.ts";
 import { overlay } from "../state/store.ts";
 import { DialogHead, Modal } from "./Modal.tsx";
 
-const GROUPS = ["Anywhere", "Workspaces", "Columns"] as const;
+const GROUPS = ["anywhere", "workspaces", "columns"] as const;
 
 function Chord({ keys }: { keys: string }) {
   return (
@@ -34,48 +35,37 @@ export function Keys() {
   return (
     <Modal labelledby="keys-h" onClose={close}>
       <div class="kbox">
-        <DialogHead id="keys-h" title="Keyboard shortcuts" onClose={close} autofocus />
-        <p class="muted">
-          {keyboard.value.alt_moves ? (
-            <>
-              Terminals keep every key but <Chord keys={onKeyboard("⌥H ⌥J ⌥K ⌥L", mac)} />, which move between columns and workspaces; Settings can give
-              those back.{" "}
-            </>
-          ) : (
-            "Terminals keep every key. "
-          )}
-          To reach iglu from one, press <Chord keys={prefix} />, then a key. Pressing it twice sends <Chord keys={prefix} /> to the terminal. On the
-          overview, the keys work without it.
-        </p>
+        <DialogHead id="keys-h" title={m.keys.title} onClose={close} autofocus />
+        <p class="muted">{m.keys.about(keyboard.value.alt_moves, <Chord keys={onKeyboard("⌥H ⌥J ⌥K ⌥L", mac)} />, <Chord keys={prefix} />)}</p>
         <div class="kgroups">
           {GROUPS.map((group) => (
             <section key={group}>
-              <h3>{group}</h3>
+              <h3>{m.keys.group(group)}</h3>
               <dl>
                 {BINDINGS.filter((b) => b.group === group).map((b) => (
-                  <div key={b.does}>
+                  <div key={JSON.stringify(b.action)}>
                     <dt>
                       {ways(b, prefix).map((w) => (
                         <Chord key={w} keys={w} />
                       ))}
                       {b.page && !b.after ? b.page.map((k) => <Chord key={k.label} keys={k.label} />) : null}
                     </dt>
-                    <dd>{b.does}</dd>
+                    <dd>{m.keys.does(b.action)}</dd>
                   </div>
                 ))}
-                {group === "Columns" ? (
+                {group === "columns" ? (
                   <>
                     <div>
                       <dt>
                         <Chord keys={`${prefix} 1–9`} />
                       </dt>
-                      <dd>Go to a column</dd>
+                      <dd>{m.keys.toColumn}</dd>
                     </div>
                     <div>
                       <dt>
                         <Chord keys={onKeyboard("⌘ click", mac)} />
                       </dt>
-                      <dd>Open a link in its output</dd>
+                      <dd>{m.keys.openLink}</dd>
                     </div>
                   </>
                 ) : null}
@@ -94,32 +84,32 @@ export function PrefixHint() {
   if (!armed.value) return null;
   const prefix = chordLabel(keyboard.value.prefix, mac);
   return (
-    <div class="prefix-hint" role="status" aria-label="iglu is waiting for a key">
-      {(["Columns", "Workspaces", "Anywhere"] as const).map((group) => (
+    <div class="prefix-hint" role="status" aria-label={m.keys.waiting}>
+      {(["columns", "workspaces", "anywhere"] as const).map((group) => (
         <section key={group}>
-          <h3>{group}</h3>
+          <h3>{m.keys.group(group)}</h3>
           <ul>
             {BINDINGS.flatMap((b) =>
               b.after && b.group === group
                 ? [
-                    <li key={b.does}>
-                      <kbd>{b.after.label}</kbd> {b.does}
+                    <li key={JSON.stringify(b.action)}>
+                      <kbd>{b.after.label}</kbd> {m.keys.does(b.action)}
                     </li>,
                   ]
                 : [],
             )}
-            {group === "Columns" ? (
+            {group === "columns" ? (
               <li>
-                <kbd>1–9</kbd> Go to a column
+                <kbd>1–9</kbd> {m.keys.toColumn}
               </li>
             ) : null}
-            {group === "Anywhere" ? (
+            {group === "anywhere" ? (
               <>
                 <li>
-                  <kbd>{prefix}</kbd> Send {prefix} to the terminal
+                  <kbd>{prefix}</kbd> {m.keys.sendPrefix(prefix)}
                 </li>
                 <li>
-                  <kbd>esc</kbd> Cancel
+                  <kbd>esc</kbd> {m.keys.cancel}
                 </li>
               </>
             ) : null}

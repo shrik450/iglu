@@ -103,10 +103,10 @@ class Api:
         while True:
             env = next(env for env in self.get("/v1/environments") if env["name"] == name)
             latest = env.get("latest") or {}
-            status = latest.get("status") if latest.get("id") == revision else "building"
-            if status == "ready":
+            status = latest.get("status") if latest.get("id") == revision else "Building"
+            if status == "Ready":
                 return
-            if status == "failed" or time.monotonic() > deadline:
+            if status == "Failed" or time.monotonic() > deadline:
                 raise RuntimeError(f"environment {name} is {status}")
             time.sleep(1)
 

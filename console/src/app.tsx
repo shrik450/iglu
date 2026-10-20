@@ -1,9 +1,10 @@
 // The console's frame: the top bar, the current view, and overlays.
 
 import { nextWaiting } from "./actions.ts";
-import { Glyph, Icon, Igloo, needYou } from "./components/bits.tsx";
+import { Glyph, Icon, Igloo } from "./components/bits.tsx";
 import { Keys, PrefixHint } from "./components/Keys.tsx";
 import { keysFor, mac } from "./keyboard.ts";
+import { m } from "./messages.tsx";
 import { onKeyboard } from "./state/keys.ts";
 import { NewProject } from "./components/NewProject.tsx";
 import { NewWorkspace } from "./components/NewWorkspace.tsx";
@@ -26,29 +27,26 @@ function Topbar() {
           class="tb-mark"
           href="/"
           translate={false}
-          aria-label="iglu, overview"
+          aria-label={m.frame.home}
           aria-current={view === "overview" ? "page" : undefined}
         >
           iglu
         </a>
         {count ? (
-          <button type="button" class="needs-badge" title={`Next workspace that needs you (${keysFor("next-waiting")})`} aria-label={`${count} ${needYou(count)}; go to the next`} onClick={nextWaiting}>
+          <button type="button" class="needs-badge" title={m.frame.waitingTitle(keysFor("next-waiting"))} aria-label={m.frame.waitingLabel(count)} onClick={nextWaiting}>
             <Glyph kind="waiting" />
-            <span>
-              {count}
-              <span class="wide"> {needYou(count)}</span>
-            </span>
+            <span>{m.frame.waiting(count)}</span>
           </button>
         ) : null}
         {outdated.value ? (
           <span class="offline" role="status">
-            iglu was updated.{" "}
+            {m.frame.updated}{" "}
             <button type="button" class="btn" onClick={() => location.reload()}>
-              Reload
+              {m.frame.reload}
             </button>
           </span>
         ) : live.value ? null : (
-          <span class="offline">Reconnecting…</span>
+          <span class="offline">{m.frame.reconnecting}</span>
         )}
       </div>
       <div class="tb-right">
@@ -57,24 +55,24 @@ function Topbar() {
           class="tb-link"
           href="/previews"
           aria-current={view === "previews" ? "page" : undefined}
-          title={`Previews (${keysFor("previews")})`}
+          title={m.frame.previewsTitle(keysFor("previews"))}
         >
-          Previews
+          {m.frame.previews}
         </a>
-        <button type="button" class="search" aria-label="Search and commands" onClick={() => (overlay.value = "palette")}>
+        <button type="button" class="search" aria-label={m.frame.search} onClick={() => (overlay.value = "palette")}>
           <span class="narrow">
             <Icon name="search" size={15} />
           </span>
-          <span class="wide">Search…</span>
+          <span class="wide">{m.frame.searchWide}</span>
           <kbd>{onKeyboard("⌘ K", mac)}</kbd>
         </button>
-        <button type="button" class="btn icon primary" aria-label="New workspace" title={`New workspace (${keysFor("new")})`} onClick={() => (overlay.value = "new")}>
+        <button type="button" class="btn icon primary" aria-label={m.frame.newWorkspace} title={m.frame.newWorkspaceTitle(keysFor("new"))} onClick={() => (overlay.value = "new")}>
           <Icon name="plus" size={16} />
         </button>
         <a
           class="who"
           href="/settings"
-          aria-label={`Settings, signed in as ${who}`}
+          aria-label={m.frame.settings(who)}
           title={who}
           aria-current={view === "settings" ? "page" : undefined}
         >
@@ -125,7 +123,7 @@ function Flash() {
             undo?.();
           }}
         >
-          Undo
+          {m.frame.undo}
         </button>
       ) : null}
     </p>
@@ -138,7 +136,7 @@ export function App() {
   return (
     <>
       <a class="skip" href="#stage">
-        Skip to content
+        {m.frame.skip}
       </a>
       <Topbar />
       <main class="stage" id="stage">

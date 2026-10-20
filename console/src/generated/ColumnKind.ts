@@ -3,4 +3,4 @@
 /**
  * What a column runs.
  */
-export type ColumnKind = { "kind": "shell" } | { "kind": "browser" };
+export type ColumnKind = { "kind": "Shell" } | { "kind": "Browser" };

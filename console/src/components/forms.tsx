@@ -4,7 +4,10 @@
 // an InputError from reading the form) shows by the input its first segment
 // names, through that input's FieldError; any other error shows at the
 // form's FormError. The server is the one parser of what inputs mean, so
-// forms only turn text into the request's shape.
+// forms only turn text into the request's shape. iglu says which input it
+// couldn't take, not why: each form gives, from messages.tsx, what each of
+// its inputs takes, and that's said by the one refused. A form is typed by
+// its request, so an input's name is one of the request's fields.
 
 import { type RefObject } from "preact";
 import { useId, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -30,23 +33,31 @@ export class InputError extends Error {
   }
 }
 
-interface Problem {
+/** A form's inputs: the fields of the request it makes, which are what iglu
+ * names when it refuses one. */
+type Input<Request> = keyof Request & string;
+
+interface Problem<Request> {
   message: string;
   /** The input it's shown by, or null for the form's own error. */
-  input: string | null;
+  input: Input<Request> | null;
 }
 
-export interface Form {
+export interface Form<Request> {
   readonly id: string;
   readonly busy: boolean;
-  readonly problem: Problem | null;
+  readonly problem: Problem<Request> | null;
   readonly onSubmit: (e: Event) => Promise<void>;
 }
 
-/** Submits a form with `run`, showing what it throws by the input it's about. */
-export function useForm(run: (data: FormData, form: HTMLFormElement) => Promise<void>): Form {
+/** What each of a request's inputs takes. */
+export type Rules<Request> = { readonly [Field in keyof Request]?: string };
+
+/** Submits a form with `run`, showing what it throws by the input it's
+ * about: for an input iglu couldn't take, what it takes, from `rules`. */
+export function useForm<Request>(run: (data: FormData, form: HTMLFormElement) => Promise<void>, rules: Rules<Request>): Form<Request> {
   const id = useId();
-  const [problem, setProblem] = useState<Problem | null>(null);
+  const [problem, setProblem] = useState<Problem<Request> | null>(null);
   const [busy, setBusy] = useState(false);
   const onSubmit = async (e: Event) => {
     e.preventDefault();
@@ -57,8 +68,13 @@ export function useForm(run: (data: FormData, form: HTMLFormElement) => Promise<
       await run(new FormData(form), form);
     } catch (error) {
       const field = error instanceof ApiError || error instanceof InputError ? error.field : null;
-      const named = field === null ? null : form.elements.namedItem(inputOf(field));
-      setProblem({ message: failure(error), input: named && field !== null ? inputOf(field) : null });
+      const input = field === null ? null : inputOf(field);
+      const named = input === null ? null : form.elements.namedItem(input);
+      const invalid = error instanceof ApiError && error.refusal.from === "iglu" && error.refusal.reason.kind === "Invalid";
+      // iglu names the request's fields, and an InputError the form's inputs.
+      const known = named ? (input as Input<Request>) : null;
+      const rule = invalid && known !== null ? rules[known] : undefined;
+      setProblem({ message: rule ?? failure(error), input: known });
       if (named instanceof HTMLElement) {
         const folded = named.closest("details");
         if (folded) folded.open = true;
@@ -70,18 +86,18 @@ export function useForm(run: (data: FormData, form: HTMLFormElement) => Promise<
   return { id, busy, problem, onSubmit };
 }
 
-function errorId(form: Form, input: string): string {
+function errorId<Request>(form: Form<Request>, input: Input<Request>): string {
   return `${form.id}-${input}-error`;
 }
 
 /** Marks an input invalid while the form's error is about `input`. */
-export function invalid(form: Form, input: string): { "aria-invalid"?: true; "aria-describedby"?: string } {
+export function invalid<Request>(form: Form<Request>, input: NoInfer<Input<Request>>): { "aria-invalid"?: true; "aria-describedby"?: string } {
   return form.problem?.input === input ? { "aria-invalid": true, "aria-describedby": errorId(form, input) } : {};
 }
 
 /** The form's error about `input`, if that's what it's about. It's hidden
  * from the label it sits in; the input reads it as its description. */
-export function FieldError({ form, input }: { form: Form; input: string }) {
+export function FieldError<Request>({ form, input }: { form: Form<Request>; input: NoInfer<Input<Request>> }) {
   return form.problem?.input === input ? (
     <span class="field-err" id={errorId(form, input)} aria-hidden="true">
       {form.problem.message}
@@ -90,7 +106,7 @@ export function FieldError({ form, input }: { form: Form; input: string }) {
 }
 
 /** The form's error that isn't about one of its inputs. */
-export function FormError({ form }: { form: Form }) {
+export function FormError<Request>({ form }: { form: Form<Request> }) {
   return form.problem && form.problem.input === null ? (
     <p class="field-err" role="alert">
       {form.problem.message}

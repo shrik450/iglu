@@ -149,7 +149,7 @@ try:
         state = found(r"[?&]state=([^&]+)", authorize)
         # Another browser, without the sign-in cookie, follows the callback.
         page = control.succeed(f"curl -sS -i '{CONSOLE}/auth/callback?code=stolen&state={state}'")
-        assert "browser that started it" in page, page
+        assert "browser that started the sign-in" in page, page
         # A person sees a page, not the API's JSON.
         assert "content-type: text/html" in page.lower(), page
 
@@ -166,7 +166,7 @@ try:
     with subtest("an environment builds on the host"):
         iglu(f"env add example 'path:{SELF}#example'")
         control.wait_until_succeeds(
-            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"example\") | .latest.status == \"ready\"'",
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"example\") | .latest.status == \"Ready\"'",
             timeout=900,
         )
 
@@ -187,7 +187,7 @@ try:
     with subtest("a private environment can't be fetched without its owner's Git credential"):
         iglu(f"env add private 'github:alice/env?host={GIT_ADDRESS}#private'")
         control.wait_until_succeeds(
-            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"failed\"'",
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"Failed\"'",
             timeout=300,
         )
         private = next(e for e in iglu("env ls") if e["name"] == "private")
@@ -212,8 +212,9 @@ try:
     with subtest("every refused request says why, as JSON naming the input"):
         json_body = ("-H", "Content-Type: application/json")
         status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":"broken","source":"github:a/b"}')
-        assert status == 400 and body["error"] == "bad_request" and body["field"] == "source", body
-        assert "#" in body["message"] and " at line " not in body["message"], body
+        assert status == 400 and body["reason"] == {"kind": "Invalid"} and body["field"] == "source", body
+        # Why is data, for whoever shows it to say; iglud sends no prose.
+        assert set(body) == {"reason", "field"}, body
         # A path parameter's own parser doesn't know its name; the route's only one is it.
         status, body, _ = api_refusal(
             "PUT", "/v1/secrets/Bad%20Name", *json_body, "-d", '{"target":{"kind":"env","name":"X"},"value":"x"}'
@@ -223,26 +224,26 @@ try:
         assert status == 400 and body["field"] == "id", body
         # Not the console's page, which every other path gets.
         status, body, _ = api_refusal("GET", "/v1/no-such-thing")
-        assert status == 404 and body["error"] == "not_found", body
+        assert status == 404 and body["reason"]["kind"] == "NotFound", body
         status, body, headers = api_refusal("DELETE", "/v1/me")
-        assert status == 405 and body["error"] == "method_not_allowed", body
+        assert status == 405 and body["reason"]["kind"] == "MethodNotAllowed", body
         assert "allow: get" in headers, headers
         status, body, _ = api_refusal("POST", "/v1/environments", "-d", "name=broken")
-        assert status == 415 and body["error"] == "unsupported_media_type", body
+        assert status == 415 and body["reason"]["kind"] == "JsonExpected", body
         status, body, _ = api_refusal("POST", "/v1/environments", *json_body, "-d", '{"name":')
-        assert status == 400 and body["field"] is None and "isn't JSON" in body["message"], body
-        # The CLI shows the server's reason and the input it's about.
+        assert status == 400 and body["field"] is None and body["reason"]["kind"] == "NotJson", body
+        # The CLI says the server's reason, and the input it's about.
         code, said = control.execute(f"{IGLU} env add example 'path:{SELF}#example' 2>&1")
         assert code != 0 and "name: an environment with that name exists" in said, said
 
     with subtest("the console shows a refusal by the input it's about"):
         shown = browser("refused-environment")
-        assert "invalid environment source" in shown["error"], shown
+        assert "flake#name" in shown["error"], shown
 
     with subtest("the same Git credential lets the host fetch the private environment"):
         iglu("env build private")
         control.wait_until_succeeds(
-            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"ready\"'",
+            f"{IGLU} --json env ls | jq -e '.[] | select(.name == \"private\") | .latest.status == \"Ready\"'",
             timeout=600,
         )
         # Only in the build's environment: not in its arguments, on disk, or in the logs.
@@ -346,7 +347,7 @@ try:
         terminal = json.loads(
             control.succeed(
                 f"{api} -X POST -H 'Content-Type: application/json' "
-                f"-d '{{\"kind\": {{\"kind\": \"shell\"}}}}' {CONSOLE}/v1/workspaces/{ws['id']}/columns"
+                f"-d '{{\"kind\": {{\"kind\": \"Shell\"}}}}' {CONSOLE}/v1/workspaces/{ws['id']}/columns"
             )
         )["name"]
         attach = f"wss://iglu.example.test/v1/workspaces/{ws['id']}/columns/{terminal}/attach?cols=80&rows=24"
@@ -358,8 +359,8 @@ try:
         assert "token=hunter2" in output, f"the terminal should see the secret: {output!r}"
         columns = json.loads(control.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/columns"))
         assert [(c["name"], c["state"]) for c in columns] == [
-            ("shell", "open"),
-            (terminal, "open"),
+            ("shell", "Open"),
+            (terminal, "Open"),
         ], columns
         git_state = json.loads(control.succeed(f"{api} {CONSOLE}/v1/workspaces/{ws['id']}/live"))["git"]
         assert git_state["branch"] == "demo" and git_state["conflicted"] == 0, git_state
@@ -445,7 +446,7 @@ try:
         iglu("freeze demo --wait")
         browser("visit", published["url"])
         phase_is("demo", "running")
-        assert "thawed-on-open" in [entry["kind"] for entry in iglu("log demo")]
+        assert "ThawedOnOpen" in [entry["kind"] for entry in iglu("log demo")]
 
     with subtest("a workspace clones over HTTPS with the Git credential secret"):
         project = iglu(f"project add app-https --repo https://{GIT_ADDRESS}/app.git --env example")
@@ -464,9 +465,9 @@ try:
         # Unpublishing it is in its history, as publishing it is.
         route = https["routes"][0]
         control.succeed(f"{api} -X DELETE {CONSOLE}/v1/workspaces/{https['id']}/routes/{route['id']}")
-        history = [(entry["kind"], entry["detail"]) for entry in iglu("log over-https")]
-        said = f"port 3000 as {route['name']}"
-        assert ("published", said) in history and ("unpublished", said) in history, history
+        history = [(entry["kind"], entry.get("port"), entry.get("route")) for entry in iglu("log over-https")]
+        assert ("Published", 3000, route["name"]) in history, history
+        assert ("Unpublished", 3000, route["name"]) in history, history
 
     with subtest("a workspace without a repository opens a shell, named for what it's called"):
         scratch = iglu("new general --label 'Fix the login bug' --wait")
@@ -474,7 +475,7 @@ try:
         assert scratch["phase"] == "running" and scratch["checkout"] is None, scratch
         guest_of("iglu-" + scratch["id"].replace("-", ""))("test ! -e ~/app")
         columns = json.loads(control.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/columns"))
-        assert [(c["name"], c["state"]) for c in columns] == [("shell", "open")], columns
+        assert [(c["name"], c["state"]) for c in columns] == [("shell", "Open")], columns
         assert json.loads(control.succeed(f"{api} {CONSOLE}/v1/workspaces/{scratch['id']}/live"))["git"] is None
         control.fail(f"{IGLU} new general --name branchy --branch main")
         control.fail(f"{IGLU} project rm general")
@@ -483,7 +484,7 @@ try:
     with subtest("a workspace upgrades in place to its environment's newest build, keeping its files"):
         host.succeed(f"cp -r {CHANGING_ENV} /var/lib/changing-env && chmod -R a+rX,u+w /var/lib/changing-env")
         iglu("env add changing 'path:/var/lib/changing-env#changing'")
-        ready = "jq -e '.[] | select(.name == \"changing\") | .latest.status == \"ready\"'"
+        ready = "jq -e '.[] | select(.name == \"changing\") | .latest.status == \"Ready\"'"
         control.wait_until_succeeds(f"{IGLU} --json env ls | {ready}", timeout=600)
         iglu("project add changing --env changing")
         updating = iglu("new changing --name updating --wait")
@@ -512,7 +513,7 @@ try:
         # The old system is gone from its store.
         inside(f"test ! -e {before['user.iglu.system']}")
         history = [entry["kind"] for entry in iglu("log updating")]
-        assert "update-asked" in history and "updated" in history, history
+        assert "UpdateAsked" in history and "Updated" in history, history
         iglu("rm updating --wait --force")
         iglu("project rm changing")
 
@@ -554,7 +555,7 @@ try:
         iglu("access set demo --on over-https --allow")
         guest("! iglu column ls -w over-https")
         history = [(entry["kind"], entry["via"]) for entry in iglu("log demo")]
-        assert ("column-added", "demo") in history, history
+        assert ("ColumnAdded", "demo") in history, history
 
     with subtest("freezing reclaims memory and thawing resumes"):
 
@@ -581,7 +582,7 @@ try:
         assert guest("cat /proc/sys/kernel/random/boot_id").strip() != boot
         assert iglu("show over-https")["desired"] == "stopped"
         history = [entry["kind"] for entry in iglu("log over-https")]
-        assert "adopted" in history, history
+        assert "Adopted" in history, history
         assert "init" in guest("git -C ~/app log --oneline")
         # hostd listens for each workspace's channel again.
         guest("for i in $(seq 30); do iglu whoami && exit 0; sleep 1; done; exit 1")
@@ -601,7 +602,7 @@ try:
         )
         iglu("new app-https --name waits")
         control.wait_until_succeeds(
-            f"{IGLU} --json show waits | jq -e '.condition.kind == \"capacity\"'", timeout=120
+            f"{IGLU} --json show waits | jq -e '.condition.kind == \"Capacity\"'", timeout=120
         )
         browser("card", "waits", "Waiting for room")
         host.succeed("systemctl stop hog")

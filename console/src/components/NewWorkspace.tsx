@@ -5,8 +5,8 @@ import { useState } from "preact/hooks";
 
 import { create } from "../actions.ts";
 import type { CreateWorkspace } from "../generated/CreateWorkspace.ts";
+import { m } from "../messages.tsx";
 import { nameFrom, nameFromBranch } from "../state/naming.ts";
-import { opensWith } from "../state/project.ts";
 import { current, newIn, overlay, projects, route } from "../state/store.ts";
 import { FieldError, FormError, invalid, textOf, useForm } from "./forms.tsx";
 import { DialogHead, Modal } from "./Modal.tsx";
@@ -22,12 +22,12 @@ export function NewWorkspace() {
   const repo = Boolean(project?.repo);
   // The name iglu will make, shown until one is typed.
   const made = nameFrom(label) ?? (repo ? nameFromBranch(branch) : null);
-  const opens = project ? opensWith(project) : [];
+  const opens = project ? project.opening.map((t) => t.name ?? m.columnKind(t.kind)) : [];
   const close = () => {
     overlay.value = null;
     newIn.value = null;
   };
-  const start = useForm(async (data) => {
+  const start = useForm<CreateWorkspace>(async (data) => {
     if (!project) return;
     const text = textOf(data);
     const body: CreateWorkspace = { project: project.id };
@@ -37,15 +37,15 @@ export function NewWorkspace() {
     if (repo && branch) body.branch = branch;
     if (repo && base) body.base = base;
     await create(body);
-  });
+  }, m.newWorkspace.rules);
   return (
     <Modal labelledby="new-h" onClose={close}>
       <form class="nbox" aria-labelledby="new-h" onSubmit={start.onSubmit}>
-        <DialogHead id="new-h" title="New workspace" onClose={close} />
-        {projects.value.length === 0 ? <p class="field-err">Add an environment first, in <a href="/settings">Settings</a>.</p> : null}
+        <DialogHead id="new-h" title={m.newWorkspace.title} onClose={close} />
+        {projects.value.length === 0 ? <p class="field-err">{m.newWorkspace.noEnvironment((text) => <a href="/settings">{text}</a>)}</p> : null}
         {projects.value.length > 1 ? (
           <label>
-            Project
+            {m.newWorkspace.project}
             <select name="project" value={chosen} onChange={(e) => setChosen(e.currentTarget.value)} {...invalid(start, "project")}>
               {projects.value.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -58,10 +58,10 @@ export function NewWorkspace() {
         ) : null}
         {repo ? (
           <label>
-            Branch
+            {m.newWorkspace.branch}
             <input
               name="branch"
-              placeholder="A new branch, or one the remote has…"
+              placeholder={m.newWorkspace.branchHint}
               autocomplete="off"
               spellcheck={false}
               autofocus
@@ -73,10 +73,10 @@ export function NewWorkspace() {
           </label>
         ) : null}
         <label>
-          Call it
+          {m.newWorkspace.label}
           <input
             name="label"
-            placeholder={repo ? "Anything; the branch names it otherwise…" : "Anything, such as Tidy my notes…"}
+            placeholder={m.newWorkspace.labelHint(repo)}
             autocomplete="off"
             autofocus={!repo}
             value={label}
@@ -86,31 +86,31 @@ export function NewWorkspace() {
           <FieldError form={start} input="label" />
         </label>
         <details>
-          <summary>More</summary>
+          <summary>{m.newWorkspace.more}</summary>
           <div class="fine">
             <label>
-              Name, in URLs and the CLI
-              <input name="name" placeholder={made ? `${made}…` : "Picked for you…"} autocomplete="off" spellcheck={false} {...invalid(start, "name")} />
+              {m.newWorkspace.name}
+              <input name="name" placeholder={m.newWorkspace.nameHint(made)} autocomplete="off" spellcheck={false} {...invalid(start, "name")} />
               <FieldError form={start} input="name" />
             </label>
             {repo ? (
               <label>
-                A new branch starts from
-                <input name="base" placeholder="The default branch…" autocomplete="off" spellcheck={false} {...invalid(start, "base")} />
+                {m.newWorkspace.base}
+                <input name="base" placeholder={m.newWorkspace.baseHint} autocomplete="off" spellcheck={false} {...invalid(start, "base")} />
                 <FieldError form={start} input="base" />
               </label>
             ) : null}
           </div>
         </details>
-        {opens.length ? <p class="fine-print">Opens with {opens.join(", ")}.</p> : null}
+        {opens.length ? <p class="fine-print">{m.newWorkspace.opens(opens)}</p> : null}
         <FormError form={start} />
         <div class="nbtns">
           {/* Once asked for, the workspace is made either way; closing only stops waiting for it. */}
           <button type="button" class="btn" onClick={close}>
-            {start.busy ? "Close" : "Cancel"}
+            {m.newWorkspace.cancel(start.busy)}
           </button>
           <button type="submit" class="btn primary" disabled={start.busy || !project}>
-            {start.busy ? "Creating…" : "Create"}
+            {m.newWorkspace.create(start.busy)}
           </button>
         </div>
       </form>

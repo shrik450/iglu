@@ -8,6 +8,7 @@ import { watch } from "./api/events.ts";
 import { App } from "./app.tsx";
 import { paintFrost } from "./components/bits.tsx";
 import { onPageKey } from "./keyboard.ts";
+import { m } from "./messages.tsx";
 import "./notify.ts";
 import { look, shownLook, termStyle } from "./preferences.ts";
 import { me, say } from "./state/store.ts";
@@ -20,7 +21,7 @@ Object.assign(globalThis, { iglu: { screen: activeScreen } });
 paintFrost();
 effect(() => {
   const value = look.value;
-  if (value === "auto") delete document.documentElement.dataset["look"];
+  if (value === "Auto") delete document.documentElement.dataset["look"];
   else document.documentElement.dataset["look"] = value;
 });
 // Terminals paint their own colours, so they follow the type and colours
@@ -35,5 +36,5 @@ try {
   watch();
   void loadTerminals();
 } catch (error) {
-  say(`The console couldn't start: ${failure(error)}`);
+  say(m.start.failed(failure(error)));
 }
