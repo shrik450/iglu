@@ -145,6 +145,7 @@ export const BINDINGS: readonly Binding[] = [
   { action: { kind: "width" }, group: "columns", after: letter("w") },
   { action: { kind: "zoom" }, group: "columns", after: letter("z") },
   { action: { kind: "find" }, group: "columns", after: letter("s") },
+  // Stryker disable next-line StringLiteral: resolve() takes Tab, and Shift+Tab, before it looks here, so the code is only listed.
   { action: { kind: "leave" }, group: "columns", after: { code: "Tab", label: "tab" } },
   { action: { kind: "add-column" }, group: "columns", after: letter("c") },
   { action: { kind: "label-column" }, group: "columns", after: { code: "Comma", label: "," } },

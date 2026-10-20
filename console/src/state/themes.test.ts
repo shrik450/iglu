@@ -25,7 +25,7 @@ test("a whole config can be pasted: what isn't a colour is passed over", () => {
 });
 
 test("what Ghostty takes that iglu has no use for passes", () => {
-  const parsed = parseTheme('background = "#101010"\nforeground = #eeeeee\ncursor-color =\npalette = 200=#ff0000\npalette = "1=#ff0000"');
+  const parsed = parseTheme('background = "#101010"\nforeground = #eeeeee\ncursor-color =\n= #123456\npalette = 200=#ff0000\npalette = "1=#ff0000"');
   assert.ok("colors" in parsed, JSON.stringify(parsed));
   assert.equal(parsed.colors.background, "#101010");
   assert.equal(parsed.colors.cursor, "#eeeeee");
@@ -38,6 +38,7 @@ test("what can't be read says where", () => {
   assert.deepEqual(parseTheme("background = #000000\npalette = #ffffff"), { error: { kind: "palette-entry", line: 2 } });
   assert.deepEqual(parseTheme("background #000000"), { error: { kind: "not-key-value", line: 1 } });
   assert.deepEqual(parseTheme("background = #000000"), { error: { kind: "missing" } });
+  assert.deepEqual(parseTheme("palette = 1=red"), { error: { kind: "colour", line: 1, value: "red" } });
 });
 
 test("every theme iglu has goes out and comes back in Ghostty's format", () => {

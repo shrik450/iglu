@@ -21,4 +21,10 @@ test("without a condition, the phase says it", () => {
   assert.deepEqual(situation({ phase: "freezing", condition: null }), { kind: "frozen", freezing: true });
   assert.deepEqual(situation({ phase: "deleting", condition: null }), { kind: "leaving", deleting: true });
   assert.deepEqual(situation({ phase: "running", condition: null }), { kind: "running" });
+  assert.deepEqual(situation({ phase: "frozen", condition: null }), { kind: "frozen", freezing: false });
+  assert.deepEqual(situation({ phase: "stopping", condition: null }), { kind: "leaving", deleting: false });
+});
+
+test("a workspace its runtime reports broken is broken, whatever its phase", () => {
+  assert.deepEqual(situation({ phase: "running", condition: { kind: "RuntimeFailed" } }), { kind: "broken" });
 });

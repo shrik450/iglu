@@ -1164,6 +1164,36 @@ mod tests {
     }
 
     #[test]
+    fn the_cli_says_what_went_wrong_in_words() {
+        let stuck = Condition::Error {
+            step: Effect::Start,
+            failure: Failure::Internal,
+            at: Timestamp::from_unix_millis(0),
+        };
+        assert_eq!(
+            stuck.to_string(),
+            "failed while starting: iglu failed; check iglu's log for details"
+        );
+        let clone = Failure::Host {
+            code: ErrorCode::GuestFailed,
+            detail: "repository not found".into(),
+        };
+        assert_eq!(
+            Activity::Error {
+                step: Effect::Provision,
+                failure: clone
+            }
+            .to_string(),
+            "failed while setting up: repository not found"
+        );
+        assert_eq!(Reason::NotJson.to_string(), "the body isn't JSON");
+        assert_eq!(
+            Closed::NotRunning.to_string(),
+            "the workspace isn't running"
+        );
+    }
+
+    #[test]
     fn unknown_request_fields_are_refused() {
         let result: Result<PublishPort, _> = serde_json::from_str(r#"{"port":3000,"host":"x"}"#);
         assert!(result.is_err());

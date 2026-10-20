@@ -30,14 +30,15 @@ test("missing sessions are ended and unasked ones come last as shells", () => {
     { name: "adhoc", state: "Adopted" as const, clients: 0 },
     { name: "server", state: "Open" as const, clients: 1 },
     { name: "shell", state: "Open" as const, clients: 0 },
+    { name: "gone", state: "Ended" as const, clients: 0 },
   ];
   assert.deepEqual(
-    shown(columns, statuses).map((c) => [c.name, c.state, c.kind.kind]),
+    shown(columns, statuses).map((c) => [c.name, c.state, c.kind.kind, c.width]),
     [
-      ["shell", "Open", "Shell"],
-      ["claude", "Ended", "Shell"],
-      ["server", "Open", "Browser"],
-      ["adhoc", "Adopted", "Shell"],
+      ["shell", "Open", "Shell", "half"],
+      ["claude", "Ended", "Shell", "two-thirds"],
+      ["server", "Open", "Browser", "third"],
+      ["adhoc", "Adopted", "Shell", "half"],
     ],
   );
 });

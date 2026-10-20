@@ -1266,7 +1266,7 @@ def adds_at_once(page: Page, name: str) -> Any:
           const me = await (await fetch('/v1/me')).json();
           const ws = (await (await fetch('/v1/workspaces')).json()).find((w) => w.name === name);
           const headers = { 'content-type': 'application/json' };
-          const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'shell' } }) });
+          const add = () => fetch(`/v1/workspaces/${ws.id}/columns`, { method: 'POST', headers, body: JSON.stringify({ kind: { kind: 'Shell' } }) });
           const answers = await Promise.all([add(), add()]);
           const made = await Promise.all(answers.map(async (a) => (a.ok ? (await a.json()).name : `${a.status} ${await a.text()}`)));
           for (const a of answers.keys()) if (answers[a].ok) await fetch(`/v1/workspaces/${ws.id}/columns/${made[a]}`, { method: 'DELETE', headers });
