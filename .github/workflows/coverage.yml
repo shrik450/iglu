@@ -14,9 +14,11 @@ concurrency:
 
 # Coverage of every tier the dev shell runs (dev/cover.py): Rust from the unit
 # tests, the local runtime's conformance suite and a dev stack under
-# dev-check; the console from its unit tests and dev-check's browsers. It
-# reports, in the job's summary, and doesn't gate. Each push to main records
-# its summary on the metrics branch, which pull requests compare with.
+# dev-check, the CLI included; the console from its unit tests and the
+# browsers of the terminal tier and dev-check. It reports in the job's
+# summary, and a pull request's changed lines must meet the bar
+# (dev/cover.py gate). Each push to main records its summary on the metrics
+# branch, which pull requests compare with.
 jobs:
   coverage:
     runs-on: ubuntu-24.04
@@ -48,9 +50,11 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE: origin/${{ github.base_ref }}
-        run: |
-          nix develop -c python3 dev/cover.py diff "$BASE"
-          cat .dev/coverage/diff.md >> "$GITHUB_STEP_SUMMARY"
+        run: nix develop -c python3 dev/cover.py gate "$BASE"
+
+      - name: Summarize the changed lines
+        if: always() && github.event_name == 'pull_request'
+        run: cat .dev/coverage/diff.md >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Keep the reports
         if: always()

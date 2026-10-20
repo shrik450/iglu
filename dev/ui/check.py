@@ -9,8 +9,8 @@ tier, console/test/terminal, instead.
 
 It signs in as alice, adds a project for a fixture repository, and drives a
 workspace through terminals, attention, a published preview and a hostile
-preview page. It deletes what it made, so it can run again; run it with
-`just dev` up.
+preview page, then through the CLI (dev/ui/cli.py), which deletes what it
+made, so it can run again; run it with `just dev` up.
 """
 
 import os
@@ -27,6 +27,7 @@ os.environ["IGLU_CONSOLE"] = CONSOLE
 sys.path.insert(0, str(ROOT / "nix/tests"))
 
 import browser  # noqa: E402
+import cli  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 from seed import fixture  # noqa: E402
 
@@ -112,15 +113,18 @@ def main() -> None:
             result = step("attack", browser.attack, page, published["url"], ws["id"])
             assert result == {"read": "blocked", "socket": "refused"}, result
             step("visit", browser.visit, page, published["url"])
+            # The CLI, on the same workspace; it deletes it at the end.
+            command = cli.Cli()
+            step("cli-signs-in", cli.signs_in, page, command)
+            step("cli-reads", cli.reads, command, NAME, PROJECT, str(PORT))
+            step("cli-columns", cli.columns, command, NAME)
+            step("cli-attaches", cli.attaches, command, NAME)
+            step("cli-changes", cli.changes, command, NAME)
+            step("cli-lifecycle", cli.lifecycle, command, NAME)
             # Leave nothing behind for a tour to show.
-            api.send("PUT", f"/v1/workspaces/{ws['id']}/desired-state", {"state": "deleted"})
             project = next(p for p in api.get("/v1/projects") if p["name"] == PROJECT)
-            deadline = time.monotonic() + 120
-            while any(w["project"] == project["id"] for w in api.get("/v1/workspaces")):
-                if time.monotonic() > deadline:
-                    raise TimeoutError(f"{NAME} wasn't deleted")
-                time.sleep(1)
-            api.send("DELETE", f"/v1/projects/{project['id']}")
+            command.run("project", "rm", PROJECT)
+            assert not any(p["id"] == project["id"] for p in api.get("/v1/projects"))
         except Exception:
             shots = ROOT / ".dev/check"
             shots.mkdir(parents=True, exist_ok=True)

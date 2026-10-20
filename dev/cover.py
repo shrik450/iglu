@@ -1,13 +1,15 @@
 """Coverage of every tier the dev shell can run: Rust from the unit tests,
 the local runtime's conformance suite and the dev stack under `just
-dev-check`; the console from its unit tests and from the browsers dev-check
-drives.
+dev-check`, the CLI included; the console from its unit tests and from the
+browsers the terminal tier and dev-check drive.
 
     python3 dev/cover.py all         # just coverage: every tier, then report
     python3 dev/cover.py diff <ref>  # just coverage-diff: the lines changed since <ref>
+    python3 dev/cover.py gate <ref>  # fail unless the changed lines meet the bar
 
     python3 dev/cover.py clean       # forget earlier runs
     python3 dev/cover.py unit        # the unit tests and conformance suite, measured
+    python3 dev/cover.py terminal    # the terminal tier, in Chromium
     python3 dev/cover.py check       # dev-check, against `stack.py run --coverage`
     python3 dev/cover.py report      # lcov and a summary under .dev/coverage/
 
@@ -21,7 +23,7 @@ mode), so processes the stack ends with a signal, and guest tools a
 terminal's detaching kills, still count.
 
 The console's browser coverage comes from V8, through the DevTools
-protocol, mapped back to the TypeScript through the dev bundle's source map.
+protocol, mapped back to the TypeScript through each bundle's source map.
 V8 forgets a document's counts with it, so they're taken before each
 navigation the tools make and before pages close; a navigation a click
 makes, such as through sign-in, loses what ran since the last one.
@@ -113,11 +115,23 @@ def unit() -> None:
     )
 
 
+def terminal() -> None:
+    """Runs the terminal tier in Chromium, whose V8 counts what ran, with
+    its browser collecting the console's coverage."""
+    run([sys.executable, str(ROOT / "console/test/terminal/run.py"), "--browser", "chromium"], {**os.environ, BROWSER_ENV: str(BROWSER_RAW)})
+
+
 def check() -> None:
     """Runs dev-check with the browsers collecting the console's coverage.
     The stack must be running with `stack.py run --coverage` for Rust's."""
-    shutil.rmtree(BROWSER_RAW, ignore_errors=True)
-    run([sys.executable, str(ROOT / "dev/ui/check.py")], {**os.environ, BROWSER_ENV: str(BROWSER_RAW)})
+    # The CLI dev-check runs is the stack's measured build, writing where it does.
+    env = {
+        **os.environ,
+        BROWSER_ENV: str(BROWSER_RAW),
+        "IGLU_DEV_BIN": str(TARGET / "debug"),
+        "LLVM_PROFILE_FILE": rust_env()["LLVM_PROFILE_FILE"],
+    }
+    run([sys.executable, str(ROOT / "dev/ui/check.py")], env)
     # The stack's profiles are current as it runs, so they're read now.
     rust_lcov("rust")
 
@@ -190,11 +204,10 @@ def mapped(bundle: Path) -> list[tuple[int, str, int]]:
     offset in the bundle, in UTF-16 units as V8 counts, with the repository
     path and line it came from."""
     source_map = json.loads(bundle.with_name(bundle.name + ".map").read_text())
-    # Sources are relative to where the bundle was served from.
-    served = ROOT / "console/dist/assets"
     sources = []
+    # watch_browsers made each source absolute as it kept the map.
     for source in source_map["sources"]:
-        path = (served / source_map.get("sourceRoot", "") / source).resolve()
+        path = Path(source)
         name = str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else ""
         sources.append(name if name.startswith(CONSOLE_SOURCES) else "")
     starts, offset = [], 0
@@ -277,7 +290,7 @@ TIERS = {
     "rust": "Rust: those and dev-check",
     # Node counts only the files the tests load.
     "console-unit": "Console: unit tests, in the files they load",
-    "console-browser": "Console: dev-check's browsers",
+    "console-browser": "Console: the terminal tier's and dev-check's browsers",
     "console": "Console: both",
 }
 
@@ -350,10 +363,54 @@ def diff(ref: str) -> None:
     reports = [OUT / f"{name}.lcov" for name in ("rust", "console") if (OUT / f"{name}.lcov").exists()]
     if not reports:
         sys.exit("no coverage yet; run `python3 dev/cover.py report` first")
-    markdown = OUT / "diff.md"
     subprocess.run(
-        ["diff-cover", *map(str, reports), f"--compare-branch={ref}", f"--format=markdown:{markdown}"],
+        [
+            "diff-cover", *map(str, reports), f"--compare-branch={ref}",
+            f"--format=markdown:{OUT / 'diff.md'},json:{OUT / 'diff.json'}",
+        ],
         cwd=ROOT, check=True,
+    )
+
+
+# The bar for a pull request's changed lines: at least this share covered,
+# or no more than this many uncovered. The allowance keeps a small change
+# from failing on a line or two that no test can reach in the dev shell.
+GATE_SHARE = 0.9
+GATE_ALLOWANCE = 3
+
+
+def gated(name: str) -> bool:
+    """Whether a file's changed lines count toward the bar. Test harnesses
+    are code under test's tests, not code; and what only a real host runs,
+    Incus and hostd's own binaries, is the VM test's, which isn't measured."""
+    if name.startswith("crates/") and "/tests/" in name:
+        return False
+    if name.endswith(("/sim.rs", "/conformance.rs")):
+        return False
+    if name.startswith("crates/iglu-hostd/src/incus/"):
+        return name == "crates/iglu-hostd/src/incus/observe.rs"
+    return name != "crates/iglu-hostd/src/main.rs"
+
+
+def gate(ref: str) -> None:
+    """Fails unless the lines changed since `ref` meet the bar, saying which
+    are uncovered."""
+    diff(ref)
+    files = json.loads((OUT / "diff.json").read_text())["src_stats"]
+    counted = {name: stats for name, stats in files.items() if gated(name)}
+    covered = sum(len(stats["covered_lines"]) for stats in counted.values())
+    missed = {name: stats["violation_lines"] for name, stats in counted.items() if stats["violation_lines"]}
+    uncovered = sum(len(lines) for lines in missed.values())
+    total = covered + uncovered
+    verdict = f"{covered} of {total} changed lines covered ({percent(covered, total)})"
+    if uncovered <= GATE_ALLOWANCE or covered >= GATE_SHARE * total:
+        print(f"cover: {verdict}; the bar is {GATE_SHARE:.0%}, or at most {GATE_ALLOWANCE} uncovered")
+        return
+    for name, lines in sorted(missed.items()):
+        print(f"{name}: {', '.join(map(str, lines))}", file=sys.stderr)
+    sys.exit(
+        f"cover: {verdict}, under the bar of {GATE_SHARE:.0%}, or at most {GATE_ALLOWANCE} uncovered. "
+        "Test the lines above, in the cheapest tier that reaches them."
     )
 
 
@@ -407,15 +464,36 @@ def watch_browsers(into: Path) -> None:
             scripts = session.send("Profiler.takePreciseCoverage")["result"]
         except Error:
             return
-        bundles = [s for s in scripts if "/assets/app-" in s["url"] and s["url"].endswith(".js")]
+        bundles = [s for s in scripts if served(s["url"])]
         for script in bundles:
-            name = Path(urlparse(script["url"]).path).name
-            for file in (name, f"{name}.map"):
-                if not (into / "assets" / file).exists():
-                    shutil.copy(ROOT / "console/dist/assets" / file, into / "assets" / file)
+            keep(served(script["url"]))
         if bundles:
             taken[0] += 1
-            (into / f"snap-{taken[0]:05}.json").write_text(json.dumps(bundles))
+            (into / f"snap-{os.getpid()}-{taken[0]:05}.json").write_text(json.dumps(bundles))
+
+    def served(url: str) -> Path | None:
+        """The bundle a script came from, when it's one of the console's,
+        built with a source map: the dev stack's or the terminal tier's."""
+        if not url.startswith(("http://", "https://")) or not url.endswith(".js"):
+            return None
+        name = Path(urlparse(url).path).name
+        for built in (ROOT / "console/dist/assets", ROOT / ".dev/terminal"):
+            if (built / f"{name}.map").exists():
+                return built / name
+        return None
+
+    def keep(bundle: Path | None) -> None:
+        """Copies a bundle, with its map's sources made absolute, as a later
+        build may replace it."""
+        assert bundle
+        kept = into / "assets" / bundle.name
+        if kept.exists():
+            return
+        source_map = json.loads(bundle.with_name(bundle.name + ".map").read_text())
+        base = bundle.parent / source_map.pop("sourceRoot", "")
+        source_map["sources"] = [str((base / source).resolve()) for source in source_map["sources"]]
+        kept.with_name(kept.name + ".map").write_text(json.dumps(source_map))
+        shutil.copy(bundle, kept)
 
     def watch(context: BrowserContext) -> None:
         if context.browser is None or context.browser.browser_type.name != "chromium":
@@ -459,6 +537,7 @@ def everything(baseline: Path | None) -> None:
         if probe.connect_ex(("127.0.0.1", stack.PORT)) == 0:
             sys.exit(f"something serves port {stack.PORT}; stop `just dev` first, as this runs its own")
     unit()
+    terminal()
     # Built first, so the stack starts well within the time it's waited for.
     run(["cargo", "build", "-p", "iglud", "-p", "iglu-devhost", "-p", "iglu-guest", "-p", "iglu-cli"], rust_env())
     with (OUT / "stack.log").open("wb") as log:
@@ -485,6 +564,8 @@ def main() -> None:
             clean()
         case ["unit"]:
             unit()
+        case ["terminal"]:
+            terminal()
         case ["check"]:
             check()
         case ["report"]:
@@ -493,6 +574,8 @@ def main() -> None:
             report(Path(baseline))
         case ["diff", ref]:
             diff(ref)
+        case ["gate", ref]:
+            gate(ref)
         case _:
             sys.exit(__doc__)
 

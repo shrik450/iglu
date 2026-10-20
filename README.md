@@ -168,6 +168,11 @@ iglu login https://iglu.example.org
 iglu env add default github:you/iglu-env#default
 ```
 
+The CLI trusts what your system trusts. If iglu's certificate is from a
+private CA your system doesn't, set `IGLU_EXTRA_CA_CERTIFICATES` to a PEM
+file of it. `iglu login --no-browser` prints the sign-in link instead of
+opening it.
+
 `iglu env build default` rebuilds it after you change the flake. New
 workspaces use the newest image; existing ones keep theirs until you update
 them, with `iglu update <workspace>` or from the console, which offers it

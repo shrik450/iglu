@@ -2,8 +2,6 @@ name: CI
 
 on:
   pull_request:
-  # A merge queue checks each change on top of the ones ahead of it.
-  merge_group:
   push:
     branches: [main]
 
@@ -14,10 +12,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Three jobs, each required to merge: the flake checks, the console checked
-# in a browser against the dev stack, and the VM test against a real host.
-# Mutation testing, coverage and the weekly deep run have workflows of their
-# own.
+# Four jobs, each required to merge: the flake checks, the console checked
+# in a browser against the dev stack, the VM test against a real host, and
+# the packages built for aarch64-linux. Mutation testing, coverage and the
+# weekly deep run have workflows of their own.
 jobs:
   checks:
     runs-on: ubuntu-24.04
@@ -125,3 +123,22 @@ jobs:
         with:
           set: e2e
           mode: save
+
+  # Hosts run on aarch64-linux too. Its packages build here, on an Arm
+  # runner, from cache.nixos.org and the commit; nix-cache keeps x86_64's
+  # sets only, so this builds the Rust and the console each run.
+  aarch64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: nix build
+        run: |
+          nix build -L --no-link \
+            .#packages.aarch64-linux.iglud \
+            .#packages.aarch64-linux.hostd \
+            .#packages.aarch64-linux.iglu \
+            .#packages.aarch64-linux.guest-tools

@@ -49,6 +49,7 @@ impl Client {
     fn from_stored() -> anyhow::Result<Self> {
         let stored = Stored::load().context("not signed in; run `iglu login <server>`")?;
         let http = reqwest::Client::builder()
+            .tls_backend_preconfigured(crate::tls::config()?)
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
         Ok(Self {

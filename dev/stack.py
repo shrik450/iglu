@@ -288,12 +288,22 @@ def reset() -> None:
     shutil.rmtree(runtime(), ignore_errors=True)
 
 
+def cli_env(config: Path) -> dict[str, str]:
+    """The CLI's environment against the dev stack: its own credentials in
+    `config`, and the dev CA trusted as a deployment trusts a private one.
+    Inside an iglu workspace, the CLI would speak through its channel to the
+    real iglu instead, so the channel is left out."""
+    env = {key: value for key, value in os.environ.items() if key != "IGLU_SOCKET"}
+    return {
+        **env,
+        "XDG_CONFIG_HOME": str(config),
+        "IGLU_EXTRA_CA_CERTIFICATES": str(shared() / "ca/ca.crt"),
+    }
+
+
 def cli(args: list[str]) -> None:
-    """The CLI against the dev stack, signed in separately from your real
-    iglu. It trusts the dev CA as your system does; on Linux, it's told to."""
-    env = {**os.environ, "XDG_CONFIG_HOME": str(state() / "config")}
-    if platform.system() == "Linux":
-        env["SSL_CERT_FILE"] = str(shared() / "ca/ca.crt")
+    """The CLI against the dev stack, signed in separately from your real iglu."""
+    env = cli_env(state() / "config")
     sys.exit(subprocess.run(["cargo", "run", "-q", "-p", "iglu-cli", "--", *args], cwd=ROOT, env=env).returncode)
 
 

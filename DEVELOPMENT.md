@@ -25,7 +25,7 @@ root.
 | `just e2e`            | The VM test. Needs x86_64-linux with KVM.                                                          |
 | `just check`          | Every flake check, including the VM test where it can run.                                         |
 | `just mutants`        | Mutation-tests the code changed against `main`.                                                    |
-| `just coverage`       | Measures coverage of every tier the dev shell runs.                                                |
+| `just coverage`       | Measures coverage of every tier the dev shell runs; `just coverage-gate` checks the bar.           |
 
 Each tier catches what the cheaper ones can't, and `AGENTS.md` says which
 tier a new test belongs in:
@@ -41,13 +41,12 @@ tier a new test belongs in:
 | [Mutation testing](#mutation-testing)   | Whether the tests notice when the code changes                          | `just mutants`; on each pull request's changed lines, and in full on `main` and weekly         |
 | [Coverage](#coverage)                   | Which lines the tests run                                               | `just coverage`; on each pull request and push to `main`                                       |
 
-A pull request merges only when CI's three jobs (`.github/workflows/ci.yml`)
-and the mutation gate on its changed lines
-(`.github/workflows/mutation.yml`) pass. Coverage
-(`.github/workflows/coverage.yml`) and the weekly deep run
-(`.github/workflows/deep.yml`) report without gating. Run `just lint test`
-and `just mutants` before you push, and `just dev-check` when you change the
-console. The VM test needs KVM, which workspaces don't have, so CI is
+A pull request merges only when CI's four jobs (`.github/workflows/ci.yml`),
+the mutation gate (`.github/workflows/mutation.yml`) and the coverage gate
+(`.github/workflows/coverage.yml`) on its changed lines pass, and a ruleset
+on `main` requires them. The weekly deep run (`.github/workflows/deep.yml`)
+reports without gating. Run `just lint test` and `just mutants` before you
+push, and `just dev-check` when you change the console or the CLI. The VM test needs KVM, which workspaces don't have, so CI is
 usually where it runs; it runs the conformance suite and Incus's isolation
 checks, and only the browser steps that need a real host or the workspace
 image.
@@ -185,27 +184,28 @@ measures every tier the dev shell can run:
 | Tier                 | Measured from                                                                    |
 | -------------------- | -------------------------------------------------------------------------------- |
 | Rust, unit           | `cargo test`, the local runtime's conformance suite included                     |
-| Rust, with dev-check | The above, plus iglud, the local host and its guest tools under `just dev-check` |
+| Rust, with dev-check | The above, plus iglud, the local host, its guest tools and the CLI under `just dev-check` |
 | Console, unit        | The console's unit tests, in the files they load                                 |
-| Console, browsers    | The console as dev-check's Chromium runs it                                      |
+| Console, browsers    | The console as the terminal tier's and dev-check's Chromium run it               |
 
 - `just coverage` runs every tier, starting a dev stack of its own, so stop
   `just dev` first. It writes lcov for each tier, `summary.md`, and an HTML
   report of the Rust under `.dev/coverage/`.
 - `just coverage-diff [base]` then shows coverage of the lines changed since
-  `base`, `main` by default.
+  `base`, `main` by default, and `just coverage-gate [base]` checks them
+  against the bar.
 
 Rust is built with LLVM's source-based coverage into `target/coverage`, apart
 from your normal builds. Its programs write their counters to their profiles
 as they run, so processes that are killed rather than exit, such as the guest
 tools a terminal's detaching ends, still count. The browsers' coverage comes
 from V8 through the DevTools protocol, mapped back to the TypeScript through
-the dev bundle's source map. V8 forgets a page's counts when it navigates, so
+each bundle's source map. V8 forgets a page's counts when it navigates, so
 they're taken before each navigation the tools make; one a click makes, such
 as through sign-in, loses what ran since the last.
 
 CI measures coverage on every pull request and push to `main`
-(`.github/workflows/coverage.yml`), and doesn't gate on it. The run's summary
+(`.github/workflows/coverage.yml`). The run's summary
 has each tier's totals by crate and console area, the change from `main`,
 and, on pull requests, coverage of the lines the pull request changes. Each
 push to `main` appends its summary to `coverage/history.jsonl` on the
@@ -215,6 +215,34 @@ Two parts of iglu run only in the VM test, which isn't measured: the Incus
 runtime, and the NixOS modules' wiring. Instrumenting the VM test's programs
 would mean building them all a second time, so the Incus runtime's lines show
 as uncovered unless a unit test reaches them.
+
+### The bar
+
+A pull request's changed lines must be at least 90% covered, or have no
+more than 3 uncovered; its mutation gate must catch every mutant in them.
+Tests, the simulation and conformance harnesses, and what only the VM test
+runs (the Incus runtime but `observe.rs`, and hostd's `main.rs`) don't
+count; `gated()` in `dev/cover.py` lists them.
+
+The bar is on the change, not the totals. A total rises or falls with code
+nobody touched, so a floor on it either blocks unrelated work or, set low
+enough not to, says nothing. Lines a change adds are the ones its author
+can test while the reason for them is fresh. Google's guidance calls 90%
+a good lower threshold for a change's coverage, and 99% reasonable; 90% is
+a floor here because every tier, browsers and the CLI included, counts, so the
+lines left out are the few no tier in the dev shell reaches, such as a
+signal handler's race. The allowance of 3 keeps a five-line fix from failing
+on one such line.
+
+Coverage only says a line ran, not that anything checked what it did;
+studies of real projects find it a weak predictor of how many faults tests
+find once suite size is accounted for. Mutation score is the stronger one,
+so mutation carries the weight: 100% of the gating tiers' mutants in the
+changed lines, since each survivor is a concrete change in behaviour no test
+notices, and one that can't change behaviour is excluded where it is, with
+the reason. The `shell` tier isn't gated, as its code is tested end to end,
+which can't run once per mutant; coverage holds that code to the bar
+instead.
 
 ## The local dev stack
 
@@ -360,8 +388,10 @@ each.
 ### The CLI
 
 `just dev-cli` runs the CLI against the dev stack, with a login kept in its
-state instead of your real `~/.config/iglu`. It trusts the dev CA as your
-system does: on Linux it's told to, and on macOS it needs `just dev-trust`.
+state instead of your real `~/.config/iglu`. It trusts the dev CA through
+`IGLU_EXTRA_CA_CERTIFICATES`, on every system. `just dev-check` signs a CLI
+of its own in, with `iglu login --no-browser`, and drives it through the
+workspace its browser steps made.
 
 ```sh
 just dev-cli login https://iglu.localhost:7300
@@ -439,6 +469,8 @@ them, and whatever connects has to trust the issuer:
 
 - **iglud** trusts it through `extra_ca_certificates` in its configuration,
   a setting any deployment with a private CA can use.
+- **The CLI** trusts it through `IGLU_EXTRA_CA_CERTIFICATES`, which any
+  deployment's CLI users can set the same way.
 - **Workspaces' Git** trusts it for `https://*.localhost` only, so local
   workspaces can clone fixtures.
 - **The dev tools' browsers** accept the stack's certificates without it.

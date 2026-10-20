@@ -100,6 +100,10 @@ coverage:
 coverage-diff base="main":
     python3 dev/cover.py diff "{{ base }}"
 
+# Check the changed lines against the bar pull requests must meet, after `just coverage`: just coverage-gate main
+coverage-gate base="main":
+    python3 dev/cover.py gate "{{ base }}"
+
 # The local dev stack: iglud, a local host, Caddy and Authelia, all run from
 # the dev shell by dev/stack.py. DEVELOPMENT.md explains it.
 

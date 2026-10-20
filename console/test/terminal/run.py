@@ -566,6 +566,12 @@ def main() -> None:
     started = time.monotonic()
     server = serve(built)
     origin = f"http://localhost:{server.server_address[1]}"
+    # `dev/cover.py terminal` sets this, to count the console's lines the browser runs.
+    if into := os.environ.get("IGLU_COVERAGE_BROWSER"):
+        sys.path.insert(0, str(CONSOLE.parent / "dev"))
+        import cover
+
+        cover.watch_browsers(Path(into))
     with sync_playwright() as playwright:
         # The dev shell's browsers bring their own libraries; ones the machine
         # puts on the library path can be built against another glibc.

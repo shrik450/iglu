@@ -187,21 +187,28 @@ These run on every pull request, and each must pass to merge:
 - **CI** (`.github/workflows/ci.yml`): every flake check, which covers lint,
   the unit, property and conformance tests, the short simulation, the
   console's unit tests and the terminal tier; `just dev-check` against a dev
-  stack; and the VM test. Adding a check to `nix/checks.nix` adds it to CI.
+  stack, the CLI included; the VM test; and the packages built for
+  aarch64-linux. Adding a check to `nix/checks.nix` adds it to CI.
 - **Mutation** (`.github/workflows/mutation.yml`): the tests must catch
   every mutant in the lines the pull request changes, in the core, runtime
   and console tiers. A missed mutant means a test is missing; add it, rather
   than leave the behaviour unchecked. A mutant that can't change behaviour
   is excluded where it is, with the reason (see `DEVELOPMENT.md`).
 
-Coverage (`.github/workflows/coverage.yml`) reports on every pull request,
-including coverage of its changed lines, and doesn't gate. Neither does the
-weekly deep run (`.github/workflows/deep.yml`), which runs the properties
+- **Coverage** (`.github/workflows/coverage.yml`): at least 90% of the
+  lines the pull request changes must run in some tier the dev shell
+  measures, or no more than 3 of them may not. Tests, harnesses and code
+  only the VM test runs don't count (`gated()` in `dev/cover.py`). An
+  uncovered line wants a test in the cheapest tier that reaches it.
+
+Totals of coverage and mutation score are reported and tracked, not gated:
+the bar is on what a change touches. The weekly deep run (`.github/workflows/deep.yml`), which runs the properties
 at 5,000 cases and the simulation over 20,000 schedules; when it fails, fix
 what it found.
 
 Before pushing, run `just lint test` and `just mutants`, and `just
-dev-check` when you change the console.
+dev-check` when you change the console or the CLI. `just coverage` and
+`just coverage-gate` check the coverage bar, in about ten minutes.
 
 ## Change hygiene
 

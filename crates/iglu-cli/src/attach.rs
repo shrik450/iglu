@@ -120,17 +120,21 @@ async fn relay(mut url: url::Url, token: &str) -> anyhow::Result<()> {
     request
         .headers_mut()
         .insert("authorization", format!("Bearer {token}").parse()?);
-    let (socket, _) = match tokio_tungstenite::connect_async(request).await {
-        Ok(connected) => connected,
-        Err(tungstenite::Error::Http(response)) => {
-            let body = response.body().as_deref().unwrap_or_default();
-            bail!(
-                "couldn't attach: {}",
-                crate::client::refusal(response.status(), body, &url)
-            );
-        }
-        Err(error) => return Err(error).context("couldn't attach"),
-    };
+    let tls = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(crate::tls::config()?));
+    let (socket, _) =
+        match tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(tls))
+            .await
+        {
+            Ok(connected) => connected,
+            Err(tungstenite::Error::Http(response)) => {
+                let body = response.body().as_deref().unwrap_or_default();
+                bail!(
+                    "couldn't attach: {}",
+                    crate::client::refusal(response.status(), body, &url)
+                );
+            }
+            Err(error) => return Err(error).context("couldn't attach"),
+        };
     let (mut to_column, mut from_column) = socket.split();
 
     let raw = Raw::enter()?;
