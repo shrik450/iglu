@@ -103,6 +103,12 @@ impl Dirs {
         self.runtime.join(guest::SECRETS_GENERATION)
     }
 
+    /// Held by `install-secrets` while it installs, so installs take turns.
+    #[must_use]
+    pub fn secrets_lock(&self) -> PathBuf {
+        self.runtime.join("secrets.lock")
+    }
+
     /// The browser's display's own runtime directory: its Wayland and sway
     /// sockets are here, apart from the user's, so programs in terminals
     /// don't take it for a desktop of theirs.

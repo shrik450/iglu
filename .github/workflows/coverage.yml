@@ -1,0 +1,105 @@
+name: Coverage
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Coverage of every tier the dev shell runs (dev/cover.py): Rust from the unit
+# tests, the local runtime's conformance suite and a dev stack under
+# dev-check, the CLI included; the console from its unit tests and the
+# browsers of the terminal tier and dev-check. It reports in the job's
+# summary, and a pull request's changed lines must meet the bar
+# (dev/cover.py gate). Each push to main records its summary on the metrics
+# branch, which pull requests compare with.
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The base branch, for the changed lines, and the metrics branch.
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+
+      # The dev shell's slow builds, which ci.yml's console job keeps.
+      - uses: ./.github/actions/nix-cache
+        with:
+          set: console
+          mode: restore
+
+      - name: Main's coverage, to compare with
+        run: git show origin/metrics:coverage/latest.json > baseline.json || rm -f baseline.json
+
+      - name: Measure every tier
+        run: nix develop -c python3 dev/cover.py all --baseline baseline.json
+
+      - name: Summarize
+        run: cat .dev/coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Coverage of the changed lines
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: nix develop -c python3 dev/cover.py gate "$BASE"
+
+      - name: Summarize the changed lines
+        if: always() && github.event_name == 'pull_request'
+        run: cat .dev/coverage/diff.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            .dev/coverage/*.lcov
+            .dev/coverage/*.md
+            .dev/coverage/summary.json
+            .dev/coverage/stack.log
+            .dev/coverage/rust-html/
+
+  # Appends main's summary to coverage/history.jsonl on the metrics branch,
+  # an orphan branch of results alone, and keeps it as coverage/latest.json.
+  history:
+    needs: coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: coverage-history
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: coverage
+          path: ${{ runner.temp }}/coverage
+
+      - name: Record on the metrics branch
+        env:
+          SUMMARY: ${{ runner.temp }}/coverage/summary.json
+        run: |
+          if git fetch -q origin metrics; then
+            git checkout -q -B metrics FETCH_HEAD
+          else
+            git checkout -q --orphan metrics
+            git rm -rqf .
+          fi
+          mkdir -p coverage
+          cp "$SUMMARY" coverage/latest.json
+          jq -c . "$SUMMARY" >> coverage/history.jsonl
+          git add coverage
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Coverage of $GITHUB_SHA"
+          git push -q origin metrics

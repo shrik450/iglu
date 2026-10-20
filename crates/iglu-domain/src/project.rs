@@ -239,6 +239,10 @@ mod tests {
             PreviewPorts::try_from(vec![port(5173), port(3000), port(5173)]).expect("ports");
         assert_eq!(ports.ports(), [port(3000), port(5173)]);
         assert!(PreviewPorts::try_from((1..=17).map(port).collect::<Vec<_>>()).is_err());
+        let most =
+            PreviewPorts::try_from((1..=16).map(port).collect::<Vec<_>>()).expect("16 ports");
+        let sent = serde_json::to_string(&most).expect("ports serialize");
+        assert_eq!(serde_json::from_str::<PreviewPorts>(&sent).ok(), Some(most));
         // Anyone with the link would drive the workspace's browser.
         assert!(PreviewPorts::try_from(vec![port(3000), port(BROWSER_DEBUG_PORT)]).is_err());
         assert!(PreviewPorts::try_from(vec![port(BROWSER_DISPLAY_PORT)]).is_err());
@@ -306,12 +310,21 @@ mod tests {
             suggest_name(&repo("https://github.com/you/2048.git"), []),
             name("project")
         );
+        // Digits stay once a letter starts the name, and a run of separators
+        // is one dash.
+        assert_eq!(
+            suggest_name(&repo("https://github.com/you/_web3__tools.git"), []),
+            name("web3-tools")
+        );
     }
 
     #[test]
     fn openings_are_bounded_and_named() {
-        let many = vec![Opening::shell().templates()[0].clone(); Opening::MAX_COLUMNS + 1];
-        assert!(Opening::try_from(many).is_err());
+        let shell = Opening::shell().templates()[0].clone();
+        assert!(Opening::try_from(vec![shell.clone(); Opening::MAX_COLUMNS + 1]).is_err());
+        let most = Opening::try_from(vec![shell; Opening::MAX_COLUMNS]).expect("16 columns");
+        let sent = serde_json::to_string(&most).expect("an opening serializes");
+        assert_eq!(serde_json::from_str::<Opening>(&sent).ok(), Some(most));
         let two = Opening::try_from(vec![Opening::shell().templates()[0].clone(); 2])
             .expect("two shells");
         let names: Vec<String> = two

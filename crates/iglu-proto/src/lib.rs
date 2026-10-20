@@ -319,6 +319,13 @@ impl std::error::Error for CommandError {}
 mod tests {
     use super::*;
 
+    /// iglud logs and reports what hostd refused, and why.
+    #[test]
+    fn a_command_error_says_what_went_wrong() {
+        let error = CommandError::new(ErrorCode::InvalidState, "the instance is frozen");
+        assert_eq!(error.to_string(), "InvalidState: the instance is frozen");
+    }
+
     /// Every command crosses HTTP as JSON; one that can't is a step no
     /// workspace ever gets past.
     #[test]

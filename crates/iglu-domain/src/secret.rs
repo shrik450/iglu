@@ -122,6 +122,15 @@ impl HomePath {
             .map(|(i, _)| &self.0[..i])
             .collect()
     }
+
+    /// Whether the two can't both be files: they're the same path, or one
+    /// is inside the other.
+    #[must_use]
+    pub fn overlaps(&self, other: &Self) -> bool {
+        self == other
+            || self.parents().contains(&other.as_str())
+            || other.parents().contains(&self.as_str())
+    }
 }
 
 impl FromStr for HomePath {
@@ -135,7 +144,8 @@ impl FromStr for HomePath {
                 && part.len() <= 255
                 && part.chars().all(is_printable)
         });
-        if s.is_empty() || s.len() > 1024 || s.starts_with('/') || !components_ok {
+        // An empty or absolute path has an empty component.
+        if s.len() > 1024 || !components_ok {
             return Err(ParseError::new(
                 "home path",
                 "must be a relative path inside the home directory",
@@ -208,9 +218,7 @@ impl SecretTarget {
     pub fn conflicts_with(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Env { name: a }, Self::Env { name: b }) => a == b,
-            (Self::File { path: a }, Self::File { path: b }) => {
-                a == b || a.parents().contains(&b.as_str()) || b.parents().contains(&a.as_str())
-            }
+            (Self::File { path: a }, Self::File { path: b }) => a.overlaps(b),
             (Self::GitCredential { host: a, .. }, Self::GitCredential { host: b, .. }) => a == b,
             (Self::Env { .. } | Self::File { .. } | Self::GitCredential { .. }, _) => false,
         }
@@ -362,7 +370,7 @@ impl FetchTokens {
 pub enum BundleError {
     #[error("two secrets set the environment variable {0}")]
     DuplicateEnv(EnvVarName),
-    #[error("two secrets write the file ~/{0}")]
+    #[error("two secrets write the file ~/{0}, or one inside it")]
     DuplicateFile(HomePath),
     #[error("two secrets are Git credentials for {0}")]
     DuplicateGitHost(GitHost),
@@ -393,7 +401,7 @@ pub fn bundle(
                 result.env.insert(name, value);
             }
             SecretTarget::File { path } => {
-                if result.files.contains_key(&path) {
+                if result.files.keys().any(|kept| kept.overlaps(&path)) {
                     return Err(BundleError::DuplicateFile(path));
                 }
                 result.files.insert(path, value);
@@ -506,7 +514,17 @@ mod tests {
             tokens.nix_setting().as_deref(),
             Some("access-tokens = github.com=ghp_abc gitlab.com=PAT:glpat=x")
         );
-        assert!(!format!("{tokens:?}").contains("ghp_abc"));
+        let shown = format!("{tokens:?}");
+        assert!(
+            !shown.contains("ghp_abc") && shown.contains("AccessToken(<redacted>)"),
+            "{shown}"
+        );
+        // The host builds with what iglud sends it.
+        let sent = serde_json::to_string(&tokens).expect("tokens serialize");
+        assert_eq!(
+            serde_json::from_str::<FetchTokens>(&sent).ok(),
+            Some(tokens)
+        );
         assert_eq!(FetchTokens::from_secrets([]).nix_setting(), None);
     }
 

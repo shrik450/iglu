@@ -9,6 +9,7 @@
 mod attach;
 mod client;
 mod login;
+mod tls;
 
 use std::io::Read;
 use std::time::{Duration, Instant};
@@ -57,6 +58,10 @@ enum Command {
     Login {
         /// The console URL, such as <https://iglu.example.org>.
         server: url::Url,
+        /// Print the sign-in URL instead of opening a browser, to open it
+        /// elsewhere.
+        #[arg(long)]
+        no_browser: bool,
     },
     /// Forget the stored credentials.
     Logout,
@@ -461,8 +466,13 @@ async fn main() -> anyhow::Result<()> {
     let json_mode = cli.json;
 
     match cli.command {
-        Command::Login { server } => {
-            login::login(&server).await?;
+        Command::Login { server, no_browser } => {
+            let opening = if no_browser {
+                login::Opening::Print
+            } else {
+                login::Opening::Launch
+            };
+            login::login(&server, opening).await?;
             println!("signed in to {server}");
         }
         Command::Logout => {

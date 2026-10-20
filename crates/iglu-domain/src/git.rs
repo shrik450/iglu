@@ -37,16 +37,15 @@ impl From<ObservedBranch> for String {
 impl ObservedBranch {
     pub const MAX_CHARS: usize = 100;
 
-    /// `None` when nothing printable is left.
+    /// `None` when nothing printable is left. Trimmed after the cut as well
+    /// as before, so what it makes is already clean and a host reading it
+    /// back accepts it.
     #[must_use]
     pub fn sanitize(s: &str) -> Option<Self> {
-        let clean: String = s
-            .trim()
-            .chars()
-            .filter(|c| is_printable(*c))
-            .take(Self::MAX_CHARS)
-            .collect();
-        (!clean.is_empty()).then_some(Self(clean))
+        let printable: String = s.chars().filter(|c| is_printable(*c)).collect();
+        let cut: String = printable.trim().chars().take(Self::MAX_CHARS).collect();
+        let clean = cut.trim_end();
+        (!clean.is_empty()).then(|| Self(clean.to_owned()))
     }
 
     #[must_use]
@@ -138,7 +137,9 @@ mod tests {
     fn only_clean_branches_come_off_the_wire() {
         assert!(serde_json::from_str::<ObservedBranch>(r#""fix-login""#).is_ok());
         assert!(serde_json::from_str::<ObservedBranch>(r#""""#).is_err());
-        assert!(serde_json::from_str::<ObservedBranch>(r#""main[31m""#).is_err());
+        // Escaped, so it's the name that's refused and not the JSON.
+        assert!(serde_json::from_str::<ObservedBranch>(r#""main\u001b[31m""#).is_err());
+        assert!(serde_json::from_str::<ObservedBranch>(r#"" main""#).is_err());
     }
 
     #[test]
@@ -154,6 +155,13 @@ mod tests {
             Some(Unsaved {
                 uncommitted: 3,
                 unpushed: Unpushed::Commits { count: 2 }
+            })
+        );
+        assert_eq!(
+            unsaved(&state(Some("fix"), Some("origin/fix"), 0, 1)),
+            Some(Unsaved {
+                uncommitted: 1,
+                unpushed: Unpushed::None
             })
         );
         assert_eq!(

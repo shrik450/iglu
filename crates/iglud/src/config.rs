@@ -31,6 +31,10 @@ pub struct Config {
     /// The client certificate iglud presents to hosts, which accept only
     /// certificates from the CA that signed it.
     pub host_client: HostClient,
+    /// CA certificates, as PEM, that iglud trusts besides the system's when
+    /// it calls the identity provider and hosts, for a private CA.
+    #[serde(default)]
+    pub extra_ca_certificates: Option<PathBuf>,
     #[serde(default)]
     pub workspaces: WorkspaceDefaults,
     #[serde(default)]
@@ -188,8 +192,21 @@ impl Config {
         self.console_origin.origin().ascii_serialization()
     }
 
+    /// A preview's host as browsers address it. Previews are served by the
+    /// same front as the console, so on the console's port.
+    pub fn preview_host(&self, label: &str) -> String {
+        preview_host(label, &self.preview_domain, self.console_origin.port())
+    }
+
     pub fn preview_origin(&self, label: &str) -> String {
-        format!("https://{label}.{}", self.preview_domain)
+        format!("https://{}", self.preview_host(label))
+    }
+}
+
+fn preview_host(label: &str, domain: &str, port: Option<u16>) -> String {
+    match port {
+        Some(port) => format!("{label}.{domain}:{port}"),
+        None => format!("{label}.{domain}"),
     }
 }
 
@@ -229,6 +246,18 @@ impl TryFrom<String> for HostUrl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn previews_are_on_the_consoles_port() {
+        assert_eq!(
+            preview_host("app", "dev.example.org", None),
+            "app.dev.example.org"
+        );
+        assert_eq!(
+            preview_host("app", "preview.localhost", Some(7443)),
+            "app.preview.localhost:7443"
+        );
+    }
 
     #[test]
     fn hosts_are_https_or_plain_http_on_loopback_only() {

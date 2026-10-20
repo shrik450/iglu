@@ -43,15 +43,13 @@ impl From<ProcessName> for String {
 impl ProcessName {
     pub const MAX_CHARS: usize = 32;
 
+    /// Trimmed after the cut as well as before, so what it makes is
+    /// already clean and a host reading it back accepts it.
     #[must_use]
     pub fn sanitize(s: &str) -> Self {
-        Self(
-            s.trim()
-                .chars()
-                .filter(|c| is_printable(*c))
-                .take(Self::MAX_CHARS)
-                .collect(),
-        )
+        let printable: String = s.chars().filter(|c| is_printable(*c)).collect();
+        let cut: String = printable.trim().chars().take(Self::MAX_CHARS).collect();
+        Self(cut.trim_end().to_owned())
     }
 
     #[must_use]

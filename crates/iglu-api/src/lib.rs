@@ -610,6 +610,27 @@ mod tests {
     }
 
     #[test]
+    fn an_error_names_its_field_as_the_request_does() {
+        let field = Field::new("opening[0].kind");
+        assert_eq!(field.as_str(), "opening[0].kind");
+        assert_eq!(field.to_string(), "opening[0].kind");
+        assert_eq!(
+            serde_json::to_string(&field).ok().as_deref(),
+            Some(r#""opening[0].kind""#)
+        );
+    }
+
+    #[test]
+    fn only_a_host_short_of_room_makes_a_capacity_condition() {
+        assert!(Condition::from_capacity(Capacity::Fits).is_none());
+        let (available, needed) = (Bytes::gib(1), Bytes::gib(3));
+        assert!(matches!(
+            Condition::from_capacity(Capacity::Short { available, needed }),
+            Some(Condition::Capacity { available: a, needed: n }) if a == available && n == needed
+        ));
+    }
+
+    #[test]
     fn unknown_request_fields_are_refused() {
         let result: Result<PublishPort, _> = serde_json::from_str(r#"{"port":3000,"host":"x"}"#);
         assert!(result.is_err());

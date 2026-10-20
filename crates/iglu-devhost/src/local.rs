@@ -42,7 +42,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc};
 
-use crate::config::{AbsolutePath, Settings};
+use crate::config::{LocalhostCa, Settings};
 use crate::processes;
 use crate::store::{
     self, Boots, Image, Layout, MAX_SOCKET_PATH, MachineBoot, Power, Record, Remains, Slot,
@@ -128,18 +128,21 @@ fn guest_path(path: &Path) -> Result<GuestPath, String> {
 /// runtime directory, and, when given, a CA that Git trusts for
 /// `https://*.localhost` alone. A URL-scoped `sslCAInfo` replaces Git's
 /// trust only for those hosts.
-fn system_gitconfig(localhost_ca: Option<&Path>) -> String {
+fn system_gitconfig(localhost_ca: Option<&LocalhostCa>) -> String {
     let credential = "[credential]\n\thelper = \"!f() { test \\\"$1\\\" = get && exec git credential-store --file=\\\"$XDG_RUNTIME_DIR/iglu/secrets/git-credentials\\\" get; }; f\"\n".to_owned();
     match localhost_ca {
         None => credential,
         Some(ca) => {
+            let port = ca.port.map(|port| format!(":{port}")).unwrap_or_default();
             // Quoted as a Git config value, so any path reads back as itself.
             let path = ca
+                .certificate
+                .as_path()
                 .display()
                 .to_string()
                 .replace('\\', "\\\\")
                 .replace('"', "\\\"");
-            format!("{credential}[http \"https://*.localhost\"]\n\tsslCAInfo = \"{path}\"\n")
+            format!("{credential}[http \"https://*.localhost{port}\"]\n\tsslCAInfo = \"{path}\"\n")
         }
     }
 }
@@ -240,12 +243,9 @@ impl LocalRuntime {
             return Err(SetupError::NoGuestTools(tools));
         }
         let gitconfig = layout.gitconfig();
-        tokio::fs::write(
-            &gitconfig,
-            system_gitconfig(settings.localhost_ca.as_ref().map(AbsolutePath::as_path)),
-        )
-        .await
-        .map_err(io_at(&gitconfig))?;
+        tokio::fs::write(&gitconfig, system_gitconfig(settings.localhost_ca.as_ref()))
+            .await
+            .map_err(io_at(&gitconfig))?;
 
         let account = nix::unistd::User::from_uid(nix::unistd::getuid())
             .ok()
@@ -265,7 +265,9 @@ impl LocalRuntime {
             .await
             .unwrap_or(false)
             .then_some(profile);
-        let inherited = ["PATH", "LANG", "TMPDIR"]
+        // LLVM_PROFILE_FILE is where instrumented guest tools write their
+        // coverage, when it's being measured.
+        let inherited = ["PATH", "LANG", "TMPDIR", "LLVM_PROFILE_FILE"]
             .into_iter()
             .filter_map(|key| std::env::var_os(key).map(|value| (key, value)))
             .collect();
@@ -951,9 +953,19 @@ mod tests {
     #[test]
     fn workspaces_trust_a_localhost_ca_only_for_localhost() {
         assert!(!system_gitconfig(None).contains("sslCAInfo"));
-        let with_ca = system_gitconfig(Some(Path::new("/dev ca/\"ca\".crt")));
-        assert!(with_ca.ends_with(
+        let ca = |port| LocalhostCa {
+            certificate: "/dev ca/\"ca\".crt"
+                .to_owned()
+                .try_into()
+                .expect("absolute"),
+            port,
+        };
+        assert!(system_gitconfig(Some(&ca(None))).ends_with(
             "[http \"https://*.localhost\"]\n\tsslCAInfo = \"/dev ca/\\\"ca\\\".crt\"\n"
         ));
+        assert!(
+            system_gitconfig(Some(&ca(Some(7300))))
+                .contains("[http \"https://*.localhost:7300\"]\n")
+        );
     }
 }

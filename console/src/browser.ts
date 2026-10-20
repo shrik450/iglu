@@ -11,7 +11,7 @@ import { signal } from "@preact/signals";
 
 import type { BrowserEvent } from "./generated/BrowserEvent.ts";
 import type { BrowserInput } from "./generated/BrowserInput.ts";
-import { CONTROL, clipboardShortcut, displaySize, isModifier, keyFor, keysymOf, modifiersFor, preferred, scaleOf, typing } from "./state/browser.ts";
+import { CONTROL, clipboardShortcut, displaySize, isModifier, keyFor, keysymOf, modifiersFor, pasteStep, preferred, scaleOf, typing } from "./state/browser.ts";
 import { api, failure } from "./api/client.ts";
 import { keyboardFree } from "./focus.ts";
 import { MAX_FILE_BYTES } from "./state/paste.ts";
@@ -29,11 +29,10 @@ export function openOnceShown(workspace: string, address: string | null): void {
   else opening.set(workspace, address);
 }
 
-/** RFB's ClientCutText, which carries a paste's text to the display. */
-const CLIENT_CUT_TEXT = 6;
-/** How long a paste waits for the display to take its text, when it never
- * asks for it, as a server without extended clipboards doesn't. */
-const PASTE_WAIT_MS = 500;
+/** How long a paste waits for its text to go to the display before it's
+ * given up, rather than pasting what the browser's clipboard had: only a
+ * display that never asks for the text it was told of takes this long. */
+const PASTE_GIVE_UP_MS = 10_000;
 const V = 0x76;
 
 /** iglud's WebSocket as noVNC takes it: RFB's half of it. */
@@ -45,8 +44,8 @@ class Channel implements RawChannel {
   onclose: ((event: CloseEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   private readonly socket: WebSocket;
-  /** Settles when the display next has text sent to it. */
-  private cutText: (() => void) | null = null;
+  /** Settles once a paste's text has been sent to the display. */
+  private textGone: (() => void) | null = null;
 
   constructor(socket: WebSocket) {
     this.socket = socket;
@@ -59,25 +58,26 @@ class Channel implements RawChannel {
   send(data: ArrayBufferLike | ArrayBufferView): void {
     this.socket.send(data);
     const bytes = ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data);
-    if (bytes[0] === CLIENT_CUT_TEXT) this.cutText?.();
+    if (pasteStep(bytes) === "text") this.textGone?.();
   }
 
   close(): void {
     this.socket.close(1000);
   }
 
-  /** Settles once text is next sent to the display, or after a while. With
-   * extended clipboards, a paste only says there's text, and the display
-   * asks for it before it has it. */
-  sentText(): Promise<void> {
+  /** Resolves true once a paste's text is next sent to the display, and
+   * false if it isn't within PASTE_GIVE_UP_MS. Asked before the paste's
+   * sent, which may carry the text at once. With extended clipboards, it
+   * only says there's text; the text goes once the display asks for it. */
+  textSent(): Promise<boolean> {
     return new Promise((resolve) => {
-      const done = () => {
+      const done = (gone: boolean) => {
         clearTimeout(timer);
-        this.cutText = null;
-        resolve();
+        this.textGone = null;
+        resolve(gone);
       };
-      const timer = setTimeout(done, PASTE_WAIT_MS);
-      this.cutText = done;
+      const timer = setTimeout(() => done(false), PASTE_GIVE_UP_MS);
+      this.textGone = () => done(true);
     });
   }
 }
@@ -365,13 +365,26 @@ export class BrowserPane {
   }
 
   /** Gives the browser `text` on its clipboard and pastes it there, with
-   * Control+V. */
+   * Control+V, once the text has gone to the display: the display takes
+   * messages in order, so it sets the browser's clipboard before it sends
+   * the keys. A paste whose text never goes isn't pressed, so it can't
+   * paste what the clipboard had. */
   private paste(text: string): void {
     const { screen, channel } = this;
     if (!screen || !channel) return;
     this.later(async () => {
+      const sent = channel.textSent();
+      // The browser's own copy, arriving while this waits, makes noVNC
+      // forget this text before the display asks for it: tell it again.
+      const again = () => screen.clipboardPasteFrom(text);
+      screen.addEventListener("clipboard", again);
       screen.clipboardPasteFrom(text);
-      await channel.sentText();
+      const gone = await sent;
+      screen.removeEventListener("clipboard", again);
+      if (!gone) {
+        say("That paste didn't reach the browser. Try pasting again.");
+        return;
+      }
       const held = this.down.has(CONTROL);
       if (!held) this.deliver(CONTROL, true);
       this.deliver(V, true);

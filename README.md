@@ -168,6 +168,11 @@ iglu login https://iglu.example.org
 iglu env add default github:you/iglu-env#default
 ```
 
+The CLI trusts what your system trusts. If iglu's certificate is from a
+private CA your system doesn't, set `IGLU_EXTRA_CA_CERTIFICATES` to a PEM
+file of it. `iglu login --no-browser` prints the sign-in link instead of
+opening it.
+
 `iglu env build default` rebuilds it after you change the flake. New
 workspaces use the newest image; existing ones keep theirs until you update
 them, with `iglu update <workspace>` or from the console, which offers it
@@ -325,11 +330,13 @@ GPU the display can't use, fall back to the CPU.
 
 ## Developing
 
-See [AGENTS.md](AGENTS.md) for the layout, commands, and design rules. In
-short: `nix develop`, then `just lint test` while you work and `just check`
-for every check. CI runs all of them except the end-to-end VM test in
-`nix/tests/e2e.nix`, which uses a real identity provider, Incus, Git server,
-and browser; run it with `just e2e` on x86_64-linux with KVM.
+See [AGENTS.md](AGENTS.md) for the layout, commands, design rules, and
+where each test goes. In short: `nix develop`, then `just lint test` while
+you work and `just check` for every check. A pull request merges only when
+CI passes: the flake checks, the console against the dev stack, the
+end-to-end VM test in `nix/tests/e2e.nix`, which uses a real identity
+provider, Incus, Git server and browser, and a mutation gate on the lines
+it changes.
 
 [DEVELOPMENT.md](DEVELOPMENT.md) covers working on iglu locally, including
 the dev stack that runs iglud and the console on your machine with `just dev`.

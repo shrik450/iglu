@@ -89,7 +89,15 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new(opener).arg(url).status();
 }
 
-pub async fn login(server: &url::Url) -> anyhow::Result<()> {
+/// Where the sign-in page opens.
+pub enum Opening {
+    /// In this machine's browser.
+    Launch,
+    /// Wherever the person opens the printed URL.
+    Print,
+}
+
+pub async fn login(server: &url::Url, opening: Opening) -> anyhow::Result<()> {
     let verifier = random()?;
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let state = random()?;
@@ -101,8 +109,13 @@ pub async fn login(server: &url::Url) -> anyhow::Result<()> {
         .append_pair("port", &port.to_string())
         .append_pair("challenge", &challenge)
         .append_pair("state", &state);
-    eprintln!("Opening {url}\nIf no browser opens, visit that URL.");
-    open_browser(url.as_str());
+    match opening {
+        Opening::Launch => {
+            eprintln!("Opening {url}\nIf no browser opens, visit that URL.");
+            open_browser(url.as_str());
+        }
+        Opening::Print => eprintln!("Visit {url}"),
+    }
 
     let params = tokio::task::spawn_blocking(move || wait_for_callback(&listener)).await??;
     let get = |key: &str| {
@@ -116,7 +129,9 @@ pub async fn login(server: &url::Url) -> anyhow::Result<()> {
     }
     let code = get("code").context("the sign-in response had no code")?;
 
-    let http = reqwest::Client::new();
+    let http = reqwest::Client::builder()
+        .tls_backend_preconfigured(crate::tls::config()?)
+        .build()?;
     let response = http
         .post(server.join("/v1/cli/token")?)
         .json(&CliTokenRequest { code, verifier })

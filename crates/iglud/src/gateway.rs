@@ -228,16 +228,12 @@ pub async fn handle(app: Arc<App>, label: String, request: Request) -> Response 
     let Some(principal) = session else {
         return match kind {
             Transport::Http(MethodClass::Safe) => {
-                let here = format!(
-                    "https://{label}.{}{}",
-                    app.config.preview_domain,
-                    request.uri()
-                );
+                let here = format!("{}{}", app.config.preview_origin(&label), request.uri());
                 let encoded: String =
                     url::form_urlencoded::byte_serialize(here.as_bytes()).collect();
                 Redirect::to(&format!(
-                    "https://{PREVIEW_AUTH_LABEL}.{}/login?return={encoded}",
-                    app.config.preview_domain
+                    "{}/login?return={encoded}",
+                    app.config.preview_origin(PREVIEW_AUTH_LABEL)
                 ))
                 .into_response()
             }
@@ -311,7 +307,7 @@ async fn forward(
 ) -> anyhow::Result<Response> {
     let websocket = matches!(kind, Transport::WebSocket);
     let own_origin = app.config.preview_origin(name.as_str());
-    let public_host = format!("{name}.{}", app.config.preview_domain);
+    let public_host = app.config.preview_host(name.as_str());
     let client_upgrade = websocket.then(|| hyper::upgrade::on(&mut request));
 
     let (mut parts, body) = request.into_parts();
@@ -434,5 +430,41 @@ mod tests {
         );
         strip_platform_cookie(&mut only);
         assert!(only.get(header::COOKIE).is_none());
+    }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// However the browser sends its cookies, in one header or one
+            /// per cookie as over HTTP/2, the gateway's session never
+            /// reaches the app, and the app's cookies reach it in order.
+            #[test]
+            fn the_gateways_session_never_reaches_apps(
+                app in prop::collection::vec("[a-zA-Z0-9_]{1,8}=[a-zA-Z0-9=]{0,8}", 0..5),
+                token in "[A-Za-z0-9]{1,20}",
+                at in 0..6usize,
+                headers in 1..4usize,
+                gap in "[ ]{0,2}",
+            ) {
+                let mut pairs = app.clone();
+                pairs.insert(at.min(pairs.len()), format!("{PREVIEW_COOKIE}={token}"));
+                let mut map = HeaderMap::new();
+                for chunk in pairs.chunks(pairs.len().div_ceil(headers).max(1)) {
+                    map.append(header::COOKIE, chunk.join(&format!(";{gap}")).parse().expect("a valid header"));
+                }
+                strip_platform_cookie(&mut map);
+                let sent: Vec<String> = map
+                    .get_all(header::COOKIE)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok())
+                    .flat_map(|v| v.split(';'))
+                    .map(|pair| pair.trim().to_owned())
+                    .collect();
+                prop_assert!(!sent.iter().any(|pair| pair.starts_with(PREVIEW_COOKIE)), "{:?}", sent);
+                prop_assert_eq!(sent, app);
+            }
+        }
     }
 }

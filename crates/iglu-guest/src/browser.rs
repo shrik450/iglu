@@ -39,7 +39,10 @@ const STARTING: Duration = Duration::from_secs(10);
 const STEADY: Duration = Duration::from_secs(10);
 
 /// sway's configuration: one output, no bars or borders, and tabs, so a
-/// window an agent opens doesn't cover the person's for good.
+/// window an agent opens doesn't cover the person's for good. No primary
+/// selection: wayvnc sends the console whatever the browser selects as
+/// though it were copied, which took the person's clipboard, so selecting
+/// a field's text before pasting pasted that text back.
 #[must_use]
 pub fn sway_config() -> String {
     [
@@ -50,6 +53,7 @@ pub fn sway_config() -> String {
         "workspace_layout tabbed",
         "focus_on_window_activation focus",
         "xwayland disable",
+        "primary_selection disabled",
     ]
     .join("\n")
         + "\n"

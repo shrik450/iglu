@@ -1,14 +1,21 @@
-# End to end: an identity provider, the control box, an execution host with
-# real Incus, a Git server on "public" address space, and a client running
-# Chromium. A person signs in and approves the CLI in the browser, builds an
+# End to end, iglu as deployed: an execution host with real Incus, and a
+# control box that also plays the rest of the world, with the identity
+# provider, a Git server on "public" address space, and the person's CLI and
+# Chromium. The host is its own machine because the test restarts it under
+# iglud and fills its memory, and because workspaces can't reach any of its
+# addresses. A person signs in and approves the CLI in the browser, builds an
 # environment, and the host's Incus runtime passes hostd's conformance suite
 # and its isolation checks. Then they build from a private flake with their
-# Git credential, create a workspace from a private repository, type in its
-# terminals, get Claude Code's attention, publish a port, and have a preview
-# page try to act on the console. Then workspaces clone over HTTPS, can't
-# reach each other, freeze and thaw, survive a host restart, wait for memory,
-# and are cleaned up after an interrupted delete, and iglud's backups are
-# checked.
+# Git credential, create a workspace from a private repository, use its
+# terminal, browser and guest tools from the console, get Claude Code's
+# attention, publish a port, and have a preview page try to act on the
+# console. Then workspaces clone over HTTPS, can't reach each other, freeze
+# and thaw, survive a host restart, wait for memory, and are cleaned up after
+# an interrupted delete, and iglud's backups are checked.
+#
+# The console's own behaviour, which is the same over any host, is checked
+# by `just dev-check` against the local dev stack; this test keeps only the
+# browser steps that depend on the real stack, image or guest tools.
 { self, nixpkgs }:
 { lib, pkgs, ... }:
 
@@ -146,20 +153,24 @@ let
       '';
 
   # Playwright's Chromium, trusting the test CA (see the test script) and
-  # resolving the console and every preview to the control box.
+  # resolving the console, every preview and the identity provider to the
+  # control box's private address, where they're served.
   browser =
     nodes:
     let
       control = nodes.control.networking.primaryIPAddress;
-      idp = nodes.idp.networking.primaryIPAddress;
+      chromium = pkgs.playwright-driver.browsers.override {
+        withFirefox = false;
+        withWebkit = false;
+      };
     in
     pkgs.writeShellApplication {
       name = "browser";
       text = ''
         export HOME=/root
-        export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+        export PLAYWRIGHT_BROWSERS_PATH=${chromium}
         export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
-        export BROWSER_RESOLVER_RULES='MAP iglu.example.test ${control}, MAP *.dev.example.test ${control}, MAP auth.idp.test ${idp}'
+        export BROWSER_RESOLVER_RULES='MAP iglu.example.test ${control}, MAP *.dev.example.test ${control}, MAP auth.idp.test ${control}'
         exec ${
           pkgs.python3.withPackages (ps: [
             ps.playwright
@@ -170,8 +181,7 @@ let
     };
 
   hostsEntries = nodes: ''
-    ${nodes.idp.networking.primaryIPAddress} auth.idp.test
-    ${nodes.control.networking.primaryIPAddress} iglu.example.test auth.dev.example.test
+    ${nodes.control.networking.primaryIPAddress} auth.idp.test iglu.example.test auth.dev.example.test
   '';
 
   common =
@@ -180,109 +190,182 @@ let
       security.pki.certificateFiles = [ "${pki}/ca.crt" ];
       networking.extraHosts = hostsEntries nodes;
     };
+  # The identity provider, on the control box.
+  identityProvider =
+    { ... }:
+    {
+      networking.firewall.allowedTCPPorts = [ 9091 ];
+
+      environment.etc."authelia/users.yml" = {
+        user = "authelia-main";
+        mode = "0400";
+        text = ''
+          users:
+            alice:
+              displayname: Alice
+              # "password"
+              password: "$argon2id$v=19$m=65536,t=3,p=4$2ohUAfh9yetl+utr4tLcCQ$AsXx0VlwjvNnCsa70u4HKZvFkC8Gwajr2pHGKcND/xs"
+              email: alice@example.org
+        '';
+      };
+
+      services.authelia.instances.main = {
+        enable = true;
+        secrets.manual = true;
+        settingsFiles = [ "${pki}/authelia-jwks.yml" ];
+        settings = {
+          server.address = "tcp://0.0.0.0:9091/";
+          server.tls = {
+            certificate = "${pki}/idp.crt";
+            key = "${pki}/idp.key";
+          };
+          log.level = "info";
+          authentication_backend.file.path = "/etc/authelia/users.yml";
+          access_control.default_policy = "one_factor";
+          session = {
+            secret = "session-secret-for-tests-only-0123456789";
+            cookies = [
+              {
+                domain = "idp.test";
+                authelia_url = issuer;
+              }
+            ];
+          };
+          storage = {
+            encryption_key = "storage-key-for-tests-only-0123456789";
+            local.path = "/var/lib/authelia-main/db.sqlite3";
+          };
+          notifier.filesystem.filename = "/var/lib/authelia-main/notifications.txt";
+          identity_validation.reset_password.jwt_secret = "jwt-secret-for-tests-only-0123456789";
+          identity_providers.oidc = {
+            hmac_secret = "hmac-secret-for-tests-only-0123456789";
+            claims_policies.iglu.id_token = [
+              "email"
+              "email_verified"
+              "name"
+              "preferred_username"
+            ];
+            clients =
+              map
+                (
+                  { id, redirect }:
+                  {
+                    client_id = id;
+                    client_name = id;
+                    client_secret = "$plaintext$" + "${id}-secret-for-tests";
+                    authorization_policy = "one_factor";
+                    consent_mode = "implicit";
+                    claims_policy = "iglu";
+                    redirect_uris = [ redirect ];
+                    scopes = [
+                      "openid"
+                      "email"
+                      "profile"
+                    ];
+                    token_endpoint_auth_method = "client_secret_basic";
+                  }
+                )
+                [
+                  {
+                    id = "console";
+                    redirect = "https://iglu.example.test/auth/callback";
+                  }
+                  {
+                    id = "preview";
+                    redirect = "https://auth.dev.example.test/callback";
+                  }
+                ];
+          };
+        };
+      };
+    };
+
+  # The Git server, on the control box but at an address of its own on the
+  # host's "public" network, which workspaces may reach.
+  gitServer =
+    { config, ... }:
+    {
+      networking.interfaces.eth2.ipv4.addresses = lib.mkForce [
+        {
+          address = gitAddress;
+          prefixLength = 24;
+        }
+      ];
+      networking.firewall.allowedTCPPorts = [ 443 ];
+      services.openssh.enable = true;
+      users.users.git.isNormalUser = true;
+      environment.systemPackages = [ pkgs.git ];
+
+      # Smart HTTP behind basic auth, so cloning needs the credential helper.
+      services.fcgiwrap.instances.git = {
+        process.user = "git";
+        process.group = "users";
+        socket.user = "nginx";
+        socket.group = "nginx";
+      };
+      services.nginx = {
+        enable = true;
+        virtualHosts.git = {
+          default = true;
+          listenAddresses = [ gitAddress ];
+          onlySSL = true;
+          sslCertificate = "${pki}/git.crt";
+          sslCertificateKey = "${pki}/git.key";
+          locations."/".extraConfig = ''
+            auth_basic git;
+            auth_basic_user_file ${pki}/htpasswd;
+            fastcgi_pass unix:${config.services.fcgiwrap.instances.git.socket.address};
+            include ${config.services.nginx.package}/conf/fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME ${pkgs.git}/libexec/git-core/git-http-backend;
+            fastcgi_param GIT_PROJECT_ROOT /srv/git;
+            fastcgi_param GIT_HTTP_EXPORT_ALL "";
+            fastcgi_param PATH_INFO $uri;
+            fastcgi_param REMOTE_USER $remote_user;
+          '';
+          # GitHub's API for a private repository, as Nix's `github:`
+          # fetcher uses it with `?host=`. Like GitHub, it answers 404 to
+          # anyone without the token, which here is the password of
+          # alice's Git credential.
+          locations."= /api/v3/repos/alice/env/commits/HEAD".extraConfig = ''
+            if ($http_authorization != "token pass") { return 404; }
+            default_type application/json;
+            return 200 '{"sha":"${privateEnvRev}","commit":{"tree":{"sha":"${privateEnvRev}"}}}';
+          '';
+          locations."= /api/v3/repos/alice/env/tarball/${privateEnvRev}".extraConfig = ''
+            if ($http_authorization != "token pass") { return 404; }
+            default_type application/gzip;
+            alias ${privateEnv};
+          '';
+        };
+      };
+    };
+
 in
 {
   name = "iglu-e2e";
 
   nodes = {
-    idp =
-      { ... }:
-      {
-        imports = [ common ];
-        networking.firewall.allowedTCPPorts = [ 9091 ];
-
-        environment.etc."authelia/users.yml" = {
-          user = "authelia-main";
-          mode = "0400";
-          text = ''
-            users:
-              alice:
-                displayname: Alice
-                # "password"
-                password: "$argon2id$v=19$m=65536,t=3,p=4$2ohUAfh9yetl+utr4tLcCQ$AsXx0VlwjvNnCsa70u4HKZvFkC8Gwajr2pHGKcND/xs"
-                email: alice@example.org
-          '';
-        };
-
-        services.authelia.instances.main = {
-          enable = true;
-          secrets.manual = true;
-          settingsFiles = [ "${pki}/authelia-jwks.yml" ];
-          settings = {
-            server.address = "tcp://0.0.0.0:9091/";
-            server.tls = {
-              certificate = "${pki}/idp.crt";
-              key = "${pki}/idp.key";
-            };
-            log.level = "info";
-            authentication_backend.file.path = "/etc/authelia/users.yml";
-            access_control.default_policy = "one_factor";
-            session = {
-              secret = "session-secret-for-tests-only-0123456789";
-              cookies = [
-                {
-                  domain = "idp.test";
-                  authelia_url = issuer;
-                }
-              ];
-            };
-            storage = {
-              encryption_key = "storage-key-for-tests-only-0123456789";
-              local.path = "/var/lib/authelia-main/db.sqlite3";
-            };
-            notifier.filesystem.filename = "/var/lib/authelia-main/notifications.txt";
-            identity_validation.reset_password.jwt_secret = "jwt-secret-for-tests-only-0123456789";
-            identity_providers.oidc = {
-              hmac_secret = "hmac-secret-for-tests-only-0123456789";
-              claims_policies.iglu.id_token = [
-                "email"
-                "email_verified"
-                "name"
-                "preferred_username"
-              ];
-              clients =
-                map
-                  (
-                    { id, redirect }:
-                    {
-                      client_id = id;
-                      client_name = id;
-                      client_secret = "$plaintext$" + "${id}-secret-for-tests";
-                      authorization_policy = "one_factor";
-                      consent_mode = "implicit";
-                      claims_policy = "iglu";
-                      redirect_uris = [ redirect ];
-                      scopes = [
-                        "openid"
-                        "email"
-                        "profile"
-                      ];
-                      token_endpoint_auth_method = "client_secret_basic";
-                    }
-                  )
-                  [
-                    {
-                      id = "console";
-                      redirect = "https://iglu.example.test/auth/callback";
-                    }
-                    {
-                      id = "preview";
-                      redirect = "https://auth.dev.example.test/callback";
-                    }
-                  ];
-            };
-          };
-        };
-      };
-
     control =
-      { ... }:
+      { config, nodes, ... }:
       {
         imports = [
           common
           self.nixosModules.control
+          identityProvider
+          gitServer
         ];
-        virtualisation.memorySize = 2048;
+        virtualisation = {
+          memorySize = 2048;
+          cores = 2;
+          vlans = [
+            1
+            2
+          ];
+        };
+        # Caddy serves the console on the private address and nginx serves
+        # Git on the public one, each binding its own address before the
+        # interfaces may be up.
+        boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" = 1;
 
         services.iglu.control = {
           enable = true;
@@ -327,12 +410,22 @@ in
             (_: {
               useACMEHost = lib.mkForce null;
               extraConfig = lib.mkForce ''
+                bind ${config.networking.primaryIPAddress}
                 tls ${pki}/control.crt ${pki}/control.key
                 reverse_proxy 127.0.0.1:7080
               '';
             });
 
-        environment.systemPackages = [ pkgs.sqlite ];
+        # The person's own tools, as on their machine.
+        environment.systemPackages = [
+          pkgs.sqlite
+          packages.iglu
+          (browser nodes)
+          pkgs.curl
+          pkgs.jq
+          pkgs.nssTools
+          pkgs.websocat
+        ];
       };
 
     host =
@@ -343,7 +436,8 @@ in
           self.nixosModules.host
         ];
         virtualisation = {
-          memorySize = 6144;
+          # A guess, not a measurement; the capacity check fills whatever it's given.
+          memorySize = 4096;
           cores = 4;
           diskSize = 12288;
           emptyDiskImages = [ 8192 ];
@@ -386,78 +480,6 @@ in
         };
       };
 
-    git =
-      { config, ... }:
-      {
-        virtualisation.vlans = [ 2 ];
-        networking.interfaces.eth1.ipv4.addresses = lib.mkForce [
-          {
-            address = gitAddress;
-            prefixLength = 24;
-          }
-        ];
-        networking.firewall.allowedTCPPorts = [ 443 ];
-        services.openssh.enable = true;
-        users.users.git.isNormalUser = true;
-        environment.systemPackages = [ pkgs.git ];
-
-        # Smart HTTP behind basic auth, so cloning needs the credential helper.
-        services.fcgiwrap.instances.git = {
-          process.user = "git";
-          process.group = "users";
-          socket.user = "nginx";
-          socket.group = "nginx";
-        };
-        services.nginx = {
-          enable = true;
-          virtualHosts.git = {
-            default = true;
-            onlySSL = true;
-            sslCertificate = "${pki}/git.crt";
-            sslCertificateKey = "${pki}/git.key";
-            locations."/".extraConfig = ''
-              auth_basic git;
-              auth_basic_user_file ${pki}/htpasswd;
-              fastcgi_pass unix:${config.services.fcgiwrap.instances.git.socket.address};
-              include ${config.services.nginx.package}/conf/fastcgi_params;
-              fastcgi_param SCRIPT_FILENAME ${pkgs.git}/libexec/git-core/git-http-backend;
-              fastcgi_param GIT_PROJECT_ROOT /srv/git;
-              fastcgi_param GIT_HTTP_EXPORT_ALL "";
-              fastcgi_param PATH_INFO $uri;
-              fastcgi_param REMOTE_USER $remote_user;
-            '';
-            # GitHub's API for a private repository, as Nix's `github:`
-            # fetcher uses it with `?host=`. Like GitHub, it answers 404 to
-            # anyone without the token, which here is the password of
-            # alice's Git credential.
-            locations."= /api/v3/repos/alice/env/commits/HEAD".extraConfig = ''
-              if ($http_authorization != "token pass") { return 404; }
-              default_type application/json;
-              return 200 '{"sha":"${privateEnvRev}","commit":{"tree":{"sha":"${privateEnvRev}"}}}';
-            '';
-            locations."= /api/v3/repos/alice/env/tarball/${privateEnvRev}".extraConfig = ''
-              if ($http_authorization != "token pass") { return 404; }
-              default_type application/gzip;
-              alias ${privateEnv};
-            '';
-          };
-        };
-      };
-
-    client =
-      { nodes, ... }:
-      {
-        imports = [ common ];
-        virtualisation.memorySize = 2048;
-        environment.systemPackages = [
-          packages.iglu
-          (browser nodes)
-          pkgs.curl
-          pkgs.jq
-          pkgs.nssTools
-          pkgs.websocat
-        ];
-      };
   };
 
   testScript =
@@ -472,6 +494,7 @@ in
       IMAGE = "${image}"
       HOSTD_CONFIG = "${lib.last (lib.splitString " " nodes.host.systemd.services.iglu-hostd.serviceConfig.ExecStart)}"
       PYTHON = "${lib.getExe pkgs.python3}"
+      BUSYBOX = "${pkgs.pkgsStatic.busybox}/bin/busybox"
     ''
     + builtins.readFile ./e2e.py;
 }

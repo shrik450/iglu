@@ -44,7 +44,17 @@ pub struct Settings {
     /// fixture repositories at `git.localhost`. Other hosts keep Git's own
     /// trust.
     #[serde(default)]
-    pub localhost_ca: Option<AbsolutePath>,
+    pub localhost_ca: Option<LocalhostCa>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalhostCa {
+    pub certificate: AbsolutePath,
+    /// The port `*.localhost` serves HTTPS on, when it isn't 443: Git
+    /// matches a URL's port exactly.
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 /// An absolute path in UTF-8, so it can become a guest path.

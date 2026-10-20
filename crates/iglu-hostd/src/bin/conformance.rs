@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::Context;
 use iglu_domain::env::EnvSource;
 use iglu_hostd::config::Config;
-use iglu_hostd::conformance::{self, Fixture, Outcome};
+use iglu_hostd::conformance::{self, Fixture, Guests, Outcome};
 use iglu_hostd::host::Host;
 use iglu_hostd::incus::{IncusRuntime, checks};
 
@@ -40,6 +40,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         source,
         next,
         boot_timeout: Duration::from_secs(300),
+        guests: Guests::Programs,
     };
 
     let runtime = IncusRuntime::new(

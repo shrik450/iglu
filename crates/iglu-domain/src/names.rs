@@ -86,9 +86,7 @@ pub fn from_label(text: &str, attempt: u32) -> Option<DnsLabel> {
             stem.push('-');
         }
     }
-    if stem.len() > MADE_MAX {
-        stem.truncate(MADE_MAX);
-    }
+    stem.truncate(MADE_MAX);
     let stem = stem.trim_end_matches('-');
     if stem.is_empty() {
         return None;
@@ -96,7 +94,7 @@ pub fn from_label(text: &str, attempt: u32) -> Option<DnsLabel> {
     let text = if attempt == 0 {
         stem.to_owned()
     } else {
-        format!("{stem}-{}", attempt + 1)
+        format!("{stem}-{}", u64::from(attempt) + 1)
     };
     text.parse().ok()
 }
@@ -365,12 +363,49 @@ mod tests {
         assert_eq!(candidate(7, BARE_ATTEMPTS).as_str().matches('-').count(), 2);
     }
 
+    /// Even entropies one apart get unrelated names, spread over every word:
+    /// 2,000 draws from about 17,000 names give about 1,880 different ones.
+    #[test]
+    fn candidates_spread_over_every_word() {
+        let names: Vec<DnsLabel> = (0..2000u64).map(|entropy| candidate(entropy, 0)).collect();
+        let words = |at: usize| {
+            names
+                .iter()
+                .map(|n| n.as_str().split('-').nth(at).map(str::to_owned))
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        };
+        let distinct: std::collections::HashSet<_> = names.iter().collect();
+        assert!(distinct.len() > 1800, "{} different names", distinct.len());
+        assert!(
+            words(0) > ADJECTIVES.len() * 9 / 10,
+            "{} adjectives",
+            words(0)
+        );
+        assert!(words(1) > VERBS.len() * 9 / 10, "{} verbs", words(1));
+    }
+
+    /// `SplitMix64`'s published outputs from a state of zero.
+    #[test]
+    fn the_mixer_is_splitmix64() {
+        const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+        assert_eq!(splitmix64(0), 0xe220_a839_7b1d_cdaf);
+        assert_eq!(splitmix64(GAMMA), 0x6e78_9e6a_a1b9_65f4);
+        assert_eq!(splitmix64(GAMMA.wrapping_mul(2)), 0x06c4_5d18_8009_454f);
+    }
+
+    /// Each retry after a taken name offers a new one.
     #[test]
     fn attempts_produce_different_candidates() {
-        let names: std::collections::HashSet<_> = (0..BARE_ATTEMPTS)
-            .map(|attempt| candidate(42, attempt))
-            .collect();
-        assert!(names.len() > 1);
+        for entropy in (0..200u64).chain((0..200).map(|i| u64::MAX - i)) {
+            let names: std::collections::HashSet<_> = (0..BARE_ATTEMPTS)
+                .map(|attempt| candidate(entropy, attempt))
+                .collect();
+            assert!(
+                u32::try_from(names.len()).is_ok_and(|n| n + 1 >= BARE_ATTEMPTS),
+                "{entropy}: {names:?}"
+            );
+        }
     }
 
     #[test]

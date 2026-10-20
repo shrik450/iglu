@@ -1,27 +1,29 @@
 # Authelia for the local dev stack, adapted from the VM test's
 # (nix/tests/e2e.nix). Every value here is for local development only.
-# Rendered with Authelia's template filter: `secret` reads a mounted file.
+# Rendered with Authelia's template filter, from the variables dev/stack.py
+# sets: where the dev files and shared files are, the stack's port, and
+# where Authelia listens.
 server:
-  address: tcp://0.0.0.0:9091/
+  address: 'tcp://{{ env "IGLU_DEV_AUTHELIA" }}/'
 log:
   level: info
 authentication_backend:
   file:
-    path: /config/users.yml
+    path: '{{ env "IGLU_DEV" }}/authelia/users.yml'
 access_control:
   default_policy: one_factor
 session:
   secret: session-secret-for-dev-only-0123456789
   cookies:
-    - domain: auth.localhost
-      authelia_url: https://auth.localhost
+    - domain: '{{ env "IGLU_DEV_AUTH_HOST" }}'
+      authelia_url: 'https://{{ env "IGLU_DEV_AUTH_HOST" }}:{{ env "IGLU_DEV_PORT" }}'
 storage:
   encryption_key: storage-key-for-dev-only-0123456789
   local:
-    path: /data/db.sqlite3
+    path: '{{ env "IGLU_DEV_SHARED" }}/authelia/data/db.sqlite3'
 notifier:
   filesystem:
-    filename: /data/notifications.txt
+    filename: '{{ env "IGLU_DEV_SHARED" }}/authelia/data/notifications.txt'
 identity_validation:
   reset_password:
     jwt_secret: jwt-secret-for-dev-only-0123456789
@@ -29,29 +31,29 @@ identity_providers:
   oidc:
     hmac_secret: hmac-secret-for-dev-only-0123456789
     jwks:
-      # Generated per machine by `just dev-setup`.
-      - key: {{ secret "/keys/jwks.pem" | mindent 10 "|" | msquote }}
+      # Generated per machine by dev/stack.py.
+      - key: {{ secret (printf "%s/authelia/jwks.pem" (env "IGLU_DEV_SHARED")) | mindent 10 "|" | msquote }}
     claims_policies:
       iglu:
         id_token: [email, email_verified, name, preferred_username]
     clients:
       - client_id: console
         client_name: iglu console
-        client_secret: '$plaintext${{ secret "/clients/console.secret" }}'
+        client_secret: '$plaintext${{ secret (printf "%s/clients/console.secret" (env "IGLU_DEV")) }}'
         authorization_policy: one_factor
         consent_mode: implicit
         claims_policy: iglu
         redirect_uris:
-          - https://iglu.localhost/auth/callback
+          - 'https://{{ env "IGLU_DEV_CONSOLE_HOST" }}:{{ env "IGLU_DEV_PORT" }}/auth/callback'
         scopes: [openid, email, profile]
         token_endpoint_auth_method: client_secret_basic
       - client_id: preview
         client_name: iglu previews
-        client_secret: '$plaintext${{ secret "/clients/preview.secret" }}'
+        client_secret: '$plaintext${{ secret (printf "%s/clients/preview.secret" (env "IGLU_DEV")) }}'
         authorization_policy: one_factor
         consent_mode: implicit
         claims_policy: iglu
         redirect_uris:
-          - https://auth.preview.localhost/callback
+          - 'https://auth.{{ env "IGLU_DEV_PREVIEW_DOMAIN" }}:{{ env "IGLU_DEV_PORT" }}/callback'
         scopes: [openid, email, profile]
         token_endpoint_auth_method: client_secret_basic

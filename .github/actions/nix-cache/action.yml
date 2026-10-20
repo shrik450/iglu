@@ -1,0 +1,87 @@
+name: Nix cache
+description: >-
+  Restores, before building, or saves, after, the store paths a job takes
+  long to build that change only with the lock files: the job's set in the
+  flake's ci-cache. Everything else comes from cache.nixos.org or is built
+  from the commit. A set is one Actions cache entry; GitHub throttles caches
+  that make one per store path, which magic-nix-cache did, so it stopped
+  within a minute of each job starting.
+
+inputs:
+  set:
+    description: The job's set in legacyPackages.x86_64-linux.ci-cache.
+    required: true
+  mode:
+    description: "`restore` or `save`."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Name the entry after the set's paths
+      id: key
+      shell: bash
+      run: |
+        paths="$RUNNER_TEMP/nix-cache-${{ inputs.set }}.paths"
+        nix eval --json ".#legacyPackages.x86_64-linux.ci-cache.${{ inputs.set }}" \
+          --apply 'map (d: d.outPath)' | jq -r '.[]' > "$paths"
+        {
+          echo "paths=$paths"
+          echo "dir=$RUNNER_TEMP/nix-cache-${{ inputs.set }}"
+          echo "key=nix-${{ inputs.set }}-$(sha256sum < "$paths" | cut -c1-20)"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore the set
+      if: inputs.mode == 'restore'
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: ${{ steps.key.outputs.key }}
+        # An older set still has whatever of it hasn't changed.
+        restore-keys: nix-${{ inputs.set }}-
+
+    - name: Put it in the store
+      if: inputs.mode == 'restore' && steps.restore.outputs.cache-matched-key != ''
+      shell: bash
+      run: |
+        dir='${{ steps.key.outputs.dir }}'
+        # The entry was made by this workflow, unsigned.
+        xargs nix copy --no-check-sigs --from "file://$dir" < "$dir/paths"
+        rm -rf "$dir"
+
+    - name: Look for the set
+      if: inputs.mode == 'save'
+      id: lookup
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: ${{ steps.key.outputs.key }}
+        lookup-only: true
+
+    - name: Export the set
+      if: inputs.mode == 'save' && steps.lookup.outputs.cache-hit != 'true'
+      id: export
+      shell: bash
+      run: |
+        paths='${{ steps.key.outputs.paths }}'
+        dir='${{ steps.key.outputs.dir }}'
+        # Only a whole set: an entry's key can't be written twice, so a
+        # partial one would keep the rest from ever being kept.
+        while read -r path; do
+          if ! nix path-info "$path" > /dev/null 2>&1; then
+            echo "not keeping the set: $path wasn't built"
+            exit 0
+          fi
+        done < "$paths"
+        xargs nix copy --to "file://$dir?compression=zstd&parallel-compression=true" < "$paths"
+        cp "$paths" "$dir/paths"
+        du -sh "$dir"
+        echo "exported=true" >> "$GITHUB_OUTPUT"
+
+    - name: Save the set
+      if: steps.export.outputs.exported == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: ${{ steps.key.outputs.key }}

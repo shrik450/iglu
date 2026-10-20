@@ -4,6 +4,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ParseError;
+
 /// Milliseconds since the Unix epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
@@ -29,9 +31,8 @@ impl Timestamp {
 
     /// How long ago `earlier` was, or zero if it's in the future.
     #[must_use]
-    pub const fn since(self, earlier: Self) -> Millis {
-        let elapsed = self.0.saturating_sub(earlier.0);
-        Millis(if elapsed < 0 { 0 } else { elapsed })
+    pub fn since(self, earlier: Self) -> Millis {
+        Millis(self.0.saturating_sub(earlier.0).max(0))
     }
 }
 
@@ -44,8 +45,26 @@ impl fmt::Display for Timestamp {
 /// A non-negative duration in milliseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(type = "number"))]
-#[serde(transparent)]
+#[serde(try_from = "i64", into = "i64")]
 pub struct Millis(i64);
+
+impl TryFrom<i64> for Millis {
+    type Error = ParseError;
+
+    fn try_from(millis: i64) -> Result<Self, Self::Error> {
+        if millis < 0 {
+            Err(ParseError::new("duration", "must not be negative"))
+        } else {
+            Ok(Self(millis))
+        }
+    }
+}
+
+impl From<Millis> for i64 {
+    fn from(duration: Millis) -> Self {
+        duration.0
+    }
+}
 
 impl Millis {
     #[must_use]
@@ -74,5 +93,10 @@ mod tests {
     fn plus_adds() {
         let t = Timestamp::from_unix_millis(1_000).plus(Millis::from_secs(5));
         assert_eq!(t.unix_millis(), 6_000);
+    }
+
+    #[test]
+    fn timestamps_show_their_unit() {
+        assert_eq!(Timestamp::from_unix_millis(1_500).to_string(), "1500ms");
     }
 }

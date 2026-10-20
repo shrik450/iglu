@@ -15,6 +15,8 @@ pub mod incus;
 mod rules;
 pub mod runtime;
 pub mod server;
+#[cfg(feature = "sim")]
+pub mod sim;
 mod terminal;
 
 use iglu_domain::ParseError;

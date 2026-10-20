@@ -73,9 +73,10 @@ impl FileName {
         if n <= 1 {
             return self.0.clone();
         }
+        // A name never starts with a dot, so one it has ends a stem.
         match self.0.rfind('.') {
-            Some(dot) if dot > 0 => format!("{}-{n}{}", &self.0[..dot], &self.0[dot..]),
-            _ => format!("{}-{n}", self.0),
+            Some(dot) => format!("{}-{n}{}", &self.0[..dot], &self.0[dot..]),
+            None => format!("{}-{n}", self.0),
         }
     }
 }
@@ -131,6 +132,12 @@ mod tests {
                 && long.rsplit_once('.').map(|(_, e)| e) == Some("jpeg"),
             "{long}"
         );
+        // At the limit a name stays whole; past it, a part after a dot that's
+        // too long for an extension is cut like the rest.
+        let full = format!("{}-.png", "a".repeat(75));
+        assert_eq!(name(&full), full);
+        let dotted = format!("{}.{}", "a".repeat(50), "b".repeat(50));
+        assert_eq!(name(&dotted), dotted[..FileName::MAX_LEN]);
         for raw in ["Screenshot 1.png", "../x", "$(x)", "", &"b".repeat(300)] {
             assert!(name(raw).parse::<FileName>().is_ok(), "{raw}");
         }
@@ -143,6 +150,15 @@ mod tests {
         assert_eq!(name.numbered(2), "shot-2.png");
         let bare: FileName = "notes".parse().expect("a name");
         assert_eq!(bare.numbered(3), "notes-3");
+    }
+
+    #[test]
+    fn a_pasted_file_may_be_16_mib() {
+        // As the console and the guest tell people.
+        assert_eq!(
+            u64::try_from(MAX_BYTES).ok(),
+            Some(crate::capacity::Bytes::mib(16).get())
+        );
     }
 
     #[test]
