@@ -105,7 +105,8 @@ jobs:
           if-no-files-found: ignore
 
   console:
-    name: console
+    # Named apart from CI's console job, which pull requests require.
+    name: console mutants
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 120

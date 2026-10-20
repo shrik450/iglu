@@ -118,7 +118,13 @@ def unit() -> None:
 def terminal() -> None:
     """Runs the terminal tier in Chromium, whose V8 counts what ran, with
     its browser collecting the console's coverage."""
-    run([sys.executable, str(ROOT / "console/test/terminal/run.py"), "--browser", "chromium"], {**os.environ, BROWSER_ENV: str(BROWSER_RAW)})
+    tested = subprocess.run(
+        [sys.executable, str(ROOT / "console/test/terminal/run.py"), "--browser", "chromium"],
+        cwd=ROOT, env={**os.environ, BROWSER_ENV: str(BROWSER_RAW)},
+    )
+    # As with the unit tests, a failure is the test jobs' to report.
+    if tested.returncode:
+        print("cover: some terminal cases failed; their coverage still counts", file=sys.stderr)
 
 
 def check() -> None:
